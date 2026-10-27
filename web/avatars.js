@@ -1,0 +1,1 @@
+window.avatarMarkup=(a,f='')=>/^avatar(?:[1-9]|1[0-2])$/.test(a)?`<img src="/avatars/${a}.svg?v=${window.avatarVersions?.[a]||''}" alt="头像">`:String(a||f).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

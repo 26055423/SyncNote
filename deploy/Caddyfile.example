@@ -1,0 +1,4 @@
+# Replace with your own domain; install Caddy on the host separately.
+your-domain.example {
+    reverse_proxy 127.0.0.1:18886
+}
