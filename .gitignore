@@ -29,3 +29,5 @@ __pycache__/
 .idea/
 .vscode/
 TongpinConnection.txt
+
+web/chart-src/node_modules/

@@ -32,9 +32,16 @@ function render(){
  const list=[...datedRows.slice().sort((a,b)=>b.closed-a.closed),...pendingTimes.filter(t=>!issue||window.tradeJournal.matches(t))];
  $('#list-title').textContent=(issue?'分类：'+issue+' · 全部日期':(day||month))+' · 交易明细（'+datedRows.length+' 笔）'+(pendingTimes.length?' · 时间待校准（'+pendingTimes.length+' 笔）':'');$('#clear-day').hidden=!day||!!issue;$('#clear-day').textContent=pendingTimes.length?'查看整月及待校准记录':'查看整月';
  $('#trade-list').innerHTML=list.length?`<table><thead><tr><th>交易时间 · 北京时间</th><th>品种 / 方向</th><th>手数</th><th>开仓价</th><th>平仓价</th><th class="profit-column">已实现盈亏 · ${esc(currency)}</th><th class="review-column">复盘</th></tr></thead><tbody>${list.map(t=>`<tr><td class="trade-times"><div><span>开仓</span> ${openStamp(t)}</div><div><span>平仓</span> ${stamp(t.closed)}</div></td><td>${esc(t.symbol)} <span class="side ${t.side==='sell'?'sell':''}">${t.side==='sell'?'卖出':'买入'}</span></td><td>${esc(t.volume)}</td><td>${money(t.open)}</td><td>${money(t.close)}</td><td class="profit-column ${t.profit>=0?'positive':'negative'}">${signed(t.profit)}</td><td class="review-column">${window.tradeJournal.canView?`<button class="review-order" data-review="${esc(t.ticket)}">复盘</button>`:'<span class="levels">未分享</span>'}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">这段时间没有已同步的交易记录</div>';
- $('#trade-list').querySelectorAll('[data-review]').forEach(b=>b.onclick=()=>{const t=rows.find(t=>String(t.ticket)===b.dataset.review);if(t)window.tradeJournal.open(t,person,own);});
+ $('#trade-list').querySelectorAll('[data-review]').forEach(b=>b.onclick=()=>{const t=rows.find(t=>String(t.ticket)===b.dataset.review);if(t)openChart(t,person);});
 }
 window.renderJournal=render;
+// 复盘跳到图表页：带上这笔交易和开仓时间，图表打开就定位到那根 K 线。
+function openChart(t,person){
+ const qs=new URLSearchParams({person,ticket:String(t.ticket)});
+ const opened=t.closed!=null&&t.opened_server!=null&&t.closed_server!=null?t.closed-(t.closed_server-t.opened_server):t.closed;
+ if(opened>0)qs.set('t',String(Math.round(opened)));
+ location.href='/chart?'+qs.toString();
+}
 function changeMonth(value){if(!/^\d{4}-\d{2}$/.test(value)||+value.slice(5)<1||+value.slice(5)>12)return;window.tradeJournal.filter='';month=value;day=month===dateKey(Date.now()/1000).slice(0,7)?dateKey(Date.now()/1000):month+'-01';$('#month-picker').value=month;render();}
 function shift(delta){let [y,m]=month.split('-').map(Number);const date=new Date(Date.UTC(y,m-1+delta,1));changeMonth(date.toISOString().slice(0,7));}
 $('#prev-month').onclick=()=>shift(-1);$('#next-month').onclick=()=>shift(1);$('#this-month').onclick=()=>changeMonth(dateKey(Date.now()/1000).slice(0,7));$('#month-picker').onchange=e=>changeMonth(e.target.value);$('#clear-day').onclick=()=>{day=null;render();};

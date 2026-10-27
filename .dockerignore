@@ -18,3 +18,5 @@ __pycache__
 *.pem
 *.log
 *.zip
+
+**/node_modules

@@ -9,6 +9,8 @@
 - 独立账号登录、管理员邀请注册、个人资料、预设头像与隐私开关。
 - 关注交易伙伴、交易看板、交易记录与日历统计、留言和声音提醒。
 - 个人交易笔记、分类与四周期图表复盘，行情由自己的 MT5 采集程序上传。
+- 复盘图表页 `/chart`：Vela 多窗格 K 线（1 分钟到 1 天），点「复盘」直接落到那笔交易的开仓时间；可在图上画线、标注文字，画线自动保存。
+- 复盘作业：把做好的图表复盘发给已关注的交易伙伴，对方看到与你完全一致的图表、画线和标注，只读不可改。
 - 管理员验证器二次验证、设备信任、会话撤销与密码修改。
 
 源码版提供 MQ5 采集源码；**不附带 EXE、DMG、EX5 或绑定凭据**。网页使用手动采集安装流程。
@@ -30,6 +32,14 @@ docker compose exec tongpin python bootstrap_admin.py
 默认只监听服务器自身 `127.0.0.1:18886`。在服务器上访问 `http://localhost:18886/login`；远程浏览器请先配置自己的 HTTPS 反向代理。首次启动自动创建本实例的 SQLite 空库，保存在独立命名卷中；账号与记录仅写入这个卷。
 
 不使用 Docker 时：安装 Python 3.12，先运行 `python bootstrap_admin.py`，然后运行 `python app_server.py`。只使用 Python 标准库，无 pip 运行依赖。默认数据目录为当前项目的 `data/`，已被 Git 忽略。
+
+图表页的构建产物 `web/chart/` 已随仓库提供，直接用 Python 运行即可。改了 `web/chart-src/` 之后需要重新构建（Node 20+）：
+
+```sh
+cd web/chart-src
+npm ci
+npm run build
+```
 
 ## 发布到自己的域名
 
@@ -71,11 +81,14 @@ git push -u origin feature/my-change
 | 路径 | 内容 |
 |---|---|
 | `web/` | 网页、样式、图标和 MT5 采集源码 |
+| `web/chart-src/` | 复盘图表页源码（Vite + React + `@luxalgo/vela`） |
+| `web/chart/` | 图表页构建产物，由 `app_server.py` 在 `/chart` 提供 |
 | `app_server.py` | 独立 API 与网站服务 |
+| `chart.py` | 图表画线存档与复盘作业分享 |
 | `auth_security.py`、`challenge_image.py` | 本实例认证与图形验证 |
 | `journal.py`、`trade_time.py`、`market.py` | 复盘与时间处理；公共参考行情工具默认不调度 |
 | `bootstrap_admin.py` | 交互初始化本实例管理员 |
-| `compose.yaml`、`Dockerfile` | 独立容器部署 |
+| `compose.yaml`、`Dockerfile` | 独立容器部署（图表页在构建阶段用 Node 编译，运行时镜像内无 Node） |
 | `tests/` | 使用全新临时数据的集成测试 |
 
 [交接范围与数据排除](docs/交接范围.md) · [部署说明](docs/部署说明.md)

@@ -1,0 +1,43 @@
+{
+  "name": "tongpin-chart",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "同频 K 线图表页：@luxalgo/vela workspace + 复盘画线",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@luxalgo/vela": "0.9.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "typescript": "~5.9.3",
+    "vite": "8.3.5"
+  },
+  "overrides": {
+    "@zag-js/core": "1.46.0",
+    "@zag-js/menu": "1.46.0",
+    "@zag-js/types": "1.46.0",
+    "@zag-js/dialog": "1.46.0",
+    "@zag-js/tooltip": "1.46.0",
+    "@zag-js/vanilla": "1.46.0",
+    "@zag-js/dom-query": "1.46.0",
+    "@zag-js/popper": "1.46.0",
+    "@zag-js/rect-utils": "1.46.0",
+    "@zag-js/utils": "1.46.0",
+    "@zag-js/store": "1.46.0",
+    "@zag-js/dom-event": "1.46.0",
+    "@zag-js/interact-outside": "1.46.0",
+    "@zag-js/focus-visible": "1.46.0",
+    "@zag-js/anatomy": "1.46.0",
+    "@zag-js/element-rect": "1.46.0",
+    "@zag-js/remove-scroll": "1.46.0"
+  }
+}

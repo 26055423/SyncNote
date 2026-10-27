@@ -2,6 +2,7 @@
 import ipaddress
 import client_address
 import auth_security
+import chart
 import journal
 import market
 from trade_time import utc_trade, record_clock
@@ -50,6 +51,7 @@ with connect() as db:
     auth_security.initialize(db)
     journal.initialize(db)
     market.initialize(db)
+    chart.initialize(db)
     if not db.execute("SELECT 1 FROM security_config WHERE key='sessions-30days'").fetchone():
         db.execute('UPDATE sessions SET expires=? WHERE expires>?',(time.time()+2592000,time.time()))
         db.execute("INSERT INTO security_config VALUES('sessions-30days')")
@@ -155,6 +157,19 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/api/'):
                 with connect() as db:
                     u=self.user(db);uid=u['id']
+                    if path=='/api/chart/entry':
+                        ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
+                        row=None
+                        if share:
+                            if not share.isdigit():raise Error('作业不存在，或不是发给你的',404)
+                            row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
+                        owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
+                        if not owner:raise Error('用户不存在',404)
+                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
+                        review=journal.review(db,target,ticket,db.execute('SELECT * FROM broker_clocks WHERE person=?',(target,)).fetchone(),utc_trade)
+                        note=journal.notes(db,target)['notes'].get(str(ticket)) if (target==uid or row or owner['share_reviews']) else None
+                        return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':{'id':row['id'],'message':row['message'],'created':row['created'],'seen':bool(row['seen'])} if row else None,'review':review,'note':note,'chart':chart.state(db,target,str(ticket))})
+                    if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
                         return self.reply({**(journal.notes(db,target) if can else {'categories':journal.DEFAULT_TAGS,'notes':{}}),'can_view':can,'editable':target==uid})
@@ -208,8 +223,28 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))]})
                     raise Error('接口不存在',404)
             assets={'/':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/downloads/TongpinSync.mq5':'TongpinSync.mq5'}
-            for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','review.js'):assets['/'+f]=f
+            for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
             if re.fullmatch(r'/avatars/avatar(?:[1-9]|1[0-2])\.svg',path):assets[path]=path.lstrip('/')
+            if path in ('/chart','/chart/'):
+                page=ROOT/'web'/'chart'/'index.html'
+                if not page.is_file():raise Error('图表页尚未构建，请先执行 web/chart-src 的 npm run build',503)
+                body=page.read_bytes()
+                self.send_response(200)
+                # Vela 会在页面里注入 <style> 元素，这张页面单独放开内联样式；脚本仍只允许同源。
+                for k,v in [('Content-Type','text/html; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
+                self.end_headers();self.wfile.write(body);return
+            if path.startswith('/chart/assets/'):
+                base=(ROOT/'web'/'chart').resolve();file=(base/path[len('/chart/'):]).resolve()
+                if base not in file.parents or not file.is_file():raise Error('页面不存在',404)
+                body=file.read_bytes();suffix=file.suffix.lower()
+                mime='application/javascript' if suffix=='.js' else 'text/css' if suffix=='.css' else 'font/woff2' if suffix=='.woff2' else 'image/svg+xml' if suffix=='.svg' else 'application/octet-stream'
+                etag='"'+hashlib.sha256(body).hexdigest()[:32]+'"'
+                self.send_response(304 if self.headers.get('If-None-Match')==etag else 200)
+                for k,v in [('ETag',etag),('Cache-Control','public, max-age=31536000, immutable'),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
+                if self.headers.get('If-None-Match')!=etag:self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(body)))
+                self.end_headers()
+                if self.headers.get('If-None-Match')!=etag:self.wfile.write(body)
+                return
             if path in ('/guides/navigator.png','/guides/expert.png','/guides/webrequest.png','/guides/assistant.png','/guides/mac-security.png'):assets[path]=path.lstrip('/')
             if path not in assets:raise Error('页面不存在',404)
             f=assets[path];body=(ROOT/'web'/f).read_bytes();mime='text/html' if f.endswith('.html') else 'application/javascript' if f.endswith('.js') else 'text/css' if f.endswith('.css') else 'image/svg+xml' if f.endswith('.svg') else 'image/png' if f.endswith('.png') else 'text/plain'
@@ -225,6 +260,7 @@ class Handler(BaseHTTPRequestHandler):
             for k,v in [('Content-Type',mime+'; charset=utf-8'),('Cache-Control',cache),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
             self.end_headers();self.wfile.write(body)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
+        except chart.ChartError as e:self.reply({'error':e.text},e.code)
         except Error as e:self.reply({'error':e.text},e.code)
         except Exception:self.reply({'error':'服务暂时不可用'},500)
     def do_POST(self):
@@ -233,7 +269,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Sec-Fetch-Site')=='cross-site' or (origin and origin.rstrip('/') not in {PUBLIC_ORIGIN,'http://'+host,'https://'+host}):raise Error('请求来源不正确',403)
             if 'application/json' not in self.headers.get('Content-Type',''):raise Error('请使用 JSON 请求',415)
             length=int(self.headers.get('Content-Length','0'))
-            if not 1<=length<=(2097152 if urlparse(self.path).path=='/api/mt5/review' else 524288):raise Error('请求大小不正确')
+            if not 1<=length<=(1048576 if urlparse(self.path).path=='/api/chart/state' else 2097152 if urlparse(self.path).path=='/api/mt5/review' else 524288):raise Error('请求大小不正确')
             data=decode_request(self.rfile.read(length),urlparse(self.path).path)
             if not isinstance(data,dict):raise Error('数据格式不正确')
             path=urlparse(self.path).path;now=time.time();cookie=None;trusted_cookie=None
@@ -322,6 +358,16 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     u=self.user(db);uid=u['id'];result={'ok':True}
                     if path=='/api/journal':result=journal.save(db,uid,data)
+                    elif path=='/api/chart/state':
+                        ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
+                        result=chart.clear_state(db,uid,ticket) if data.get('clear') is True else chart.save_state(db,uid,ticket,data.get('state'))
+                    elif path=='/api/reviews/share':
+                        ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
+                        result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''))
+                    elif path=='/api/reviews/share/seen':
+                        share_id=data.get('id')
+                        if not isinstance(share_id,int) or isinstance(share_id,bool):raise Error('作业编号不正确')
+                        result=chart.mark_seen(db,uid,share_id)
                     elif path=='/api/trade-review/request':
                         target=data.get('person',uid);owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
                         if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
@@ -394,6 +440,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:raise Error('接口不存在',404)
             self.reply(result,cookie=cookie)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
+        except chart.ChartError as e:self.reply({'error':e.text},e.code)
         except Error as e:
             if urlparse(self.path).path=='/api/snapshot':print('Snapshot rejected:',e.code,e.text,flush=True)
             self.reply({'error':e.text},e.code)
