@@ -1,0 +1,5 @@
+# 服务器脚本必须保持 LF，否则 bash 会报坏的解释器
+*.sh text eol=lf
+
+# 构建产物按二进制处理，避免行尾转换破坏压缩包
+web/chart/assets/* -text
