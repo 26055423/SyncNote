@@ -1,1 +1,3 @@
 window.assistantPanel=()=>`<h2>连接自己的 MT5</h2><p class="profile-hint">此独立源码版使用手动安装采集程序，不附带原生可执行安装包。</p><ol class="connect-steps"><li>在个人中心生成连接码。</li><li><a href="/downloads/TongpinSync.mq5" download>下载 TongpinSync.mq5 源码</a>，用 MT5 MetaEditor 编译。</li><li>在 MT5 的工具 → 选项 → EA 交易中，将当前网站地址加入 WebRequest 白名单。</li><li>把 TongpinSync 挂到图表，WebsiteURL 填当前网站地址，ConnectionCode 填自己的连接码。</li></ol><p class="profile-hint">采集程序仅上传交易数据，不下单。请勿向他人转发自己的连接码。</p><p id="assistant-feedback" class="form-feedback"></p><p id="assistant-status" class="profile-hint"></p>`;
+// 独立源码版没有原生安装助手，页面仍在调用这个函数，留一个空实现避免整页脚本中断。
+window.bindAssistant=()=>{};

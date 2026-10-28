@@ -12,7 +12,7 @@ async function search(){const r=await api('/api/users?q='+encodeURIComponent($('
 $('#search-form').onsubmit=async e=>{e.preventDefault();try{await search();feedback(e.target,'');}catch(err){feedback(e.target,err.message,true);}};
 $('#unlink').onclick=async()=>{try{await api('/api/mt5/unlink',{});await load(false);}catch(e){$('#page-feedback').textContent=e.message;}};
 $('#logout').onclick=async()=>{try{await api('/api/logout',{});location.replace('/login');}catch(e){$('#page-feedback').textContent=e.message;}};
-$('#assistant-panel').innerHTML=assistantPanel();bindAssistant();
+$('#assistant-panel').innerHTML=assistantPanel();if(typeof bindAssistant==='function')bindAssistant();
 load().catch(e=>$('#page-feedback').textContent=e.message);setInterval(()=>load(false).catch(()=>{}),10000);
 
 function renderAvatarPicker(){const box=$('#profile-avatar-picker');box.innerHTML=Array.from({length:12},(_,i)=>`<button type="button" class="avatar-choice ${$('#avatar').value==='avatar'+(i+1)?'selected':''}" data-avatar="avatar${i+1}" aria-label="选择头像 ${i+1}">${avatarMarkup('avatar'+(i+1))}</button>`).join('');box.querySelectorAll('[data-avatar]').forEach(b=>b.onclick=()=>{$('#avatar').value=b.dataset.avatar;renderAvatarPicker();});}
