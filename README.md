@@ -41,6 +41,19 @@ npm ci
 npm run build
 ```
 
+## 连接自己的 MT5
+
+在个人中心点「生成连接码」，然后二选一：
+
+- **已经有 WebBridge**（`live_data/ea_bridge`，EA + `gateway.py`，REST 在 `127.0.0.1:8790`）：在运行 MT5 的机器上跑
+  ```sh
+  python tools/bridge_push.py --token <连接码> --tongpin https://自己的域名
+  ```
+  它只读 bridge 的账户/持仓/成交/K 线数据，再推给同频；不改 bridge，也不碰 MT5。
+- **没有 bridge**：用 `web/TongpinSync.mq5`（直接读 MT5 账户历史，需要把网站地址加进 WebRequest 白名单），把连接码填进 `ConnectionCode`。
+
+bridge 的成交表只保留 `gateway.py` 启动之后的记录；更早的历史要改用 `TongpinSync.mq5`，或者给 bridge 加历史接口。
+
 ## 发布到自己的域名
 
 在服务器本地 `.env` 中设置 `PUBLIC_ORIGIN=https://自己的域名`、`COOKIE_SECURE=1`，配置好 HTTPS 后运行 `docker compose up -d`。反向代理示例在 [deploy/Caddyfile.example](deploy/Caddyfile.example)，请替换示例域名，并自行安装、配置 Caddy 与 DNS。

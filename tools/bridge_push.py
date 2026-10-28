@@ -12,6 +12,7 @@ MT5 已经挂了 WebBridge（EA → gateway.py → http://127.0.0.1:8790）时�
 """
 import argparse
 import json
+import os
 import sqlite3
 import time
 import urllib.error
@@ -194,13 +195,16 @@ def upload_review(bridge, tongpin, token, ticket, closed):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--token', required=True, help='同频个人中心生成的连接码')
+    parser.add_argument('--token', default=os.environ.get('TONGPIN_TOKEN',''), help='同频个人中心生成的连接码（也可用环境变量 TONGPIN_TOKEN）')
     parser.add_argument('--tongpin', default='http://127.0.0.1:18886', help='同频地址，例如 https://tongpin.example.com')
     parser.add_argument('--bridge', default=DEFAULT_BRIDGE)
     parser.add_argument('--db', default=DEFAULT_DB, help='bridge 的 ea_bridge.db')
     parser.add_argument('--interval', type=float, default=5.0)
     parser.add_argument('--once', action='store_true', help='只推一次，便于排查')
     args = parser.parse_args()
+    if not args.token:
+        print('缺少连接码：--token 或环境变量 TONGPIN_TOKEN')
+        return 2
 
     tongpin = args.tongpin.rstrip('/')
     state = load_state()
