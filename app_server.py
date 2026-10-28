@@ -348,7 +348,14 @@ class Handler(BaseHTTPRequestHandler):
                     key=digest(broker+':'+account)
                     if link['account_key'] and link['account_key']!=key:raise Error('此账号已绑定固定 MT5 账户，暂不支持切换交易账户',409)
                     clock=record_clock(db,uid,broker,s,now)
-                    hs=[utc_trade({**{k:v for k,v in t.items() if k not in ('time_basis','time_verified')},'closed_server':t['closed']},clock) for t in hs]
+                    # 采集端可以两种时间口径：券商墙钟（TongpinSync.mq5 原来的做法），
+                    # 或者已经换算好的 UTC + 券商时间（WebBridge 这类本地桥）。
+                    # 后者不再走“只认当前测量窗口”的校准，历史补传也能落库。
+                    def normalize(item):
+                        if item.get('time_basis')=='utc' and isinstance(item.get('closed_server'),(int,float)) and item.get('closed') is not None:
+                            return {**item,'time_verified':True,'time_estimated':False}
+                        return utc_trade({**{k:v for k,v in item.items() if k not in ('time_basis','time_verified')},'closed_server':item['closed']},clock)
+                    hs=[normalize(t) for t in hs]
                     db.execute('UPDATE mt5_links SET account_key=?,updated=? WHERE user_id=?',(key,now,uid));s={k:s[k] for k in ('balance','equity','currency','online','positions') if k in s};s['history']=[]
                     db.execute('INSERT INTO snapshots VALUES(?,?,?) ON CONFLICT(person) DO UPDATE SET payload=excluded.payload,updated=excluded.updated',(uid,json.dumps(s,allow_nan=False),now))
                     for t in hs:db.execute('INSERT INTO trades VALUES(?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET payload=excluded.payload',(uid,str(t['ticket']),json.dumps(t,allow_nan=False)))

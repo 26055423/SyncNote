@@ -31,3 +31,5 @@ __pycache__/
 TongpinConnection.txt
 
 web/chart-src/node_modules/
+
+tools/bridge_push_state.json
