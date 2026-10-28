@@ -8,7 +8,7 @@ window.assistantPanel = () => `
   <button id="copy-code" type="button" hidden>复制连接码</button>
 </div>
 <label>连接码<input id="connection-code" readonly placeholder="点「生成连接码」，只显示一次" autocomplete="off"></label>
-<p class="profile-hint">连接码等同密码，只填进自己的 MT5。重新生成会让旧码立刻失效。</p>
+<p class="profile-hint">连接码等同密码，只填进自己的 MT5。重新生成会让旧码立刻失效——如果正在用 tools/bridge_push.py 同步，记得把新码写进 %LOCALAPPDATA%\\Tongpin\\push-token.txt 再重启同步。</p>
 <ol class="connect-steps">
   <li>点「生成连接码」并复制（忘了就重新生成一个）。</li>
   <li><a href="/downloads/TongpinSync.mq5" download>下载 TongpinSync.mq5 源码</a>，用 MT5 的 MetaEditor 打开并按 F7 编译。</li>
