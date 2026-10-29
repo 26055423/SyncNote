@@ -102,4 +102,4 @@ git push -u origin feature/my-change
 | `compose.yaml`、`Dockerfile` | 独立容器部署（图表页在构建阶段用 Node 编译，运行时镜像内无 Node） |
 | `tests/` | 使用全新临时数据的集成测试 |
 
-[交接范围与数据排除](docs/交接范围.md) · [部署说明](docs/部署说明.md)
+[架构说明](docs/架构说明.md) · [Agent 入口](AGENTS.md) · [交接范围与数据排除](docs/交接范围.md) · [部署说明](docs/部署说明.md)
