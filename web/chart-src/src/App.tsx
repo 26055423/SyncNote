@@ -5,6 +5,7 @@ import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type ReviewCharts } from './vela/provider';
 import { LocalTradePanel } from './LocalTradePanel';
+import { BottomDock } from './BottomDock';
 import { localTerminal, useLocalTerminal } from './localTerminal';
 
 /* ------------------------------------------------------------------ 类型 */
@@ -693,6 +694,15 @@ export default function App() {
       </div>
 
       {/* ---------------------------------------------------------- 底栏 */}
+      <BottomDock
+        connected={localConnected}
+        localPositions={local.positions}
+        localOrders={local.orders}
+        cloudPositions={myPositions}
+        history={myHistory}
+        onReview={(ticket) => openTicket(me!.id, ticket)}
+      />
+
       <footer className="ticker">
         <span className="label">动态</span>
         <div className="track">
