@@ -253,8 +253,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not page.is_file():raise Error('图表页尚未构建，请先执行 web/chart-src 的 npm run build',503)
                 body=page.read_bytes()
                 self.send_response(200)
-                # Vela 会在页面里注入 <style> 元素，这张页面单独放开内联样式；脚本仍只允许同源。
-                for k,v in [('Content-Type','text/html; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
+                # Vela 会在页面里注入 <style> 元素，这张页面单独放开内联样式；
+                # 静态资源从 jsDelivr 取（国内到新加坡直连太慢），脚本仍只允许同源 + 这个 CDN。
+                for k,v in [('Content-Type','text/html; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
                 self.end_headers();self.wfile.write(body);return
             if path.startswith('/chart/assets/'):
                 base=(ROOT/'web'/'chart').resolve();file=(base/path[len('/chart/'):]).resolve()
