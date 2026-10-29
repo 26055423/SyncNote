@@ -20,7 +20,7 @@
 需要 Docker Engine 和 Docker Compose v2。操作都在你自己的服务器上完成：
 
 ```sh
-git clone https://github.com/ninghui8473-svg/tongpin.git
+git clone https://github.com/26055423/SyncNote.git
 cd tongpin
 cp .env.example .env
 docker compose up -d --build
