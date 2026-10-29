@@ -505,10 +505,11 @@ void HandleTradeCommand(const int peer,const string js)
    }
    g_last_command=GetTickCount64();
    bool sent=OrderSend(request,result);
+   if(!sent && result.retcode==0) result.comment="Submission result unknown; MT5 error "+IntegerToString(GetLastError());
    string state="rejected";
    if(result.retcode==10009 || result.retcode==10010 || result.retcode==10025) state="completed";
    else if(result.retcode==10008) state="submitted";
-   else if(result.retcode==0 || result.retcode==10012 || result.retcode==10031 || (sent && result.retcode==10011)) state="uncertain";
+   else if(result.retcode==0 || result.retcode==10011 || result.retcode==10012 || result.retcode==10031) state="uncertain";
    g_commands[index].state=state;
    g_commands[index].broker_order=result.order;g_commands[index].broker_deal=result.deal;
    g_commands[index].result=CommandResult(id,state,result.comment,result.retcode,result.order,result.deal,result.price,result.volume);
