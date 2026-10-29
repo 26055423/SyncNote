@@ -1,5 +1,5 @@
 """Isolated integration checks. All accounts/trades are generated fixtures."""
-import hashlib,http.cookiejar,json,os,secrets,sqlite3,subprocess,sys,tempfile,urllib.request,urllib.error
+import hashlib,http.cookiejar,io,json,os,secrets,sqlite3,subprocess,sys,tempfile,urllib.request,urllib.error,zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 count=0
@@ -35,7 +35,12 @@ def main():
    with sqlite3.connect(db) as conn:ensure(conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]==1,'only freshly initialized admin')
    ensure(anon.request('/api/health')['ok'],'health')
    for path in ('/api/state','/api/profile','/api/history','/api/invite'):anon.request(path,status=401)
-   for path in ('/login','/register','/style.css','/app.js','/downloads/TongpinSync.mq5'):ensure(len(anon.request(path))>0,'static content '+path)
+   for path in ('/login','/register','/style.css','/app.js','/downloads/TongpinSync.mq5','/local-ea','/local-ea.css'):ensure(len(anon.request(path))>0,'static content '+path)
+   with zipfile.ZipFile(io.BytesIO(anon.request('/downloads/tongpin-local.zip'))) as archive:
+    manifest=json.loads(archive.read('TongpinLocal/SOURCE_MANIFEST.json'))
+    ensure('TongpinLocal.mq5' in manifest['files'],'EA source entry is packaged')
+    ensure(all(name.endswith(('.mq5','.mqh','.md','.json')) for name in archive.namelist()),'source download contains no executable or credential files')
+    ensure(all(hashlib.sha256(archive.read('TongpinLocal/'+name)).hexdigest()==digest for name,digest in manifest['files'].items()),'EA source manifest matches package')
    admin.request('/api/login',{'username':'admin','password':password})
    ensure(admin.request('/api/me')['user']['role']=='admin','independent owner')
    anon.request('/api/mt5/assistant',{'platform':'mac'},status=401)
@@ -55,6 +60,9 @@ def main():
    alice.request('/api/journal',{'person':b['id'],'ticket':'fixture','text':'cross-user attempt'},status=404)
    # 复盘图表页：静态资源、画线存档、作业分享与只读边界。
    page=anon.request('/chart');ensure('交易台'.encode() in page,'chart page served')
+   with anon.opener.open(base+'/chart',timeout=15) as response:
+    csp=response.headers.get('Content-Security-Policy','')
+    ensure("connect-src 'self' ws://127.0.0.1:18765;" in csp,'chart allows only the designated local EA endpoint')
    import re as _re
    asset=_re.search(rb'/chart/assets/[^"\']+\.js',page)
    ensure(asset is not None,'chart bundle referenced')

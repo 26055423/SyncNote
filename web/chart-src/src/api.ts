@@ -48,3 +48,9 @@ export function money(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+/** Quote precision is separate from account-currency precision. */
+export function quotePrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
+}

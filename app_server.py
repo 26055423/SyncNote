@@ -4,6 +4,7 @@ import client_address
 import auth_security
 import chart
 import live
+import local_ea
 import ea_hub
 import journal
 import market
@@ -166,6 +167,12 @@ class Handler(BaseHTTPRequestHandler):
                     if not auth_security.limit(db,'challenge:'+self.client_ip(),60,60):raise Error('请求过于频繁',429)
                     return self.reply(auth_security.challenge(db))
             if path=='/api/health':return self.reply({'ok':True,'version':'0.2','authentication':True})
+            if path=='/downloads/tongpin-local.zip':
+                try:body=local_ea.source_package(ROOT)
+                except (OSError,ValueError):raise Error('本机 EA 源码包尚未就绪',503)
+                self.send_response(200)
+                for k,v in [('Content-Type','application/zip'),('Content-Disposition','attachment; filename="tongpin-local.zip"'),('Content-Length',str(len(body))),('Cache-Control','no-store'),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
+                self.end_headers();self.wfile.write(body);return
             if path=='/api/mt5/status':
                 auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
                 with connect() as db:
@@ -251,7 +258,7 @@ class Handler(BaseHTTPRequestHandler):
                         for m in messages:m['name']=names.get(m['person'],'')
                         return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))]})
                     raise Error('接口不存在',404)
-            assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/downloads/TongpinSync.mq5':'TongpinSync.mq5'}
+            assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/local-ea':'local-ea.html','/local-ea.css':'local-ea.css','/downloads/TongpinSync.mq5':'TongpinSync.mq5'}
             for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
             if re.fullmatch(r'/avatars/avatar(?:[1-9]|1[0-2])\.svg',path):assets[path]=path.lstrip('/')
             # 首页就是交易台；旧看板挪到 /board。
@@ -262,7 +269,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 # Vela 会在页面里注入 <style> 元素，这张页面单独放开内联样式；
                 # 静态资源从 jsDelivr 取（国内到新加坡直连太慢），脚本仍只允许同源 + 这个 CDN。
-                for k,v in [('Content-Type','text/html; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
+                for k,v in [('Content-Type','text/html; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' ws://127.0.0.1:18765; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
                 self.end_headers();self.wfile.write(body);return
             if path.startswith('/chart/assets/'):
                 base=(ROOT/'web'/'chart').resolve();file=(base/path[len('/chart/'):]).resolve()

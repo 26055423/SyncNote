@@ -198,3 +198,32 @@ table.mini tr:last-child td { border-bottom: 0; }
   .rail { width: 320px; flex-basis: 320px; }
   .metrics { display: none; }
 }
+
+/* 本机 EA 连接与交易；窄栏内保持账户、确认信息完整可读。 */
+.local-terminal { display: flex; flex-direction: column; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.local-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: space-between; }
+.local-heading h3 { margin: 0; }
+.local-terminal .link-dot { white-space: normal; }
+.local-terminal .kv { overflow-wrap: anywhere; }
+.local-terminal input { width: 100%; min-width: 0; background: #0b141e; border: 1px solid #304255; border-radius: 6px; color: var(--text); padding: 7px 8px; font: inherit; }
+.local-terminal input:focus { outline: 1px solid var(--accent); }
+.local-terminal button:disabled { cursor: default; opacity: .45; }
+.local-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.local-buttons a { color: var(--accent); font-size: 11px; }
+.local-pair { display: flex; flex-direction: column; gap: 5px; }
+.local-pair input { flex: 1; width: 120px; letter-spacing: .15em; }
+.local-order-form { display: flex; flex-direction: column; gap: 7px; }
+.local-price-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.local-price-inputs label { display: flex; flex-direction: column; gap: 4px; }
+.local-buy { background: #1c4935; border-color: #35674d; }
+.local-sell { background: #532e35; border-color: #814653; }
+.local-order-form .local-buttons button { flex: 1; }
+.local-error { margin: 0; color: #efacac; overflow-wrap: anywhere; font-size: 12px; }
+.local-notice, .local-confirm { border: 1px solid #65522f; border-radius: 7px; background: #272218; padding: 8px; font-size: 12px; }
+.local-notice p, .local-confirm p { margin: 4px 0 8px; overflow-wrap: anywhere; }
+.local-position { display: flex; flex-direction: column; gap: 5px; padding: 8px; border: 1px solid var(--line); border-radius: 7px; }
+.local-position > div:first-child { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px; }
+.local-position b { font-size: 12px; }
+.local-command-log { display: flex; flex-direction: column; gap: 8px; }
+.local-command { border-left: 2px solid #465c72; padding: 4px 0 4px 8px; font-size: 11px; }
+.local-command p { font-size: 11px; margin: 4px 0; }

@@ -129,14 +129,13 @@ function basePeriodKey(base: BaseTimeframe): string {
 }
 
 /**
- * 实时行情的 provider：首屏用服务端缓存的 K 线，之后每 3 秒拉一次最新几根，
- * 通过 `subscribe` 把最后一根喂给图表，图会自己更新而不用重挂载。
+ * 实时行情 provider：各窗格共享页面缓存和更新通知，不再各自发 HTTP 请求。
  */
 export class LiveProvider implements DataProvider {
   constructor(
     private readonly initial: ReviewCharts,
     private readonly symbol: string,
-    private readonly poll: () => Promise<ReviewCharts>,
+    private readonly watch: (listener: () => void) => () => void,
   ) {}
 
   info() {
@@ -163,22 +162,13 @@ export class LiveProvider implements DataProvider {
 
   subscribe(_ticker: string, timeframe: string, onBar: (bar: { time: number; open: number; high: number; low: number; close: number; volume: number }) => void): () => void {
     const recipe = TIMEFRAMES[timeframe];
-    let alive = true;
-    const timer = window.setInterval(async () => {
-      if (!alive || !recipe) return;
-      try {
-        const charts = await this.poll();
-        const rows = charts[recipe.base] ?? [];
-        const last = rows[rows.length - 1];
-        if (last) onBar(toOhlcv(last));
-      } catch {
-        /* 网络抖动时继续下一轮 */
-      }
-    }, 3000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
+    if (!recipe) return () => undefined;
+    return this.watch(() => {
+      const base = this.initial[recipe.base] ?? [];
+      const rows = recipe.seconds === (TIMEFRAMES[basePeriodKey(recipe.base)]?.seconds ?? 60) ? base : aggregate(base, recipe.seconds);
+      const last = rows[rows.length - 1];
+      if (last) onBar(toOhlcv(last));
+    });
   }
 }
 

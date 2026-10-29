@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, money, stamp } from './api';
+import { api, money, quotePrice, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
 import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type ReviewCharts } from './vela/provider';
+import { LocalTradePanel } from './LocalTradePanel';
+import { localTerminal, useLocalTerminal } from './localTerminal';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -87,6 +89,8 @@ function barsClose(entry: Entry | null): number | null {
 /* ------------------------------------------------------------------ 页面 */
 
 export default function App() {
+  const local = useLocalTerminal();
+  const localConnected = local.phase === 'connected';
   const params = useMemo(() => new URLSearchParams(location.search), []);
   const [board, setBoard] = useState<Board | null>(null);
   const [entry, setEntry] = useState<Entry | null>(null);
@@ -112,9 +116,14 @@ export default function App() {
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
   const liveRef = useRef<ReviewCharts>({});
+  const liveListeners = useRef(new Set<() => void>());
+  const liveSymbol = localConnected ? local.symbol : 'XAUUSD';
   const liveProvider = useMemo(
-    () => new LiveProvider(liveRef.current, 'XAUUSD', async () => toChartBars((await api<{ bars: Record<string, number[][]> }>('/api/live?limit=3')).bars)),
-    [],
+    () => new LiveProvider(liveRef.current, liveSymbol, (listener) => {
+      liveListeners.current.add(listener);
+      return () => liveListeners.current.delete(listener);
+    }),
+    [liveSymbol],
   );
 
   const chartRef = useRef<ChartHandle>(null);
@@ -189,6 +198,24 @@ export default function App() {
   /* ------------------------------------------------------------ 实时行情 */
 
   useEffect(() => {
+    for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as keyof ReviewCharts];
+    setLiveBars(null);
+    setLiveTick(null);
+  }, [localConnected, local.epoch]);
+
+  useEffect(() => {
+    if (!localConnected) return;
+    setLiveTick(local.tick);
+    const incoming = toChartBars(local.bars);
+    Object.assign(liveRef.current, incoming);
+    if (local.history_ready && Object.keys(incoming).length) setLiveBars(liveRef.current);
+    for (const listener of liveListeners.current) listener();
+  }, [localConnected, local.tick, local.bars, local.history_ready]);
+
+  useEffect(() => () => localTerminal.disconnect(), []);
+
+  useEffect(() => {
+    if (localConnected) return;
     let alive = true;
     const tick = async () => {
       try {
@@ -209,6 +236,7 @@ export default function App() {
             }
             merged[key as keyof ReviewCharts] = next.slice(-3000);
           }
+          for (const listener of liveListeners.current) listener();
         }
       } catch {
         /* 下一轮再试 */
@@ -220,10 +248,10 @@ export default function App() {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [mode]);
+  }, [mode, localConnected]);
 
   useEffect(() => {
-    if (mode !== 'live' || liveBars) return;
+    if (localConnected || mode !== 'live' || liveBars) return;
     let alive = true;
     void api<{ bars: Record<string, number[][]> }>('/api/live?limit=400')
       .then((data) => {
@@ -237,7 +265,7 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [mode, liveBars]);
+  }, [mode, liveBars, localConnected]);
 
   /* ------------------------------------------------- 会话：作业 / 关注 */
 
@@ -338,17 +366,21 @@ export default function App() {
 
   const me = board?.user;
   const mySnap = me ? board?.snapshots[me.id] : undefined;
+  const displayedAccount = localConnected ? local.account : mySnap?.data;
   const myHistory: any[] = mySnap?.data?.history ?? [];
-  const myPositions: any[] = mySnap?.data?.positions ?? [];
+  const myPositions: any[] = localConnected ? local.positions : mySnap?.data?.positions ?? [];
   const floating = myPositions.reduce((n: number, p: any) => n + (p.profit || 0), 0);
-  const mt5Online = Boolean(mySnap && board && board.now - (mySnap.updated || 0) <= 45 && mySnap.data.online !== false);
-  const price = (liveTick && liveTick.bid ? (liveTick.bid + liveTick.ask) / 2 : null) ?? barsClose(entry) ?? null;
+  const mt5Online = localConnected || Boolean(mySnap && board && board.now - (mySnap.updated || 0) <= 45 && mySnap.data.online !== false);
+  const price = localConnected
+    ? (local.tick?.bid ? (local.tick.bid + local.tick.ask) / 2 : null)
+    : (liveTick && liveTick.bid ? (liveTick.bid + liveTick.ask) / 2 : null) ?? barsClose(entry) ?? null;
   const liveAnchor = (() => {
     const rows = liveBars?.M1 ?? [];
     const last = rows[rows.length - 1];
     return last ? last[0] * 1000 : Date.now();
   })();
   const availableTfs = useMemo(() => {
+    if (mode === 'live') return TIMEFRAME_OPTIONS;
     const charts = entry?.review.charts ?? {};
     return TIMEFRAME_OPTIONS.filter((option) => {
       const base = charts[TIMEFRAMES[option.id].base];
@@ -357,7 +389,7 @@ export default function App() {
       if (option.id === '1D') return base.length >= 24;
       return true;
     });
-  }, [entry]);
+  }, [entry, mode]);
 
   const ready = Boolean(
     entry && entry.review.status === 'ready' && Object.values(entry.review.charts || {}).some((bars) => (bars?.length ?? 0) > 1),
@@ -388,16 +420,17 @@ export default function App() {
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
         <div className="symbol">
-          <b>{trade.symbol || 'XAUUSD'}</b>
-          <span className={price != null ? 'price' : 'price dim'}>{price != null ? money(price) : '—'}</span>
-          <span className={mt5Online ? 'link-dot on' : 'link-dot off'}>{mt5Online ? 'MT5 在线' : 'MT5 离线'}</span>
+          <b>{mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'}</b>
+          <span className={price != null ? 'price' : 'price dim'}>{price != null ? quotePrice(price) : '—'}</span>
+          <span className={mt5Online ? 'link-dot on' : 'link-dot off'}>{localConnected ? '本机直连' : mt5Online ? '云端同步 · 只读' : 'MT5 未连接'}</span>
         </div>
         <div className="metrics">
-          <span>净值 <b>{money(mySnap?.data?.equity)}</b></span>
-          <span>余额 <b>{money(mySnap?.data?.balance)}</b></span>
+          <span>净值 <b>{money(displayedAccount?.equity)}</b></span>
+          <span>余额 <b>{money(displayedAccount?.balance)}</b></span>
           <span>浮盈 <b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b></span>
         </div>
         <nav className="top-actions">
+          <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>
           <a href="/history">交易记录</a>
           <a href="/profile">{me?.nickname || '个人中心'}</a>
           <button type="button" className="icon" title="显示/隐藏右侧栏" onClick={() => setRailOpen((v) => !v)}>▤</button>
@@ -424,12 +457,12 @@ export default function App() {
           <div className="chart-body">
             {mode === 'live' && liveBars ? (
               <ChartWorkspace
-                key="live"
+                key={`live:${localConnected ? local.instance_id + ':' + local.epoch : 'cloud'}:${liveSymbol}`}
                 ref={chartRef}
                 charts={liveBars}
                 provider={liveProvider}
                 providerName="live"
-                symbol="XAUUSD"
+                symbol={liveSymbol}
                 anchorMs={liveAnchor}
                 savedState={null}
                 readOnly={false}
@@ -439,7 +472,7 @@ export default function App() {
                 onSyncs={setSyncs}
                 onError={setError}
               />
-            ) : ready ? (
+            ) : mode === 'review' && ready ? (
               <ChartWorkspace
                 key={`${target?.person}:${target?.ticket}`}
                 ref={chartRef}
@@ -457,8 +490,8 @@ export default function App() {
               />
             ) : (
               <div className="chart-empty">
-                <p>{target ? (entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…') : '还没有可复盘的交易'}</p>
-                <p className="dim">{target ? '同步完成后图表会自动出现' : '先在 MT5 上同步一笔成交'}</p>
+                <p>{mode === 'live' ? (localConnected ? local.history_ready ? '本机历史暂不可用，请在 MT5 加载历史后重新连接' : '正在加载本机四周期 K 线…' : '等待行情数据…') : target ? (entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…') : '还没有可复盘的交易'}</p>
+                <p className="dim">{mode === 'live' ? '在右侧连接本机 EA，或使用已有云端同步行情' : target ? '同步完成后图表会自动出现' : '先在 MT5 上同步一笔成交'}</p>
               </div>
             )}
           </div>
@@ -492,10 +525,11 @@ export default function App() {
             <div className="rail-body">
               {tab === 'trade' ? (
                 <div className="pane">
+                  <LocalTradePanel state={local} />
                   <h3>账户</h3>
                   <div className="kv">
-                    <span>净值</span><b>{money(mySnap?.data?.equity)}</b>
-                    <span>余额</span><b>{money(mySnap?.data?.balance)}</b>
+                    <span>净值</span><b>{money(displayedAccount?.equity)}</b>
+                    <span>余额</span><b>{money(displayedAccount?.balance)}</b>
                     <span>浮盈</span><b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b>
                   </div>
 
@@ -509,7 +543,7 @@ export default function App() {
                             <td>{p.symbol}</td>
                             <td className={sideClass(p.side)}>{sideText(p.side)}</td>
                             <td>{p.volume}</td>
-                            <td>{money(p.open)}</td>
+                            <td>{money(p.price_open ?? p.open)}</td>
                             <td className={(p.profit || 0) >= 0 ? 'up' : 'down'}>{money(p.profit)}</td>
                           </tr>
                         ))}
@@ -517,7 +551,7 @@ export default function App() {
                     </table>
                   ) : <p className="dim">没有持仓</p>}
 
-                  <h3>最近成交 <small>{myHistory.length}</small></h3>
+                  <h3>云端最近成交 <small>{myHistory.length}</small></h3>
                   <TradeList rows={myHistory.slice(0, 12)} onPick={(row) => openTicket(me!.id, String(row.ticket))} />
                 </div>
               ) : null}

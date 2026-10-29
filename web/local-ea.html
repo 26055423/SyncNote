@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本机 EA · 同频</title><link rel="stylesheet" href="/local-ea.css"></head>
+<body><main>
+<a class="back" href="/chart">← 返回交易台</a>
+<p class="eyebrow">同频 · 本机连接预览版</p>
+<h1>账户留在 MT5，网页连接你的电脑。</h1>
+<p>这套 EA 源码在你自己的 MetaEditor 中编译。网页通过本机 WebSocket 获取数据、发送受 EA 本地权限限制的交易请求，无需安装 Python 或额外代理程序，也不用在网站填写 MT5 密码。</p>
+<p class="notice">预览版：默认只读。交易功能仅供模拟账户联调；网站发布与源码编译成功不能替代模拟账户的实机验收。实盘请继续使用已验证的 MT5 操作方式。</p>
+<a class="download" href="/downloads/tongpin-local.zip">下载 EA 源码包</a>
+<p class="muted">包含入口 MQ5、所需 MQH、安装说明、协议和 SHA-256 清单；不包含 EX5、账户、密码或连接码。</p>
+<h2>安装与连接</h2>
+<ol>
+<li><strong>准备环境。</strong>在同一台 Windows 电脑上运行 MT5 与新版 Chrome / Edge。网站使用 HTTPS，手机或另一台电脑上的浏览器无法通过 127.0.0.1 连接这台 MT5。</li>
+<li><strong>检查并编译。</strong>解压源码包，将 TongpinLocal 文件夹放入 MT5 数据目录的 MQL5/Experts。用 MetaEditor 打开 TongpinLocal.mq5，按 F7 编译，确认没有错误。</li>
+<li><strong>挂载 EA。</strong>在需要查看的品种专用图表挂载 EA。按源码说明启用系统 DLL 导入。系统网络库用于本机监听，密码学库用于生成配对凭据；不需要下载自定义 DLL。</li>
+<li><strong>确认本地设置。</strong>EA 默认只读；允许的网站来源应精确填写本站 HTTPS Origin。交易开关、品种和限额由你在 EA 中决定，网页不能提高这些权限。</li>
+<li><strong>完成配对。</strong>回到交易台，打开本机连接，允许浏览器访问本机网络，输入 EA 显示的一次性配对码，再在 MT5 图表上确认授权。核对网页显示的券商、账号和品种。</li>
+<li><strong>先对照再操作。</strong>先核对 bid/ask、持仓和图表。在模拟账户开启交易时，确认手数和本地限额。请求超时显示“结果待核实”时，先在 MT5 查询，不要再次点击下单。</li>
+</ol>
+<h2>权限和数据</h2>
+<p>网站登录、本机配对、云端采集连接码彼此独立。配对令牌仅存在当前网页内存；页面刷新、EA 重启或切换 MT5 账户后需要重新配对。EA 卸载后本机连接停止，但券商已接受的订单不会因此撤销。</p>
+<p>本机模式不会自动把账户与行情上传到网站。你以前主动启用的旧 EA / 网关上传仍按原配置运行，需要分别关闭。网页复盘和好友分享继续使用你已保存在网站上的数据。</p>
+<h2>连接失败时</h2>
+<p>检查 EA 是否运行、DLL 权限、端口占用、网站是否为 HTTPS，以及浏览器是否允许访问本机网络。不要关闭浏览器安全检查，不要安装陌生证书。连接失败时网页不会切换成云端代下单。</p>
+<p class="muted">当前本机端点为 ws://127.0.0.1:18765/ws。不同终端、非 Windows 环境和远程访问不属于首版支持范围。源码和网站的协议版本不一致时请保持只读并重新核对版本。</p>
+</main></body></html>

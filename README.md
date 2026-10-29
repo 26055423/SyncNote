@@ -43,6 +43,20 @@ npm run build
 
 ## 连接自己的 MT5
 
+### 本机 EA 直连网页（新增预览版）
+
+交易台右侧提供「连接本机 MT5」，安装说明在网站 `/local-ea`，源码包在 `/downloads/tongpin-local.zip`。
+用户自行审阅和编译 `bridge/TongpinLocal.mq5`，在同一台 Windows 电脑上运行 MT5 和浏览器，通过配对码及 MT5 图表本地确认授权。
+不需要 Python 网关或自定义 DLL；需要允许源码中列明的 Windows 系统 DLL 调用。网页不收集 MT5 密码。
+
+EA 默认只读，首版硬性限定模拟账户及套期保值模式的交易联调，实盘保持只读；交易权限和限额在 EA 参数中设置。
+公网网页连接本机必须部署 HTTPS，并处理浏览器的本机网络权限；使用服务器 HTTP IP 地址时连接按钮会提示 HTTPS 要求。
+新增本机数据默认不上传，不经网站服务器转发下单，也不自动重试结果未知的交易。原有用户已启用的上传配置仍需自行管理。
+
+设计和验收要求见 [本机 EA 交易架构设计](docs/本机EA交易架构设计.md)，实际字段与使用步骤见 [本机协议](bridge/LOCAL_PROTOCOL.md) 和 [EA 安装说明](bridge/LOCAL_README.md)。
+
+### 原有云端采集方式
+
 在个人中心点「生成连接码」，然后二选一：
 
 - **EA 直连服务器（推荐，架构已跑通）**：`ea_hub.py` 在服务器上监听 `8788`，EA 用同频的连接码握手后长期保持连接，网页直接读它的实时状态。WebBridge.mq5 里把 `InpHost` 改成本站地址、`InpPort` 改 `8788`、`InpToken` 填连接码即可；协议（NDJSON v1）一行不用改。需要在安全组放行 TCP 8788，正式使用前还要加 TLS（等域名）。
@@ -103,4 +117,4 @@ git push -u origin feature/my-change
 | `compose.yaml`、`Dockerfile` | 独立容器部署（图表页在构建阶段用 Node 编译，运行时镜像内无 Node） |
 | `tests/` | 使用全新临时数据的集成测试 |
 
-[架构说明](docs/架构说明.md) · [Agent 入口](AGENTS.md) · [交接范围与数据排除](docs/交接范围.md) · [部署说明](docs/部署说明.md)
+[本机 EA 交易架构设计](docs/本机EA交易架构设计.md) · [架构说明](docs/架构说明.md) · [Agent 入口](AGENTS.md) · [交接范围与数据排除](docs/交接范围.md) · [部署说明](docs/部署说明.md)
