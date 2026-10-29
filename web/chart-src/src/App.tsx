@@ -481,6 +481,17 @@ export default function App() {
                 symbol={trade.symbol || 'XAUUSD'}
                 anchorMs={anchorMs}
                 savedState={entry!.chart?.document ?? null}
+                tradeMarks={
+                  entry!.review.opened != null && trade?.closed != null
+                    ? {
+                        openedAt: entry!.review.opened,
+                        closedAt: trade.closed,
+                        open: Number(trade.open) || 0,
+                        close: Number(trade.close) || 0,
+                        side: trade.side === 'sell' ? 'sell' : 'buy',
+                      }
+                    : null
+                }
                 readOnly={entry!.read_only}
                 timeframes={availableTfs.map((o) => o.id)}
                 onStateChange={onStateChange}

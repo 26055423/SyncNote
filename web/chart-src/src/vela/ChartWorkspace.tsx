@@ -31,6 +31,8 @@ interface Props {
   savedState: unknown;
   readOnly: boolean;
   timeframes?: string[];
+  /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
+  tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
   provider?: unknown;
   providerName?: string;
@@ -55,6 +57,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const hostRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<any>(null);
   const anchorRef = useRef(anchorMs);
+  const markIdsRef = useRef<Set<string>>(new Set());
+  const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   const [ready, setReady] = useState(false);
 
   anchorRef.current = anchorMs;
@@ -185,12 +189,61 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           }
         };
 
+        const annotate = (cell: any) => {
+          const marks = props.tradeMarks;
+          const api = cell?.chart?.drawings;
+          if (!marks || !api) return;
+          const known = markIdsByCellRef.current.get(cell.id);
+          const present = new Set((api.all?.() ?? []).map((row: { id: string }) => row.id));
+          if (known && [...known].some((id) => present.has(id))) return;
+          const opened = marks.openedAt * 1000;
+          const closed = marks.closedAt * 1000;
+          const color = marks.side === 'sell' ? '#e08a8a' : '#86c7ed';
+          try {
+            const line = api.add('trendline', {
+              anchors: [{ time: opened, price: marks.open }, { time: closed, price: marks.close }],
+              style: { lineColor: '#e2bd77', lineWidth: 1, lineStyle: 'dashed' },
+            });
+            const entry = api.add('text', {
+              anchors: [{ time: opened, price: marks.open }],
+              text: { value: '开仓 ' + marks.open.toFixed(2), size: 'small', hAlign: 'left', vAlign: 'bottom', color },
+            });
+            const exit = api.add('text', {
+              anchors: [{ time: closed, price: marks.close }],
+              text: { value: '平仓 ' + marks.close.toFixed(2), size: 'small', hAlign: 'left', vAlign: 'top', color },
+            });
+            const ids = new Set<string>();
+            for (const drawing of [line, entry, exit]) {
+              const id = (drawing as { id?: string } | null)?.id;
+              if (id) {
+                ids.add(id);
+                markIdsRef.current.add(id);
+              }
+            }
+            if (ids.size) markIdsByCellRef.current.set(cell.id, ids);
+          } catch (error) {
+            console.warn('trade marks failed', error);
+          }
+        };
+
+        const stripMarks = (document: any) => {
+          if (!document || !Array.isArray(document.charts)) return document;
+          for (const chart of document.charts) {
+            const drawings = chart?.drawings;
+            if (drawings && Array.isArray(drawings.drawings)) {
+              drawings.drawings = drawings.drawings.filter((row: any) => !markIdsRef.current.has(row?.id));
+            }
+          }
+          return document;
+        };
+
         const bind = (cell: any) => {
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
           cell.chart?.on?.('load:end', () => {
             focusOne(cell);
             lockDrawings(cell);
+            annotate(cell);
           });
           cell.chart?.on?.('market:changed', () => {
             onTimeframe?.(cell.chart?.market?.timeframe ?? '15');
@@ -199,6 +252,15 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         };
 
         ws.cells().forEach(bind);
+        // 轮询到 K 线就绪再标注（每格只标一次），15 秒后放弃。
+        const markTimer = window.setInterval(() => {
+          if (disposed) {
+            window.clearInterval(markTimer);
+            return;
+          }
+          ws.cells().forEach(annotate);
+        }, 400);
+        window.setTimeout(() => window.clearInterval(markTimer), 15000);
         ws.on?.('cell:created', () => ws.cells().forEach(bind));
         ws.on?.('cell:active', () => {
           onTimeframe?.(ws.active?.chart?.market?.timeframe ?? '15');
@@ -206,10 +268,19 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         ws.on?.('layout:changed', ({ layout }: { layout: string }) => {
           onLayout?.(layout);
           ws.cells().forEach(bind);
+        // 轮询到 K 线就绪再标注（每格只标一次），15 秒后放弃。
+        const markTimer = window.setInterval(() => {
+          if (disposed) {
+            window.clearInterval(markTimer);
+            return;
+          }
+          ws.cells().forEach(annotate);
+        }, 400);
+        window.setTimeout(() => window.clearInterval(markTimer), 15000);
         });
         ws.on?.('state:changed', () => {
           try {
-            onStateChange?.(ws.getState());
+            onStateChange?.(stripMarks(ws.getState()));
           } catch {
             /* ignore */
           }
