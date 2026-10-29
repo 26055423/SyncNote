@@ -54,7 +54,7 @@ def main():
    ensure(len(admin.request('/api/admin/users')['users'])==3,'new accounts only')
    alice.request('/api/journal',{'person':b['id'],'ticket':'fixture','text':'cross-user attempt'},status=404)
    # 复盘图表页：静态资源、画线存档、作业分享与只读边界。
-   page=anon.request('/chart');ensure('复盘图表'.encode() in page,'chart page served')
+   page=anon.request('/chart');ensure('交易台'.encode() in page,'chart page served')
    import re as _re
    asset=_re.search(rb'/chart/assets/[^"\']+\.js',page)
    ensure(asset is not None,'chart bundle referenced')

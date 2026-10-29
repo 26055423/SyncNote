@@ -20,7 +20,10 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_BRIDGE = 'http://127.0.0.1:8790'
-DEFAULT_DB = r'D:\Projects\trade_dashboard\live_data\ea_bridge\ea_bridge.db'
+_LEGACY_DB = r'D:\Projects\trade_dashboard\live_data\ea_bridge\ea_bridge.db'
+_REPO_DB = str(Path(__file__).resolve().parents[1] / 'bridge' / 'ea_bridge.db')
+# 优先用仓库内的 bridge 数据库；还没迁过去时回退到旧路径，保证现有网关不中断。
+DEFAULT_DB = os.environ.get('EA_BRIDGE_DB') or (_REPO_DB if os.path.exists(_REPO_DB) else _LEGACY_DB)
 STATE_FILE = Path(__file__).with_name('bridge_push_state.json')
 TIMEFRAMES = (('M1', '1m', 60), ('M5', '5m', 300), ('M15', '15m', 900), ('H1', '1h', 3600))
 
@@ -193,6 +196,36 @@ def upload_review(bridge, tongpin, token, ticket, closed):
         return 'network %s' % error
 
 
+def push_live(bridge, tongpin, token, state):
+    """把最新 tick 和 K 线推给同频（首次 300 根，之后只补最新几根）。"""
+    health = request_json(bridge + '/api/health')[1]
+    offset = int(health.get('server_offset_sec') or 0)
+    bootstrap = not state.get('live_bootstrapped')
+    limit = 300 if bootstrap else 3
+    latest = request_json(bridge + '/api/latest')[1]
+    tick = latest.get('tick') or {}
+    payload = {
+        'offset': offset,
+        'tick': {
+            'bid': float(tick.get('bid') or 0),
+            'ask': float(tick.get('ask') or 0),
+            'time': int((tick.get('ts_msc') or 0) // 1000) - offset,
+        } if tick else None,
+        'bars': {},
+    }
+    for tf in ('1m', '5m', '15m', '1h'):
+        data = request_json('%s/api/bars?tf=%s&limit=%d' % (bridge, tf, limit))[1]
+        rows = []
+        for bar in data.get('bars') or []:
+            rows.append([bar['bar_time'] - offset, bar['open'], bar['high'], bar['low'], bar['close']])
+        if rows:
+            payload['bars'][tf] = rows
+    status, reply = request_json(tongpin + '/api/mt5/live', payload, token)
+    if status == 200:
+        state['live_bootstrapped'] = True
+    return status
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--token', default=os.environ.get('TONGPIN_TOKEN',''), help='同频个人中心生成的连接码（也可用环境变量 TONGPIN_TOKEN）')
@@ -221,6 +254,10 @@ def main():
                 state['last_deal_id'] = last_id
                 save_state(state)
                 print('pushed', len(payload['snapshot']['history']), 'closed /', len(payload['snapshot']['positions']), 'open')
+            try:
+                push_live(args.bridge, tongpin, args.token, state)
+            except (urllib.error.URLError, OSError, KeyError) as error:
+                print('live push skipped:', error)
         except urllib.error.HTTPError as error:
             print('http error:', error.code, error.read()[:200])
             if error.code in (401, 403):

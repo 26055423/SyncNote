@@ -17,6 +17,7 @@
 | `live.py` | 实时行情内存缓存（tick + 4 个周期的最近 K 线） |
 | `web/chart-src/src/App.tsx` | 交易台界面（顶栏 / K 线 / 右侧五面板 / 底栏） |
 | `tools/bridge_push.py` | 本机 WebBridge → 同频 的同步器（成交 + 实时行情） |
+| `bridge/` | WebBridge 全套源码（MT5 EA + 本地 gateway + 协议文档），已从 trade_dashboard 迁入 |
 
 ## 常用命令
 
@@ -31,6 +32,7 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 ## 硬性约定（改动前务必遵守）
 
 1. **后端只用 Python 标准库**，不要引入 Flask/FastAPI/requests 等依赖。
+   例外：`bridge/` 是独立的本地组件（FastAPI/uvicorn），不要把它 import 进主程序。
 2. **Python 用 1 空格缩进**（不是 4 空格），别整体重排。
 3. `web/chart` 是**构建产物**，改前端必须改 `web/chart-src/src` 再 `npm run build`，不要手改 `web/chart`。
 4. 图表页构建默认走 jsDelivr（`vite.config.ts` 的 `CHART_BASE`）；本地调试用 `CHART_BASE=/chart/ npm run build`，否则会白屏（CDN 上还没有新文件）。
