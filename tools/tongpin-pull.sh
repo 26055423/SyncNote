@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# 从 26055423/SyncNote 拉取更新：有变化就重启并做健康检查，失败自动回滚。
+# 从 GitHub 拉取 SyncNote 更新（公开仓库，HTTPS 无需密钥），有变化才重启，失败回滚。
 # 用法：sudo tongpin-pull
-# git 以 admin 身份执行，才能用到 /home/admin/.ssh/config 里的部署密钥。
 set -euo pipefail
 
 GIT="git -C /SyncTrade -c core.hooksPath=/dev/null"
@@ -18,7 +17,7 @@ fi
 
 systemctl restart tongpin
 sleep 3
-if curl -fsS -m 5 http://127.0.0.1:18886/api/health >/dev/null; then
+if curl -fsS -m 5 http://127.0.0.1/api/health >/dev/null; then
   echo "已更新：$before -> $after，服务正常"
 else
   echo "健康检查失败，回滚到 $before" >&2

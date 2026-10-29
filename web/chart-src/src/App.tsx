@@ -3,7 +3,7 @@ import { api, money, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
 import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
-import { TIMEFRAMES } from './vela/provider';
+import { LiveProvider, TIMEFRAMES, type ReviewCharts } from './vela/provider';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -61,6 +61,18 @@ type Tab = 'trade' | 'social' | 'friends' | 'review' | 'inbox';
 const sideText = (side: string) => (side === 'sell' ? '做空' : '做多');
 const sideClass = (side: string) => (side === 'sell' ? 'sell' : 'buy');
 
+const LIVE_KEYS: Record<string, 'M1' | 'M5' | 'M15' | 'H1'> = { '1m': 'M1', '5m': 'M5', '15m': 'M15', '1h': 'H1' };
+
+/** 服务端按 1m/5m/15m/1h 返回，图表用 M1/M5/M15/H1。 */
+function toChartBars(bars: Record<string, number[][]> | undefined): ReviewCharts {
+  const out: ReviewCharts = {};
+  for (const [key, rows] of Object.entries(bars || {})) {
+    const mapped = LIVE_KEYS[key];
+    if (mapped && Array.isArray(rows)) out[mapped] = rows;
+  }
+  return out;
+}
+
 function latestTradeOf(snapshot: { data: any } | undefined) {
   const rows = snapshot?.data?.history ?? [];
   return rows.length ? rows[0] : null;
@@ -96,6 +108,14 @@ export default function App() {
   const [tf, setTf] = useState('15');
   const [layout, setLayout] = useState('4');
   const [syncs, setSyncs] = useState<Partial<Record<SyncKind, boolean>>>({});
+  const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') ? 'review' : 'live'));
+  const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
+  const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
+  const liveRef = useRef<ReviewCharts>({});
+  const liveProvider = useMemo(
+    () => new LiveProvider(liveRef.current, 'XAUUSD', async () => toChartBars((await api<{ bars: Record<string, number[][]> }>('/api/live?limit=3')).bars)),
+    [],
+  );
 
   const chartRef = useRef<ChartHandle>(null);
   const saveTimer = useRef<number | null>(null);
@@ -166,6 +186,59 @@ export default function App() {
     };
   }, [target]);
 
+  /* ------------------------------------------------------------ 实时行情 */
+
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const data = await api<{ tick: any; bars: Record<string, number[][]> }>('/api/live?limit=2');
+        if (!alive) return;
+        if (data.tick) setLiveTick(data.tick);
+        const incoming = toChartBars(data.bars);
+        if (Object.keys(incoming).length) {
+          // 原地合并：LiveProvider 持有的是同一个对象引用，整体替换会让它看不到更新。
+          const merged = liveRef.current;
+          for (const [key, rows] of Object.entries(incoming)) {
+            const base = merged[key as keyof ReviewCharts] ?? [];
+            const last = (rows as number[][])[(rows as number[][]).length - 1];
+            const next = [...base];
+            if (last) {
+              if (next.length && next[next.length - 1][0] === last[0]) next[next.length - 1] = last;
+              else next.push(last);
+            }
+            merged[key as keyof ReviewCharts] = next.slice(-3000);
+          }
+        }
+      } catch {
+        /* 下一轮再试 */
+      }
+    };
+    void tick();
+    const timer = window.setInterval(tick, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== 'live' || liveBars) return;
+    let alive = true;
+    void api<{ bars: Record<string, number[][]> }>('/api/live?limit=400')
+      .then((data) => {
+        if (!alive) return;
+        const incoming = toChartBars(data.bars);
+        if (!Object.keys(incoming).length) return;
+        Object.assign(liveRef.current, incoming);
+        setLiveBars(liveRef.current);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [mode, liveBars]);
+
   /* ------------------------------------------------- 会话：作业 / 关注 */
 
   useEffect(() => {
@@ -206,6 +279,7 @@ export default function App() {
 
   const openTicket = (person: string, ticket: string, t?: number) => {
     setTarget({ person, ticket, t });
+    setMode('review');
     const qs = new URLSearchParams({ person, ticket });
     if (t) qs.set('t', String(t));
     history.replaceState(null, '', '/chart?' + qs.toString());
@@ -268,7 +342,12 @@ export default function App() {
   const myPositions: any[] = mySnap?.data?.positions ?? [];
   const floating = myPositions.reduce((n: number, p: any) => n + (p.profit || 0), 0);
   const mt5Online = Boolean(mySnap && board && board.now - (mySnap.updated || 0) <= 45 && mySnap.data.online !== false);
-  const price = barsClose(entry) ?? null;
+  const price = (liveTick && liveTick.bid ? (liveTick.bid + liveTick.ask) / 2 : null) ?? barsClose(entry) ?? null;
+  const liveAnchor = (() => {
+    const rows = liveBars?.M1 ?? [];
+    const last = rows[rows.length - 1];
+    return last ? last[0] * 1000 : Date.now();
+  })();
   const availableTfs = useMemo(() => {
     const charts = entry?.review.charts ?? {};
     return TIMEFRAME_OPTIONS.filter((option) => {
@@ -332,6 +411,8 @@ export default function App() {
             <LayoutMenu current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
             <TfMenu current={tf} options={availableTfs} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
             <button type="button" className={`tool-btn ${syncs.crosshair ? 'is-active' : ''}`} onClick={() => toggleSync('crosshair')}>十字线联动</button>
+            <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} onClick={() => setMode('live')}>行情</button>
+            <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} disabled={!target} onClick={() => setMode('review')}>复盘</button>
             <button type="button" className="tool-btn" onClick={() => chartRef.current?.focus()}>回到开仓</button>
             <span className="spacer" />
             {entry?.read_only ? <span className="badge">只读 · {entry.owner.name} 的复盘</span> : null}
@@ -341,7 +422,24 @@ export default function App() {
           </div>
 
           <div className="chart-body">
-            {ready ? (
+            {mode === 'live' && liveBars ? (
+              <ChartWorkspace
+                key="live"
+                ref={chartRef}
+                charts={liveBars}
+                provider={liveProvider}
+                providerName="live"
+                symbol="XAUUSD"
+                anchorMs={liveAnchor}
+                savedState={null}
+                readOnly={false}
+                timeframes={TIMEFRAME_OPTIONS.map((o) => o.id)}
+                onTimeframe={setTf}
+                onLayout={setLayout}
+                onSyncs={setSyncs}
+                onError={setError}
+              />
+            ) : ready ? (
               <ChartWorkspace
                 key={`${target?.person}:${target?.ticket}`}
                 ref={chartRef}

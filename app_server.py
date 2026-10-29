@@ -3,6 +3,7 @@ import ipaddress
 import client_address
 import auth_security
 import chart
+import live
 import ea_hub
 import journal
 import market
@@ -38,6 +39,7 @@ def hub_trade(user_id,item,offset):
                 payload={'charts':built['charts'],'errors':built['errors'],'opened_server':item['opened_server'],'closed_server':item['closed_server'],'time_basis':'utc','source':'EA hub'}
                 db.execute("UPDATE trade_reviews SET status='ready',payload=?,updated=? WHERE person=? AND ticket=?",(json.dumps(payload,ensure_ascii=False,allow_nan=False),time.time(),user_id,str(item['ticket'])))
 HUB=ea_hub.Hub(connect,on_trade=hub_trade)
+LIVE=live.LiveStore()
 with connect() as db:
     db.executescript('''
     PRAGMA journal_mode=WAL;
@@ -175,6 +177,10 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/api/'):
                 with connect() as db:
                     u=self.user(db);uid=u['id']
+                    if path=='/api/live':
+                        try:limit=int(q.get('limit',['500'])[0])
+                        except ValueError:limit=500
+                        return self.reply(LIVE.read(uid,max(50,min(3000,limit))) or {'bars':{},'tick':None,'updated':None,'age':None})
                     if path=='/api/chart/entry':
                         ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
                         row=None
@@ -362,9 +368,15 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute('UPDATE mt5_bindings SET used=1 WHERE hash=?',(digest(code),))
                     result={'ok':True,'token':token}
                 elif path=='/api/mt5/review':
-                    auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else '';link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
+                    auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
+                    link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
                     if not link:raise Error('连接码无效或已撤销',401)
                     result=journal.receive(db,link['user_id'],data)
+                elif path=='/api/mt5/live':
+                    auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
+                    link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
+                    if not link:raise Error('连接码无效或已撤销',401)
+                    result={'ok':True,'bars':LIVE.ingest(link['user_id'],data)}
                 elif path=='/api/snapshot':
                     auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else '';link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
                     if not link:raise Error('连接码无效或已撤销',401)

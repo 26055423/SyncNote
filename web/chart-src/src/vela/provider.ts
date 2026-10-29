@@ -127,3 +127,61 @@ export class ReviewProvider implements DataProvider {
 function basePeriodKey(base: BaseTimeframe): string {
   return base === 'M1' ? '1' : base === 'M5' ? '5' : base === 'M15' ? '15' : '60';
 }
+
+/**
+ * 实时行情的 provider：首屏用服务端缓存的 K 线，之后每 3 秒拉一次最新几根，
+ * 通过 `subscribe` 把最后一根喂给图表，图会自己更新而不用重挂载。
+ */
+export class LiveProvider implements DataProvider {
+  constructor(
+    private readonly initial: ReviewCharts,
+    private readonly symbol: string,
+    private readonly poll: () => Promise<ReviewCharts>,
+  ) {}
+
+  info() {
+    return {
+      name: 'live',
+      displayName: '同频实时行情',
+      supportedTimeframes: Object.keys(TIMEFRAMES),
+      capabilities: { enumerate: true, stream: true, symbolInfo: false },
+    };
+  }
+
+  async listSymbols() {
+    return [{ ticker: this.symbol, description: 'Gold / US Dollar', type: 'commodity' }];
+  }
+
+  async getBars(_ticker: string, timeframe: string): Promise<Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>> {
+    const recipe = TIMEFRAMES[timeframe];
+    if (!recipe) return [];
+    const base = this.initial[recipe.base] ?? [];
+    if (!base.length) return [];
+    const bars = recipe.seconds === (TIMEFRAMES[basePeriodKey(recipe.base)]?.seconds ?? 60) ? base : aggregate(base, recipe.seconds);
+    return bars.map(toOhlcv);
+  }
+
+  subscribe(_ticker: string, timeframe: string, onBar: (bar: { time: number; open: number; high: number; low: number; close: number; volume: number }) => void): () => void {
+    const recipe = TIMEFRAMES[timeframe];
+    let alive = true;
+    const timer = window.setInterval(async () => {
+      if (!alive || !recipe) return;
+      try {
+        const charts = await this.poll();
+        const rows = charts[recipe.base] ?? [];
+        const last = rows[rows.length - 1];
+        if (last) onBar(toOhlcv(last));
+      } catch {
+        /* 网络抖动时继续下一轮 */
+      }
+    }, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }
+}
+
+function toOhlcv(bar: number[]) {
+  return { time: bar[0] * 1000, open: bar[1], high: bar[2], low: bar[3], close: bar[4], volume: bar[5] ?? 0 };
+}

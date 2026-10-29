@@ -31,6 +31,9 @@ interface Props {
   savedState: unknown;
   readOnly: boolean;
   timeframes?: string[];
+  /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
+  provider?: unknown;
+  providerName?: string;
   onStateChange?: (document: unknown) => void;
   onTimeframe?: (tf: string) => void;
   onLayout?: (id: string) => void;
@@ -47,10 +50,8 @@ function seedCells(available: string[] | undefined): Record<string, { timeframe:
   return cells;
 }
 
-export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorkspace(
-  { charts, symbol, anchorMs, savedState, readOnly, timeframes, onStateChange, onTimeframe, onLayout, onSyncs, onError },
-  ref,
-) {
+export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorkspace(props, ref) {
+  const { charts, symbol, anchorMs, savedState, readOnly, timeframes, onStateChange, onTimeframe, onLayout, onSyncs, onError } = props;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<any>(null);
   const anchorRef = useRef(anchorMs);
@@ -129,17 +130,18 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         const { VelaWorkspace } = await import('@luxalgo/vela/workspace');
         if (disposed || !hostRef.current) return;
 
-        const provider = new ReviewProvider(charts, symbol);
+        const provider = (props.provider as never) ?? new ReviewProvider(charts, symbol);
+        const providerName = props.provider ? (props.providerName || 'live') : 'review';
         const ws = new VelaWorkspace(hostRef.current, {
           layout: '4',
-          symbol: `review:${symbol}`,
+          symbol: `${providerName}:${symbol}`,
           timeframe: '15',
           cells: seedCells(timeframes),
-          live: false,
+          live: Boolean(props.provider),
           theme: 'dark',
           locale: 'zh-Hans',
           timezone: 'Asia/Shanghai',
-          providers: { review: () => provider },
+          providers: { [providerName]: () => provider },
           sync: { crosshair: true },
           persist: false,
           drawingToolbar: !readOnly,
