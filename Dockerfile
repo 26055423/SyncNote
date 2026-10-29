@@ -9,7 +9,7 @@ RUN npm run build
 # 2) 运行时仍然只有 Python：镜像里不装 Node，也不需要 npm
 FROM python:3.12-slim
 WORKDIR /app
-COPY app_server.py auth_security.py chart.py client_address.py challenge_image.py journal.py market.py trade_time.py bootstrap_admin.py ./
+COPY app_server.py auth_security.py chart.py client_address.py ea_hub.py challenge_image.py journal.py market.py trade_time.py bootstrap_admin.py ./
 COPY web ./web
 RUN rm -rf /app/web/chart-src /app/web/chart
 COPY --from=chart /chart ./web/chart

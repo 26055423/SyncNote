@@ -3,6 +3,7 @@ import ipaddress
 import client_address
 import auth_security
 import chart
+import ea_hub
 import journal
 import market
 from trade_time import utc_trade, record_clock
@@ -21,6 +22,22 @@ PUBLIC_ORIGIN=os.environ.get('PUBLIC_ORIGIN','').rstrip('/')
 SECURE=os.environ.get('COOKIE_SECURE','0')=='1'
 def connect():
     db=sqlite3.connect(DB,timeout=20);db.row_factory=sqlite3.Row;db.execute('PRAGMA foreign_keys=ON');return db
+def hub_trade(user_id,item,offset):
+    """EA 直连 hub 时平仓：落交易记录，并从 hub 缓存的 K 线拼复盘图。"""
+    with connect() as db:
+        trade={k:v for k,v in item.items() if k not in ('time_basis','time_verified')}
+        trade['time_basis']='utc';trade['time_verified']=True
+        db.execute('INSERT INTO trades VALUES(?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET payload=excluded.payload',(user_id,str(item['ticket']),json.dumps(trade,allow_nan=False,ensure_ascii=False)))
+        row=db.execute('SELECT status FROM trade_reviews WHERE person=? AND ticket=?',(user_id,str(item['ticket']))).fetchone()
+        if not row:
+            db.execute("INSERT OR IGNORE INTO trade_reviews VALUES(?,?,'pending',NULL,?)",(user_id,str(item['ticket']),time.time()))
+            row=db.execute('SELECT status FROM trade_reviews WHERE person=? AND ticket=?',(user_id,str(item['ticket']))).fetchone()
+        if row and row['status']=='pending':
+            built=HUB.review_charts(user_id,item['opened_server'],item['closed_server'])
+            if built and any(built['charts'].values()):
+                payload={'charts':built['charts'],'errors':built['errors'],'opened_server':item['opened_server'],'closed_server':item['closed_server'],'time_basis':'utc','source':'EA hub'}
+                db.execute("UPDATE trade_reviews SET status='ready',payload=?,updated=? WHERE person=? AND ticket=?",(json.dumps(payload,ensure_ascii=False,allow_nan=False),time.time(),user_id,str(item['ticket'])))
+HUB=ea_hub.Hub(connect,on_trade=hub_trade)
 with connect() as db:
     db.executescript('''
     PRAGMA journal_mode=WAL;
@@ -52,6 +69,7 @@ with connect() as db:
     journal.initialize(db)
     market.initialize(db)
     chart.initialize(db)
+    if os.environ.get('EA_HUB_ENABLE','1')!='0':HUB.start()
     if not db.execute("SELECT 1 FROM security_config WHERE key='sessions-30days'").fetchone():
         db.execute('UPDATE sessions SET expires=? WHERE expires>?',(time.time()+2592000,time.time()))
         db.execute("INSERT INTO security_config VALUES('sessions-30days')")
@@ -214,7 +232,12 @@ class Handler(BaseHTTPRequestHandler):
                             can=r['id']==uid or bool(r['share_data']);members.append({'id':r['id'],'name':r['nickname'],'username':r['username'],'avatar':r['avatar'],'can_view':can})
                             if not can:continue
                             allowed.append(r['id']);snap=db.execute('SELECT * FROM snapshots WHERE person=?',(r['id'],)).fetchone()
-                            if snap:
+                            live=HUB.live(r['id'])
+                            if live:
+                                # EA 直连服务器时，内存里的实时状态优先于落库快照。
+                                live['history']=live.get('history') or [utc_trade(json.loads(t[0]),db.execute('SELECT * FROM broker_clocks WHERE person=?',(r['id'],)).fetchone()) for t in db.execute('SELECT payload FROM trades WHERE person=?',(r['id'],))]
+                                snapshots[r['id']]={'data':live,'updated':time.time()}
+                            elif snap:
                                 payload=json.loads(snap['payload']);payload['history']=[utc_trade(json.loads(t[0]),db.execute('SELECT * FROM broker_clocks WHERE person=?',(r['id'],)).fetchone()) for t in db.execute('SELECT payload FROM trades WHERE person=?',(r['id'],))];snapshots[r['id']]={'data':payload,'updated':snap['updated']}
                         marks=','.join('?' for _ in allowed);events=[dict(r) for r in db.execute(f'SELECT * FROM events WHERE person IN ({marks}) ORDER BY id DESC LIMIT 100',allowed)]
                         mutual=[r[0] for r in db.execute('SELECT a.target FROM follows a JOIN follows b ON b.follower=a.target AND b.target=a.follower WHERE a.follower=?',(uid,))];chat=[uid]+mutual;cm=','.join('?' for _ in chat)

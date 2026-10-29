@@ -45,12 +45,10 @@ npm run build
 
 在个人中心点「生成连接码」，然后二选一：
 
-- **已经有 WebBridge**（`live_data/ea_bridge`，EA + `gateway.py`，REST 在 `127.0.0.1:8790`）：在运行 MT5 的机器上跑
-  ```sh
-  python tools/bridge_push.py --token <连接码> --tongpin https://自己的域名
-  ```
-  它只读 bridge 的账户/持仓/成交/K 线数据，再推给同频；不改 bridge，也不碰 MT5。
-- **没有 bridge**：用 `web/TongpinSync.mq5`（直接读 MT5 账户历史，需要把网站地址加进 WebRequest 白名单），把连接码填进 `ConnectionCode`。
+- **EA 直连服务器（推荐，架构已跑通）**：`ea_hub.py` 在服务器上监听 `8788`，EA 用同频的连接码握手后长期保持连接，网页直接读它的实时状态。WebBridge.mq5 里把 `InpHost` 改成本站地址、`InpPort` 改 `8788`、`InpToken` 填连接码即可；协议（NDJSON v1）一行不用改。需要在安全组放行 TCP 8788，正式使用前还要加 TLS（等域名）。
+- **已经有 WebBridge 且想保留本地面板**：在运行 MT5 的机器上跑 `python tools/bridge_push.py --token <连接码> --tongpin https://自己的域名`，它只读 bridge 的数据再推给同频。
+
+没有 bridge 时也可以用 `web/TongpinSync.mq5`（直接读 MT5 账户历史，需要把网站地址加进 WebRequest 白名单）。
 
 bridge 的成交表只保留 `gateway.py` 启动之后的记录；更早的历史要改用 `TongpinSync.mq5`，或者给 bridge 加历史接口。
 
