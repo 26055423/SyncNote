@@ -245,10 +245,11 @@ class Handler(BaseHTTPRequestHandler):
                         for m in messages:m['name']=names.get(m['person'],'')
                         return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))]})
                     raise Error('接口不存在',404)
-            assets={'/':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/downloads/TongpinSync.mq5':'TongpinSync.mq5'}
+            assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/downloads/TongpinSync.mq5':'TongpinSync.mq5'}
             for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
             if re.fullmatch(r'/avatars/avatar(?:[1-9]|1[0-2])\.svg',path):assets[path]=path.lstrip('/')
-            if path in ('/chart','/chart/'):
+            # 首页就是交易台；旧看板挪到 /board。
+            if path in ('/','/chart','/chart/'):
                 page=ROOT/'web'/'chart'/'index.html'
                 if not page.is_file():raise Error('图表页尚未构建，请先执行 web/chart-src 的 npm run build',503)
                 body=page.read_bytes()

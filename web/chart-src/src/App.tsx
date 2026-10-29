@@ -108,7 +108,12 @@ export default function App() {
     const load = async () => {
       try {
         const data = await api<Board>('/api/state?view=board');
-        if (alive) setBoard(data);
+        if (!alive) return;
+        if (data.user.onboarding_step < 4) {
+          location.replace('/welcome');
+          return;
+        }
+        setBoard(data);
       } catch (err) {
         if (alive) setError(err instanceof Error ? err.message : String(err));
       }
