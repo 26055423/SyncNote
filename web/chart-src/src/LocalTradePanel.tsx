@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { money, quotePrice } from './api';
 import { localTerminal, type LocalTerminalState } from './localTerminal';
+import { OrderTicket } from './trade/OrderTicket';
+import { submitMarketOrder } from './trade/localSubmit';
 
 const phaseText = { disconnected: '尚未连接', connecting: '连接中…', pairing: '等待配对码', confirming: '请在 MT5 图表允许本次连接', connected: '本机已连接', error: '连接不可用' };
 const commandText: Record<string, string> = { sending: '正在发送', received: 'EA 已接收', submitted: '已提交，等待回报', completed: '执行完成', rejected: '已拒绝', uncertain: '结果待核实', not_found: 'EA 未找到记录，仍需核查' };
@@ -8,7 +10,6 @@ const actionText: Record<string, string> = { market: '市价下单', close: '平
 
 export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   const [code, setCode] = useState('');
-  const [volume, setVolume] = useState('0.01');
   const [sl, setSl] = useState('');
   const [tp, setTp] = useState('');
   const [error, setError] = useState('');
@@ -25,13 +26,6 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
     setError('');
     if (!enabled || !state.capabilities.includes(action)) { setError('请在 EA 中授权此模拟账户操作，并处理完待核实指令。'); return; }
     setPrepared({ action, payload, description, epoch: state.epoch });
-  };
-  const market = (side: 'buy' | 'sell') => {
-    const size = Number(volume), stop = Number(sl || 0), target = Number(tp || 0);
-    if (!Number.isFinite(size) || size <= 0 || !Number.isFinite(stop) || stop < 0 || !Number.isFinite(target) || target < 0) {
-      setError('手数必须大于零，止损止盈须填写非负价格。'); return;
-    }
-    prepare('market', { symbol: state.symbol, side, volume: size, sl: stop, tp: target, deviation: 20 }, `${side === 'buy' ? '买入' : '卖出'} ${state.symbol} · ${size} 手 · 止损 ${stop || '无'} · 止盈 ${target || '无'}`);
   };
   const modify = () => {
     const stop = Number(sl || 0), target = Number(tp || 0);
@@ -53,15 +47,16 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
     {state.phase === 'confirming' ? <p className="local-notice">请切换到 MT5，在 EA 图表上点击「允许本次连接」。</p> : null}
     {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || !state.demo ? '只读 · 模拟账户验收阶段' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
     {state.error || error ? <p className="local-error" role="alert">{error || state.error}</p> : null}
+    <OrderTicket
+        account={{ login: state.account_id, balance: state.account?.balance, equity: state.account?.equity, currency: state.account?.currency, leverage: state.account?.leverage }}
+        symbol={state.symbol}
+        bid={state.tick?.bid ?? 0}
+        ask={state.tick?.ask ?? 0}
+        connected={enabled}
+        onSubmit={submitMarketOrder}
+      />
     {connected ? <>
-      <div className="local-order-form">
-        <h3>市价下单 <small>{state.symbol}</small></h3>
-        <p className="dim">买价 {quotePrice(state.tick?.ask)} · 卖价 {quotePrice(state.tick?.bid)}</p>
-        <label htmlFor="local-volume">手数</label><input id="local-volume" type="number" min="0.001" step="any" value={volume} disabled={!enabled} onChange={(event) => setVolume(event.target.value)} />
-        <div className="local-price-inputs"><label>止损价格<input type="number" min="0" step="any" value={sl} placeholder="不设置" disabled={!enabled} onChange={(event) => setSl(event.target.value)} /></label><label>止盈价格<input type="number" min="0" step="any" value={tp} placeholder="不设置" disabled={!enabled} onChange={(event) => setTp(event.target.value)} /></label></div>
-        <div className="local-buttons"><button className="primary local-buy" type="button" disabled={!enabled || !state.capabilities.includes('market')} onClick={() => market('buy')}>买入</button><button className="primary local-sell" type="button" disabled={!enabled || !state.capabilities.includes('market')} onClick={() => market('sell')}>卖出</button></div>
-        {state.read_only || !state.demo ? <p className="dim">当前只读。首版仅开放模拟账户验收，交易还需在 EA 参数中开启；网页不能提升权限。</p> : null}
-      </div>
+      
       <h3>本机持仓 <small>{state.positions.length}</small></h3>
       {state.positions.map((position) => <div className="local-position" key={String(position.ticket)}>
         <div><b>{position.symbol} · {position.side === 'sell' ? '卖出' : '买入'} {position.volume}</b><span className={(position.profit || 0) >= 0 ? 'up' : 'down'}>{money(position.profit)}</span></div>
