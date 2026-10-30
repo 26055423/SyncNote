@@ -307,3 +307,7 @@ table.grid-table th { position: sticky; top: 0; background: #0d151d; text-align:
 table.grid-table td { padding: 4px 8px; border-bottom: 1px solid #16212c; white-space: nowrap; }
 table.grid-table tr:hover td { background: #101b26; }
 .dock-sort { position: absolute; right: 46px; top: 6px; border: 1px solid var(--line); background: #101922; color: var(--dim); border-radius: 6px; font-size: 11px; padding: 2px 8px; }
+
+/* 已复盘：入口保留可点，但用弱化色区分 */
+.link.done { color: #6f8f7a; }
+.link.done::before { content: "✓ "; }
