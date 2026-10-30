@@ -47,7 +47,7 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 
 ## 当前未完成 / 已知限制
 
-- 域名 `sync-trade.top` 还没有 A 记录，所以**尚未启用 HTTPS**（登录密码目前明文过公网）。
+- 正式地址是 `https://sync-trade.top`（Let's Encrypt，80 强制跳 443，Cookie 带 Secure）；EA 的 `InpAllowedOrigin` 用 `https://sync-trade.top`，不要再用 IP 访问。
 - **云端不提供下单通道**：`ea_hub` 只收行情/账户，不发单。新本机 EA 预览源码位于 `bridge/TongpinLocal.mq5`，网页连接为独立 `tongpin-local.v1`，默认只读、仅模拟套期保值账户允许交易；真实终端联调状态见发布验收记录。
 - 顶栏价格：有实时行情时用 tick 中间价，否则取图表最后一根 K 线收盘价。
 - 「行情模式」的实时 K 线已接上 `LiveProvider`（3 秒轮询最新一根），本地 demo 验证过渲染与更新。
