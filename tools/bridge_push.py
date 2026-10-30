@@ -222,7 +222,9 @@ def push_live(bridge, tongpin, token, state):
             payload['bars'][tf] = rows
     status, reply = request_json(tongpin + '/api/mt5/live', payload, token)
     if status == 200:
-        state['live_bootstrapped'] = True
+        # 服务端重启过（内存行情为空）时要求重新 bootstrap，否则只会补几根。
+        state['live_bootstrapped'] = not (reply or {}).get('bootstrap')
+        save_state(state)
     return status
 
 

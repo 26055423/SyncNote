@@ -383,7 +383,7 @@ class Handler(BaseHTTPRequestHandler):
                     auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
                     link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
                     if not link:raise Error('连接码无效或已撤销',401)
-                    result={'ok':True,'bars':LIVE.ingest(link['user_id'],data)}
+                    ingested=LIVE.ingest(link['user_id'],data);result={'ok':True,'bars':ingested['bars'],'bootstrap':ingested['first']}
                 elif path=='/api/snapshot':
                     auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else '';link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
                     if not link:raise Error('连接码无效或已撤销',401)

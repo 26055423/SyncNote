@@ -19,11 +19,12 @@ class LiveStore:
     def ingest(self, user_id, payload):
         """payload: {"tick": {...}, "bars": {"1m": [[t,o,h,l,c], ...]}, "offset": 10800}"""
         if not isinstance(payload, dict):
-            return 0
+            return {'bars': 0, 'first': False}
         now = time.time()
         count = 0
         with self._lock:
             entry = self._data.get(user_id)
+            first = entry is None
             if entry is None:
                 entry = {'bars': {tf: [] for tf in TIMEFRAMES}, 'tick': None, 'updated': now, 'offset': 0}
                 self._data[user_id] = entry
@@ -63,7 +64,8 @@ class LiveStore:
                         del bucket[:len(bucket) - MAX_BARS]
             entry['updated'] = now
             self._rev += 1
-        return count
+        # first=True 表示这个用户在本进程里还没有行情，采集端应当重新 bootstrap 历史。
+        return {'bars': count, 'first': first}
 
     def read(self, user_id, limit=500):
         with self._lock:
