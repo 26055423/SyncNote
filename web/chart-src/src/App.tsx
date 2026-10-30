@@ -45,8 +45,8 @@ interface Board {
   events: Array<{ id: number; person: string; kind: string; text: string; created: number }>;
   messages: Array<{ id: number; person: string; name?: string; text: string; created: number }>;
   now: number;
-  /** 我的成交对应的复盘状态：ticket -> pending/ready/... */
-  reviews?: Record<string, string>;
+  /** 真正复盘过的成交（写过笔记或在图上画过），否则算未复盘。 */
+  reviewed?: string[];
 }
 
 interface ShareRow {
@@ -566,7 +566,7 @@ export default function App() {
                   ) : <p className="dim">没有持仓</p>}
 
                   <h3>云端最近成交 <small>{myHistory.length}</small></h3>
-                  <TradeList rows={myHistory.slice(0, 12)} reviews={board?.reviews} onPick={(row) => openTicket(me!.id, String(row.ticket))} />
+                  <TradeList rows={myHistory.slice(0, 12)} reviewed={board?.reviewed} onPick={(row) => openTicket(me!.id, String(row.ticket))} />
                 </div>
               ) : null}
 
@@ -605,7 +605,7 @@ export default function App() {
                           {snap ? <span className="dim">浮盈 {money(profit)}</span> : null}
                         </div>
                         {member.can_view ? (
-                          rows.length ? <TradeList rows={rows.slice(0, 5)} reviews={board?.reviews} onPick={(row) => openTicket(member.id, String(row.ticket))} /> : <p className="dim">暂无可查看的成交</p>
+                          rows.length ? <TradeList rows={rows.slice(0, 5)} reviewed={board?.reviewed} onPick={(row) => openTicket(member.id, String(row.ticket))} /> : <p className="dim">暂无可查看的成交</p>
                         ) : <p className="dim">对方未开放交易数据</p>}
                       </div>
                     );
@@ -713,7 +713,7 @@ export default function App() {
         localOrders={local.orders}
         cloudPositions={myPositions}
         history={myHistory}
-        reviews={board?.reviews}
+        reviewed={board?.reviewed}
         onReview={(ticket) => openTicket(me!.id, ticket)}
       />
 
@@ -740,7 +740,7 @@ function nameOf(board: Board, person: string): string {
   return board.members.find((m) => m.id === person)?.name || person;
 }
 
-function TradeList({ rows, reviews, onPick }: { rows: any[]; reviews?: Record<string, string>; onPick: (row: any) => void }) {
+function TradeList({ rows, reviewed, onPick }: { rows: any[]; reviewed?: string[]; onPick: (row: any) => void }) {
   if (!rows.length) return <p className="dim">暂无成交</p>;
   return (
     <table className="mini">
@@ -753,10 +753,10 @@ function TradeList({ rows, reviews, onPick }: { rows: any[]; reviews?: Record<st
             <td>{money(row.open)} / {money(row.close)}</td>
             <td className={(row.profit || 0) >= 0 ? 'up' : 'down'}>{money(row.profit)}</td>
             <td>
-              {reviews?.[String(row.ticket)] === 'ready' ? (
+              {reviewed?.includes(String(row.ticket)) ? (
                 <button type="button" className="link done" onClick={() => onPick(row)}>已复盘</button>
               ) : (
-                <button type="button" className="link" onClick={() => onPick(row)}>复盘</button>
+                <button type="button" className="link todo" onClick={() => onPick(row)}>未复盘</button>
               )}
             </td>
           </tr>

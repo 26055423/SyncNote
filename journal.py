@@ -92,3 +92,36 @@ def queue_missing(db,person):
  rows=db.execute("SELECT t.ticket,t.payload FROM trades t LEFT JOIN trade_reviews r ON r.person=t.person AND r.ticket=t.ticket WHERE t.person=? AND r.ticket IS NULL",(person,)).fetchall()
  rows=sorted(rows,key=lambda r:json.loads(r['payload']).get('closed_server') or 0,reverse=True)[:available]
  db.executemany("INSERT OR IGNORE INTO trade_reviews VALUES(?,?,'pending',NULL,?)",[(person,r['ticket'],time.time()+i*.001) for i,r in enumerate(rows)])
+
+def _has_marks(document):
+ """画线存档里是否真的画了东西（空文档、只有缩放都不算）。"""
+ if not isinstance(document, dict):
+  return False
+ charts = document.get('charts')
+ if not isinstance(charts, list):
+  return False
+ for chart in charts:
+  if not isinstance(chart, dict):
+   continue
+  drawings = chart.get('drawings')
+  if isinstance(drawings, dict) and drawings.get('drawings'):
+   return True
+  if isinstance(drawings, list) and drawings:
+   return True
+ return False
+
+
+def reviewed(db, person):
+ """真正复盘过的成交：写过笔记，或在图上画过东西。"""
+ done = set()
+ for row in db.execute('SELECT ticket,body FROM trade_notes WHERE person=?', (person,)):
+  if (row['body'] or '').strip():
+   done.add(str(row['ticket']))
+ for row in db.execute('SELECT ticket,state FROM chart_states WHERE person=?', (person,)):
+  try:
+   document = json.loads(row['state'])
+  except (TypeError, ValueError):
+   continue
+  if _has_marks(document):
+   done.add(str(row['ticket']))
+ return sorted(done)

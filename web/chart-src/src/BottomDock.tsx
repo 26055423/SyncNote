@@ -14,13 +14,13 @@ export interface BottomDockProps {
   localOrders: any[];
   cloudPositions: any[];
   history: any[];
-  reviews?: Record<string, string>;
+  reviewed?: string[];
   onReview: (ticket: string) => void;
 }
 
 const sideText = (side: string) => (side === 'sell' ? '卖出' : '买入');
 
-export function BottomDock({ connected, localPositions, localOrders, cloudPositions, history, reviews, onReview }: BottomDockProps) {
+export function BottomDock({ connected, localPositions, localOrders, cloudPositions, history, reviewed, onReview }: BottomDockProps) {
   const [tab, setTab] = useState<Tab>('positions');
   const [open, setOpen] = useState(true);
   const [sortDesc, setSortDesc] = useState(true);
@@ -121,9 +121,9 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
                       <td>{money(t.close)}</td>
                       <td className={(t.profit || 0) >= 0 ? 'up' : 'down'}>{money(t.profit)}</td>
                       <td>
-                        {reviews?.[String(t.ticket)] === 'ready'
+                        {reviewed?.includes(String(t.ticket))
                           ? <button type="button" className="link done" onClick={() => onReview(String(t.ticket))}>已复盘</button>
-                          : <button type="button" className="link" onClick={() => onReview(String(t.ticket))}>复盘</button>}
+                          : <button type="button" className="link todo" onClick={() => onReview(String(t.ticket))}>未复盘</button>}
                       </td>
                     </tr>
                   ))}

@@ -311,3 +311,7 @@ table.grid-table tr:hover td { background: #101b26; }
 /* 已复盘：入口保留可点，但用弱化色区分 */
 .link.done { color: #6f8f7a; }
 .link.done::before { content: "✓ "; }
+
+/* 未复盘：保留可点的入口，用空心点提示还没写 */
+.link.todo { color: #7aa7d9; }
+.link.todo::before { content: "○ "; }
