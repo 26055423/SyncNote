@@ -331,6 +331,9 @@ export default function App() {
   const openTicket = (person: string, ticket: string, t?: number) => {
     setTarget({ person, ticket, t });
     setMode('review');
+    // 打开复盘时右栏直接切到「复盘」，不要停在「下单」。
+    setTab('review');
+    setRailOpen(true);
     const qs = new URLSearchParams({ person, ticket });
     if (t) qs.set('t', String(t));
     history.replaceState(null, '', '/chart?' + qs.toString());
