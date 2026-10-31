@@ -15,6 +15,11 @@
 </header>
 
 <main class="admin-main">
+  <nav class="admin-tabs" id="tabs">
+    <button type="button" data-tab="users">用户</button>
+    <button type="button" data-tab="invites">邀请码</button>
+  </nav>
+
   <section id="lock" class="card" hidden>
     <h1>管理后台 · 二次验证</h1>
     <p class="muted">你已进入管理后台。为了确认是本人，需要再输入一次登录密码；验证后 15 分钟内有效。</p>
@@ -25,61 +30,64 @@
     </form>
   </section>
 
-  <section id="panel" hidden>
-    <section class="card">
-      <h1>生成邀请码</h1>
-      <form id="create-form" class="inline-form" autocomplete="off">
-        <label>数量<input type="number" id="count" value="20" min="1" max="100" required></label>
-        <label>备注<input type="text" id="note" maxlength="60" placeholder="例如：11 月第一批"></label>
-        <label>有效期（天）<input type="number" id="days" value="7" min="0" max="365"></label>
-        <button type="submit" class="primary">生成</button>
-      </form>
-      <p class="muted" id="create-hint">未使用的码会保留明文，随时可以复制或导出；被使用或作废后明文自动清除。</p>
-      <div id="fresh" hidden>
-        <div class="fresh-head">
-          <strong>刚生成的邀请码</strong>
-          <button type="button" class="ghost" id="copy-all">复制全部</button>
+  <div id="panel" hidden>
+    <section class="tab-pane" data-pane="users">
+      <div class="card">
+        <div class="table-head">
+          <h2>用户</h2>
+          <button type="button" class="ghost" id="refresh-users">刷新</button>
         </div>
-        <ul id="fresh-list" class="codes"></ul>
+        <table class="invites users">
+          <thead>
+            <tr><th>用户名</th><th>昵称</th><th>注册</th><th>最近同步</th><th>复盘</th><th>状态</th><th></th></tr>
+          </thead>
+          <tbody id="user-rows"></tbody>
+        </table>
+        <p id="user-empty" class="muted" hidden>还没有其他用户。</p>
+        <p id="user-error" class="error" hidden></p>
       </div>
-      <p id="create-error" class="error" hidden></p>
     </section>
 
-
-    <section class="card">
-      <div class="table-head">
-        <h2>用户</h2>
-        <button type="button" class="ghost" id="refresh-users">刷新</button>
-      </div>
-      <table class="invites users">
-        <thead>
-          <tr><th>用户名</th><th>昵称</th><th>注册</th><th>最近同步</th><th>复盘</th><th>状态</th><th></th></tr>
-        </thead>
-        <tbody id="user-rows"></tbody>
-      </table>
-      <p id="user-empty" class="muted" hidden>还没有其他用户。</p>
-      <p id="user-error" class="error" hidden></p>
-    </section>
-
-    <section class="card">
-      <div class="table-head">
-        <h2>邀请码列表</h2>
-        <div class="table-actions">
-          <button type="button" class="ghost" id="copy-unused">复制全部未使用</button>
-          <button type="button" class="ghost" id="download">下载 .txt</button>
-          <button type="button" class="ghost" id="refresh">刷新</button>
+    <section class="tab-pane" data-pane="invites">
+      <div class="card">
+        <h1>生成邀请码</h1>
+        <form id="create-form" class="inline-form" autocomplete="off">
+          <label>数量<input type="number" id="count" value="20" min="1" max="100" required></label>
+          <label>备注<input type="text" id="note" maxlength="60" placeholder="例如：11 月第一批"></label>
+          <label>有效期（天）<input type="number" id="days" value="7" min="0" max="365"></label>
+          <button type="submit" class="primary">生成</button>
+        </form>
+        <p class="muted" id="create-hint">未使用的码会保留明文，随时可以复制或导出；被使用或作废后明文自动清除。</p>
+        <div id="fresh" hidden>
+          <div class="fresh-head">
+            <strong>刚生成的邀请码</strong>
+            <button type="button" class="ghost" id="copy-all">复制全部</button>
+          </div>
+          <ul id="fresh-list" class="codes"></ul>
         </div>
+        <p id="create-error" class="error" hidden></p>
       </div>
-      <table class="invites">
-        <thead>
-          <tr><th>批次</th><th>备注</th><th>邀请码</th><th>状态</th><th>使用人</th><th>创建</th><th>过期</th><th></th></tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
-      <p id="list-empty" class="muted" hidden>还没有邀请码。</p>
-      <p id="list-error" class="error" hidden></p>
+
+      <div class="card">
+        <div class="table-head">
+          <h2>邀请码列表</h2>
+          <div class="table-actions">
+            <button type="button" class="ghost" id="copy-unused">复制全部未使用</button>
+            <button type="button" class="ghost" id="download">下载 .txt</button>
+            <button type="button" class="ghost" id="refresh">刷新</button>
+          </div>
+        </div>
+        <table class="invites">
+          <thead>
+            <tr><th>批次</th><th>备注</th><th>邀请码</th><th>状态</th><th>使用人</th><th>创建</th><th>过期</th><th></th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <p id="list-empty" class="muted" hidden>还没有邀请码。</p>
+        <p id="list-error" class="error" hidden></p>
+      </div>
     </section>
-  </section>
+  </div>
 </main>
 
 <script type="module" src="/admin.js"></script>

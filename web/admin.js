@@ -2,6 +2,33 @@
 
 const $ = (id) => document.getElementById(id);
 
+/* 两个页签：用户 / 邀请码 */
+function showTab(name) {
+  const target = name === 'users' ? 'users' : 'invites';
+  for (const pane of document.querySelectorAll('.tab-pane')) {
+    pane.hidden = pane.dataset.pane !== target;
+  }
+  for (const button of document.querySelectorAll('#tabs button')) {
+    button.classList.toggle('is-active', button.dataset.tab === target);
+  }
+  try {
+    localStorage.setItem('sn-admin-tab', target);
+  } catch {
+    /* 忽略 */
+  }
+}
+
+for (const button of document.querySelectorAll('#tabs button')) {
+  button.addEventListener('click', () => showTab(button.dataset.tab));
+}
+showTab((() => {
+  try {
+    return localStorage.getItem('sn-admin-tab') || 'users';
+  } catch {
+    return 'users';
+  }
+})());
+
 async function call(path, body) {
   const response = await fetch(path, {
     method: body === undefined ? 'GET' : 'POST',

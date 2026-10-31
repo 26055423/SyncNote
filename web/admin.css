@@ -35,3 +35,8 @@ table.invites td { padding: 6px 8px; border-bottom: 1px solid #16212c; white-spa
 
 .table-actions { display: flex; gap: 8px; }
 .code { font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: .5px; margin-right: 8px; }
+
+.admin-tabs { display: flex; gap: 6px; }
+.admin-tabs button { background: transparent; border: 1px solid #243244; color: #8b98a5; padding: 7px 18px; border-radius: 8px; }
+.admin-tabs button.is-active { background: #16222f; color: #e6edf3; border-color: #2b5787; }
+.tab-pane { display: flex; flex-direction: column; gap: 18px; }
