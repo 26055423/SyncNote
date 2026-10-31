@@ -149,6 +149,17 @@ export function OrderTicket({ account, symbol, bid, ask, connected, allowPending
   }
 
   function pickSide(next: OrderSide): void {
+    if (next !== side) {
+      // 换方向时把止损止盈镜像到新方向的正确一侧，保持同样的距离（RR 才不会被绝对值掩盖）。
+      const previous = resolveEntry(request, ref);
+      const nextEntry = next === 'buy' ? ask : bid;
+      if (previous > 0 && nextEntry > 0) {
+        const stopDistance = slOn && num(sl) > 0 ? Math.abs(previous - num(sl)) : 0;
+        const targetDistance = tpOn && num(tp) > 0 ? Math.abs(num(tp) - previous) : 0;
+        if (stopDistance > 0) setSl(fmtPrice(next === 'buy' ? nextEntry - stopDistance : nextEntry + stopDistance));
+        if (targetDistance > 0) setTp(fmtPrice(next === 'buy' ? nextEntry + targetDistance : nextEntry - targetDistance));
+      }
+    }
     setSide(next);
     if (action !== 'market' && price) setPrice(defaultPrice(next, action));
   }
