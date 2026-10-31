@@ -446,7 +446,6 @@ export default function App() {
           <div className="chart-toolbar">
             <LayoutMenu current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
             <TfMenu current={tf} options={availableTfs} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
-            <button type="button" className={`tool-btn ${syncs.crosshair ? 'is-active' : ''}`} onClick={() => toggleSync('crosshair')}>十字线联动</button>
             <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} onClick={() => setMode('live')}>行情</button>
             <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} disabled={!target} onClick={() => setMode('review')}>复盘</button>
             <button type="button" className="tool-btn" onClick={() => chartRef.current?.focus()}>回到开仓</button>
