@@ -20,6 +20,12 @@ export interface ChartHandle {
   getSyncs(): Partial<Record<SyncKind, boolean>>;
   snapshot(): unknown;
   flush(): void;
+  /** 激活某个画图工具（再点一次取消）。 */
+  useTool(type: string | null): void;
+  /** 当前激活的工具类型。 */
+  activeTool(): string | null;
+  /** 把收藏的工具同步给所有格子的原生工具栏。 */
+  setFavorites(types: string[]): void;
 }
 
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
@@ -31,6 +37,8 @@ interface Props {
   savedState: unknown;
   readOnly: boolean;
   timeframes?: string[];
+  /** 收藏的画图工具（同步给原生工具栏，显示在顶部）。 */
+  favorites?: string[];
   /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
@@ -57,6 +65,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const hostRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<any>(null);
   const anchorRef = useRef(anchorMs);
+  const favoritesRef = useRef<string[]>(props.favorites ?? []);
   const markIdsRef = useRef<Set<string>>(new Set());
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   const [ready, setReady] = useState(false);
@@ -89,6 +98,32 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     },
     focus(timestampMs) {
       focusAll(wsRef.current, timestampMs ?? anchorRef.current);
+    },
+    useTool(type) {
+      const api = wsRef.current?.active?.chart?.drawings;
+      if (!api) return;
+      try {
+        api.setTool(type && api.getTool?.() === type ? null : type);
+      } catch {
+        /* 忽略 */
+      }
+    },
+    activeTool() {
+      try {
+        return wsRef.current?.active?.chart?.drawings?.getTool?.() ?? null;
+      } catch {
+        return null;
+      }
+    },
+    setFavorites(types) {
+      favoritesRef.current = types;
+      for (const cell of wsRef.current?.cells?.() ?? []) {
+        try {
+          cell.chart?.drawings?.setFavorites?.(types);
+        } catch {
+          /* 忽略 */
+        }
+      }
     },
     toggleSync(kind) {
       const ws = wsRef.current;
@@ -244,6 +279,11 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             focusOne(cell);
             lockDrawings(cell);
             annotate(cell);
+            try {
+              cell.chart?.drawings?.setFavorites?.(favoritesRef.current);
+            } catch {
+              /* 旧版本没有收藏 API 时忽略 */
+            }
           });
           cell.chart?.on?.('market:changed', () => {
             onTimeframe?.(cell.chart?.market?.timeframe ?? '15');

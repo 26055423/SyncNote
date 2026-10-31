@@ -315,3 +315,17 @@ table.grid-table tr:hover td { background: #101b26; }
 /* 未复盘：保留可点的入口，用空心点提示还没写 */
 .link.todo { color: #7aa7d9; }
 .link.todo::before { content: "○ "; }
+
+/* ------------------------------------------------------ 画图收藏栏 */
+.fav-tools { position: relative; display: flex; align-items: center; gap: 4px; }
+.tool-btn.icon { min-width: 30px; padding: 0 6px; font-size: 15px; line-height: 26px; }
+.fav-pop { position: absolute; top: 34px; left: 0; z-index: 40; width: 520px; max-height: 60vh; overflow: auto; background: #0f1822; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 18px 40px rgba(0,0,0,.45); padding: 12px; }
+.fav-pop header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.fav-pop header .dim { font-size: 11px; }
+.fav-list section { margin-bottom: 10px; }
+.fav-list h4 { margin: 0 0 6px; font-size: 11px; color: var(--dim); font-weight: 500; }
+.fav-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 10px; }
+.fav-grid label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); padding: 3px 4px; border-radius: 6px; }
+.fav-grid label:hover { background: #16222f; }
+.fav-grid label.is-on { color: #a8d8ff; }
+.fav-icon { width: 16px; text-align: center; color: var(--dim); }

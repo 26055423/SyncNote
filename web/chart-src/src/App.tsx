@@ -6,6 +6,8 @@ import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type ReviewCharts } from './vela/provider';
 import { LocalTradePanel } from './LocalTradePanel';
 import { BottomDock } from './BottomDock';
+import { DrawingFavs } from './DrawingFavs';
+import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
 
 /* ------------------------------------------------------------------ 类型 */
@@ -115,6 +117,16 @@ export default function App() {
   const [tf, setTf] = useState('15');
   const [layout, setLayout] = useState('4');
   const [syncs, setSyncs] = useState<Partial<Record<SyncKind, boolean>>>({});
+  const [favs, setFavs] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('sn-chart-favs');
+      const list = raw ? (JSON.parse(raw) as unknown) : null;
+      return Array.isArray(list) && list.length ? (list as string[]) : DEFAULT_FAVORITES;
+    } catch {
+      return DEFAULT_FAVORITES;
+    }
+  });
+  const [activeTool, setActiveTool] = useState<string | null>(null);
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') ? 'review' : 'live'));
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
@@ -446,6 +458,22 @@ export default function App() {
           <div className="chart-toolbar">
             <LayoutMenu current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
             <TfMenu current={tf} options={availableTfs} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
+            <DrawingFavs
+              favorites={favs}
+              active={activeTool}
+              onChange={(list) => {
+                setFavs(list);
+                try {
+                  localStorage.setItem('sn-chart-favs', JSON.stringify(list));
+                } catch {
+                  /* 存不了就算了 */
+                }
+              }}
+              onUse={(key) => {
+                chartRef.current?.useTool(key);
+                setActiveTool((prev) => (prev === key ? null : key));
+              }}
+            />
             <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} onClick={() => setMode('live')}>行情</button>
             <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} disabled={!target} onClick={() => setMode('review')}>复盘</button>
             <button type="button" className="tool-btn" onClick={() => chartRef.current?.focus()}>回到开仓</button>
@@ -495,6 +523,7 @@ export default function App() {
                 }
                 readOnly={entry!.read_only}
                 timeframes={availableTfs.map((o) => o.id)}
+                favorites={favs}
                 onStateChange={onStateChange}
                 onTimeframe={setTf}
                 onLayout={setLayout}
