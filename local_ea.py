@@ -18,15 +18,15 @@ def source_package(root):
   source=body.decode('utf-8-sig')
   for include in re.findall(r'^\s*#include\s+"([^"\r\n]+)"',source,re.M):
    collect((path.parent/include).relative_to(base))
- collect(Path('TongpinLocal.mq5'))
+ collect(Path('SyncNoteLocal.mq5'))
  for name in ('LOCAL_README.md','LOCAL_PROTOCOL.md'):
   files[name]=(base/name).read_bytes()
- manifest={'format':1,'entry':'TongpinLocal.mq5','files':{name:hashlib.sha256(body).hexdigest() for name,body in sorted(files.items())}}
+ manifest={'format':1,'entry':'SyncNoteLocal.mq5','files':{name:hashlib.sha256(body).hexdigest() for name,body in sorted(files.items())}}
  files['SOURCE_MANIFEST.json']=(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n').encode('utf-8')
  output=BytesIO()
  with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as archive:
   for name,body in sorted(files.items()):
-   info=zipfile.ZipInfo('TongpinLocal/'+name,date_time=(2026,10,30,0,0,0))
+   info=zipfile.ZipInfo('SyncNoteLocal/'+name,date_time=(2026,10,30,0,0,0))
    info.compress_type=zipfile.ZIP_DEFLATED
    archive.writestr(info,body)
  return output.getvalue()

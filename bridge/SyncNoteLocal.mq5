@@ -1,14 +1,14 @@
-// Tongpin Local v1 - compile this open source EA yourself in MetaEditor.
+// SyncNote Local v1 - compile this open source EA yourself in MetaEditor.
 // Windows MT5 only; system Ws2_32.dll + bcrypt.dll; no Python or custom DLL.
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading is OFF by default and this initial release rejects ALL real accounts.
-#property copyright "Tongpin / SyncNote"
+#property copyright "SyncNote"
 #property version "1.000"
 #property strict
 #property description "Windows localhost WebSocket EA. Default read-only; demo-only trading. Allow system DLL imports."
 
-#include "TongpinLocalJson.mqh"
-#include "TongpinLocalSocket.mqh"
+#include "SyncNoteLocalJson.mqh"
+#include "SyncNoteLocalSocket.mqh"
 
 input string InpAllowedOrigin="https://sync-trade.top"; // Exact HTTPS website origin, no trailing slash
 input string InpSymbol="XAUUSD";                      // Exact broker symbol, suffix included
@@ -39,7 +39,7 @@ int g_journal=INVALID_HANDLE;
 string g_journal_path="";
 int g_digits=5;
 long g_offset=0;
-string g_button_allow="TongpinLocal.Allow",g_button_revoke="TongpinLocal.Revoke";
+string g_button_allow="SyncNoteLocal.Allow",g_button_revoke="SyncNoteLocal.Revoke";
 
 struct LocalCommandEntry
 {
@@ -185,6 +185,9 @@ bool OpenJournal()
 {
    if(g_journal!=INVALID_HANDLE) FileClose(g_journal);
    g_journal=INVALID_HANDLE;g_journal_ok=false;ArrayResize(g_commands,0);
+   // Runtime folder keeps the historical name on purpose: an existing
+   // commands-*.journal is the only de-duplication record, so renaming the
+   // folder would orphan it and allow a command to be replayed.
    FolderCreate("TongpinLocal");
    string account_hash=HashHex(g_account+"@"+g_server);
    if(account_hash=="") return false;
@@ -229,7 +232,7 @@ void AccountChanged()
    if(login==g_account && server==g_server) return;
    ClearAuthorization();g_account_stable=false;
    g_account=login;g_server=server;g_epoch=RandomHex(16);
-   if(g_epoch=="" || !NewPairCode()) {Print("TongpinLocal: cryptographic random generator unavailable");return;}
+   if(g_epoch=="" || !NewPairCode()) {Print("SyncNoteLocal: cryptographic random generator unavailable");return;}
    g_journal_ok=OpenJournal();
    g_account_stable=(AccountInfoInteger(ACCOUNT_LOGIN)>0 && server!="");
    g_force_snapshot=true;PaintStatus();
@@ -517,7 +520,7 @@ void HandleTradeCommand(const int peer,const string js)
    {
       // Intent is durable, outcome may not be. Keep RAM result; prohibit further trading.
       g_journal_ok=false;
-      Print("TongpinLocal: outcome journal flush failed; trading disabled. Inspect MT5 history.");
+      Print("SyncNoteLocal: outcome journal flush failed; trading disabled. Inspect MT5 history.");
    }
    WsText(peer,g_commands[index].result);g_force_snapshot=true;
 }
@@ -600,16 +603,16 @@ void LocalMessage(const int peer,const string js)
 }
 int OnInit()
 {
-   if(!MQLInfoInteger(MQL_DLLS_ALLOWED)) {Print("TongpinLocal: allow system DLL imports in EA settings");return INIT_FAILED;}
+   if(!MQLInfoInteger(MQL_DLLS_ALLOWED)) {Print("SyncNoteLocal: allow system DLL imports in EA settings");return INIT_FAILED;}
    if(StringFind(InpAllowedOrigin,"https://")!=0 || StringFind(InpAllowedOrigin,"/",8)>=0 || StringFind(InpAllowedOrigin," ")>=0 || StringFind(InpAllowedOrigin,"*")>=0)
-   {Print("TongpinLocal: allowed origin must be one exact https origin without path/wildcards");return INIT_PARAMETERS_INCORRECT;}
+   {Print("SyncNoteLocal: allowed origin must be one exact https origin without path/wildcards");return INIT_PARAMETERS_INCORRECT;}
    if(InpMaxOrderLots<=0 || InpMaxSymbolLots<InpMaxOrderLots || InpMaxDeviationPoints<0 || InpMaxSpreadPoints<0 || InpMagic<0 || !SymbolSelect(InpSymbol,true)) return INIT_PARAMETERS_INCORRECT;
    g_digits=(int)SymbolInfoInteger(InpSymbol,SYMBOL_DIGITS);
    g_instance=RandomHex(16);
    if(g_instance=="") return INIT_FAILED;
    AccountChanged();
    if(g_epoch=="" || g_pair_code=="") return INIT_FAILED;
-   if(!WsStart(LOCAL_PORT)) {Print("TongpinLocal: cannot bind 127.0.0.1:18765; another EA may already own the port. Error=",WSAGetLastError());WsStop();return INIT_FAILED;}
+   if(!WsStart(LOCAL_PORT)) {Print("SyncNoteLocal: cannot bind 127.0.0.1:18765; another EA may already own the port. Error=",WSAGetLastError());WsStop();return INIT_FAILED;}
    MakeButton(g_button_allow,"允许本次连接 / Allow",10);MakeButton(g_button_revoke,"撤销授权 / Revoke",185);
    if(!EventSetMillisecondTimer(15)) {WsStop();return INIT_FAILED;}
    PaintStatus();return INIT_SUCCEEDED;

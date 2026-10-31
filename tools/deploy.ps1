@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$tar = Join-Path $env:TEMP 'tongpin-deploy.tar.gz'
+$tar = Join-Path $env:TEMP 'syncnote-deploy.tar.gz'
 if (Test-Path $tar) { Remove-Item $tar }
 
 function Find-Tool([string]$name) {
@@ -32,10 +32,10 @@ try {
 }
 Write-Host ("打包完成：{0:N2} MB" -f ((Get-Item $tar).Length / 1MB))
 
-& $scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new $tar "${target}:/tmp/tongpin-deploy.tar.gz"
+& $scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new $tar "${target}:/tmp/syncnote-deploy.tar.gz"
 if ($LASTEXITCODE -ne 0) { throw "上传失败" }
 
-& $ssh -o BatchMode=yes $target 'sudo /usr/local/bin/tongpin-deploy /tmp/tongpin-deploy.tar.gz && rm -f /tmp/tongpin-deploy.tar.gz'
+& $ssh -o BatchMode=yes $target 'sudo /usr/local/bin/syncnote-deploy /tmp/syncnote-deploy.tar.gz && rm -f /tmp/syncnote-deploy.tar.gz'
 if ($LASTEXITCODE -ne 0) { throw "远端更新失败" }
 
 $health = & curl.exe -s -m 10 "$PublicUrl/api/health"

@@ -1,4 +1,4 @@
-"""把本地 MT5 WebBridge 的数据推给同频，替代 TongpinSync.mq5。
+"""把本地 MT5 WebBridge 的数据推给同频，替代 SyncNoteSync.mq5。
 
 MT5 已经挂了 WebBridge（EA → gateway.py → http://127.0.0.1:8790）时，不用再装第二个 EA：
 这个脚本在本机读 bridge 的账户/持仓/成交和 K 线，转成同频 `/api/snapshot` 的格式推上去，
@@ -6,7 +6,7 @@ MT5 已经挂了 WebBridge（EA → gateway.py → http://127.0.0.1:8790）时�
 
 用法：
     python tools/bridge_push.py --token <个人中心生成的连接码>
-    python tools/bridge_push.py --token ... --tongpin https://你的域名 --once
+    python tools/bridge_push.py --token ... --syncnote https://你的域名 --once
 
 只读：不碰 MT5，不写 bridge 数据库，只发 HTTP。
 """
@@ -163,7 +163,7 @@ def snapshot_payload(bridge, db_path, state):
     return payload, closed, max([d['id'] for d in deals], default=last_id)
 
 
-def upload_review(bridge, tongpin, token, ticket, closed):
+def upload_review(bridge, syncnote, token, ticket, closed):
     trade = closed.get(str(ticket))
     if not trade:
         return 'unknown ticket'
@@ -188,7 +188,7 @@ def upload_review(bridge, tongpin, token, ticket, closed):
         errors[name] = reason
     body = {'ticket': str(ticket), 'opened_server': opened, 'closed_server': end, 'error': '', 'charts': charts, 'errors': errors}
     try:
-        status, _ = request_json(tongpin + '/api/mt5/review', body, token)
+        status, _ = request_json(syncnote + '/api/mt5/review', body, token)
         return 'uploaded' if status == 200 else 'http %s' % status
     except urllib.error.HTTPError as error:
         return 'rejected %s %s' % (error.code, error.read()[:160].decode('utf-8', 'replace'))
@@ -196,7 +196,7 @@ def upload_review(bridge, tongpin, token, ticket, closed):
         return 'network %s' % error
 
 
-def push_live(bridge, tongpin, token, state):
+def push_live(bridge, syncnote, token, state):
     """把最新 tick 和 K 线推给同频（首次 300 根，之后只补最新几根）。"""
     health = request_json(bridge + '/api/health')[1]
     offset = int(health.get('server_offset_sec') or 0)
@@ -220,7 +220,7 @@ def push_live(bridge, tongpin, token, state):
             rows.append([bar['bar_time'] - offset, bar['open'], bar['high'], bar['low'], bar['close']])
         if rows:
             payload['bars'][tf] = rows
-    status, reply = request_json(tongpin + '/api/mt5/live', payload, token)
+    status, reply = request_json(syncnote + '/api/mt5/live', payload, token)
     if status == 200:
         # 服务端重启过（内存行情为空）时要求重新 bootstrap，否则只会补几根。
         state['live_bootstrapped'] = not (reply or {}).get('bootstrap')
@@ -230,34 +230,34 @@ def push_live(bridge, tongpin, token, state):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--token', default=os.environ.get('TONGPIN_TOKEN',''), help='同频个人中心生成的连接码（也可用环境变量 TONGPIN_TOKEN）')
-    parser.add_argument('--tongpin', default='http://127.0.0.1:18886', help='同频地址，例如 https://tongpin.example.com')
+    parser.add_argument('--token', default=os.environ.get('SYNCNOTE_TOKEN',''), help='同频个人中心生成的连接码（也可用环境变量 SYNCNOTE_TOKEN）')
+    parser.add_argument('--syncnote', default='http://127.0.0.1:18886', help='同频地址，例如 https://syncnote.example.com')
     parser.add_argument('--bridge', default=DEFAULT_BRIDGE)
     parser.add_argument('--db', default=DEFAULT_DB, help='bridge 的 ea_bridge.db')
     parser.add_argument('--interval', type=float, default=5.0)
     parser.add_argument('--once', action='store_true', help='只推一次，便于排查')
     args = parser.parse_args()
     if not args.token:
-        print('缺少连接码：--token 或环境变量 TONGPIN_TOKEN')
+        print('缺少连接码：--token 或环境变量 SYNCNOTE_TOKEN')
         return 2
 
-    tongpin = args.tongpin.rstrip('/')
+    syncnote = args.syncnote.rstrip('/')
     state = load_state()
     while True:
         try:
             payload, closed, last_id = snapshot_payload(args.bridge, args.db, state)
-            status, reply = request_json(tongpin + '/api/snapshot', payload, args.token)
+            status, reply = request_json(syncnote + '/api/snapshot', payload, args.token)
             if status != 200:
                 print('snapshot rejected:', status, reply)
             else:
                 job = (reply or {}).get('review_ticket') or ''
                 if job:
-                    print('review job:', job, upload_review(args.bridge, tongpin, args.token, job, closed))
+                    print('review job:', job, upload_review(args.bridge, syncnote, args.token, job, closed))
                 state['last_deal_id'] = last_id
                 save_state(state)
                 print('pushed', len(payload['snapshot']['history']), 'closed /', len(payload['snapshot']['positions']), 'open')
             try:
-                push_live(args.bridge, tongpin, args.token, state)
+                push_live(args.bridge, syncnote, args.token, state)
             except (urllib.error.URLError, OSError, KeyError) as error:
                 print('live push skipped:', error)
         except urllib.error.HTTPError as error:

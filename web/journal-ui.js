@@ -8,7 +8,7 @@
   const el = id => document.getElementById(id);
   const escape = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = n => Number(n).toFixed(2);
-  const api = (path, data) => window.tongpinAPI(path, data);
+  const api = (path, data) => window.syncnoteAPI(path, data);
   let notes = {}, categories = [];
 
   window.tradeJournal = {

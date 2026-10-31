@@ -44,7 +44,7 @@ flowchart LR
 | `bridge/WebBridge.mq5` | 原生 Socket TCP 客户端，tick/bar/账户/持仓/订单、`OrderSend`、开仓/撤单/平仓/改单 | 复用数据和交易语义，保留原文件；新 EA 单独实现本机监听与授权 |
 | `bridge/gateway.py` | 独立 Python 网关、REST 交易、行情 WebSocket、部分限额和幂等 | 保留给已有用户；新方案的终端用户不需要运行它 |
 | `bridge/PROTOCOL.md` | EA → 网关 NDJSON v1 | 保持兼容，不把原 TCP 协议冒充浏览器 WebSocket |
-| `web/TongpinSync.mq5` | 只读 HTTP 上传，默认 5 秒 | 继续作为旧采集方式，不承担本机交易 |
+| `web/SyncNoteSync.mq5` | 只读 HTTP 上传，默认 5 秒 | 继续作为旧采集方式，不承担本机交易 |
 | `ea_hub.py` | EA → 云端的采集连接，未提供网站交易命令通道 | 不作为新方案的交易转发器 |
 | `tools/bridge_push.py` | 每轮默认等待 5 秒，读取网关再上传云端 | 旧同步方式继续可用；不属于新方案必装组件 |
 | `web/chart-src/src/App.tsx` / `vela/provider.ts` | 图表和实时行情的秒级 HTTP 轮询 | 本机模式使用共用连接和缓存；云端复盘保留原来源 |
@@ -66,7 +66,7 @@ MQL5 官方原生网络接口提供主动连接和读写，没有服务端所需
 
 ## 5. 安装、配对和撤销
 
-1. 用户从网站下载源码包，检查源码和发布版本，在 MetaEditor 编译 `TongpinLocal.mq5`。
+1. 用户从网站下载源码包，检查源码和发布版本，在 MetaEditor 编译 `SyncNoteLocal.mq5`。
 2. 在专用图表挂载 EA，核对允许的网站 Origin、品种和本机端口。默认仅查看，启用交易须在 EA 本地设置。
 3. EA 仅监听 `127.0.0.1:18765`，展示一次性 8 位配对码。建议有效期 120 秒，最多尝试 5 次，超限作废并等待用户在本地重新生成。
 4. 用户登录网站，点击“连接本机 MT5”，接受浏览器本机网络访问提示，在网页输入配对码。

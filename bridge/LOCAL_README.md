@@ -1,6 +1,6 @@
 # 本机 EA：自行编译与接入
 
-这是 `TongpinLocal.mq5` 的源码安装说明。它与旧 `WebBridge.mq5 + gateway.py` 相互独立，**不需要启动 Python、本地助手或安装自定义 DLL**。
+这是 `SyncNoteLocal.mq5` 的源码安装说明。它与旧 `WebBridge.mq5 + gateway.py` 相互独立，**不需要启动 Python、本地助手或安装自定义 DLL**。
 
 当前状态：Windows 本机 MetaEditor 离线编译通过；尚未进行真实终端挂载、网页↔EA 配对及模拟下单验收。不要把源码可编译理解为交易链路已实测。首版在 EA 内禁止实盘和净额账户交易；默认所有账户只读。
 
@@ -9,9 +9,9 @@
 保持以下文件在同一目录，自行查看与编译：
 
 ```
-TongpinLocal.mq5
-TongpinLocalJson.mqh
-TongpinLocalSocket.mqh
+SyncNoteLocal.mq5
+SyncNoteLocalJson.mqh
+SyncNoteLocalSocket.mqh
 LOCAL_PROTOCOL.md
 LOCAL_README.md
 ```
@@ -20,8 +20,8 @@ LOCAL_README.md
 
 ## 安装与首次连接
 
-1. 在 Windows MT5 点击「文件→打开数据文件夹」，把整个目录放到 `MQL5/Experts/TongpinLocal/`。
-2. 用该 MT5 自带的 MetaEditor 打开 `TongpinLocal.mq5`，F7 编译，确认零错误。包含文件使用相对路径，无第三方 include。
+1. 在 Windows MT5 点击「文件→打开数据文件夹」，把整个目录放到 `MQL5/Experts/SyncNoteLocal/`。
+2. 用该 MT5 自带的 MetaEditor 打开 `SyncNoteLocal.mq5`，F7 编译，确认零错误。包含文件使用相对路径，无第三方 include。
 3. 在 MT5 给配置的品种打开一个独立图表，挂载一个 EA。默认品种 `XAUUSD`；券商带后缀时把 `InpSymbol` 改成精确名称。
 4. EA 的「依赖/通用」设置中允许 DLL 导入。只调用 Windows 自带的 `Ws2_32.dll`（本机网络服务）和 `bcrypt.dll`（密码学安全随机数）。这些调用仍有本机程序权限，源码公开不等于可省略审阅。
 5. 保持 `InpAllowTrading=false`，先以只读模式验收。EA 仅监听 `127.0.0.1:18765`，无需路由器端口映射，不要改为公网监听；同机只能挂一个实例。
@@ -60,7 +60,7 @@ EA 可以展示账户中其他仓位，但显示出来并不表示有管理权�
 
 网页的下单超时不代表失败。遇到 uncertain/submitted，先在 MT5 检查订单与成交历史，或查询原 command_id，切勿直接换一个 ID 再发一次。EA 不自动重发任何交易，也不重放崩溃前的 intent。
 
-去重日志位于终端数据文件夹的 `MQL5/Files/TongpinLocal/commands-<account hash>.journal`。不要在交易结果未核清前删除、编辑或截断该日志；删除会丢失去重依据。不同电脑/不同终端不共享日志。日志损坏、写入失败或达到 10,000 个不同命令的上限时，禁止新交易，需人工审查归档与恢复。
+去重日志位于终端数据文件夹的 `MQL5/Files/TongpinLocal/commands-<account hash>.journal`。运行目录名沿用历史的 `TongpinLocal`（与 EA 源码文件名 `SyncNoteLocal` 不同），让升级前的日志继续生效；改名会让旧日志孤立，等于丢掉去重依据。不要在交易结果未核清前删除、编辑或截断该日志；删除会丢失去重依据。不同电脑/不同终端不共享日志。日志损坏、写入失败或达到 10,000 个不同命令的上限时，禁止新交易，需人工审查归档与恢复。
 
 ## 验证记录与性能边界
 

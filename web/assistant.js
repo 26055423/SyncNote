@@ -8,12 +8,12 @@ window.assistantPanel = () => `
   <button id="copy-code" type="button" hidden>复制连接码</button>
 </div>
 <label>连接码<input id="connection-code" readonly placeholder="点「生成连接码」，只显示一次" autocomplete="off"></label>
-<p class="profile-hint">连接码等同密码，只填进自己的 MT5。重新生成会让旧码立刻失效——如果正在用 tools/bridge_push.py 同步，记得把新码写进 %LOCALAPPDATA%\\Tongpin\\push-token.txt 再重启同步。</p>
+<p class="profile-hint">连接码等同密码，只填进自己的 MT5。重新生成会让旧码立刻失效——如果正在用 tools/bridge_push.py 同步，记得把新码写进 %LOCALAPPDATA%\\SyncNote\\push-token.txt 再重启同步。</p>
 <ol class="connect-steps">
   <li>点「生成连接码」并复制（忘了就重新生成一个）。</li>
-  <li><a href="/downloads/TongpinSync.mq5" download>下载 TongpinSync.mq5 源码</a>，用 MT5 的 MetaEditor 打开并按 F7 编译。</li>
+  <li><a href="/downloads/SyncNoteSync.mq5" download>下载 SyncNoteSync.mq5 源码</a>，用 MT5 的 MetaEditor 打开并按 F7 编译。</li>
   <li>MT5 → 工具 → 选项 → EA 交易：勾选「允许 WebRequest」，把 <code id="site-url"></code> 加进白名单。</li>
-  <li>把 TongpinSync 拖到任意图表，<b>WebsiteURL</b> 填同一个地址，<b>ConnectionCode</b> 粘贴连接码。</li>
+  <li>把 SyncNoteSync 拖到任意图表，<b>WebsiteURL</b> 填同一个地址，<b>ConnectionCode</b> 粘贴连接码。</li>
   <li>约 5 秒内上面的状态会变成「MT5 已连接，正在盯盘」，看板就会出现你的账户和交易。</li>
 </ol>
 <p id="connection-feedback" class="form-feedback" role="status"></p>`;
@@ -31,7 +31,7 @@ window.bindAssistant = () => {
     gen.disabled = true;
     feedback.textContent = '正在生成…';
     try {
-      const result = await window.tongpinAPI('/api/mt5/token', {});
+      const result = await window.syncnoteAPI('/api/mt5/token', {});
       code.value = result.token;
       copy.hidden = false;
       feedback.textContent = '已生成。复制后填进 MT5 的 ConnectionCode；旧连接码已自动失效。';

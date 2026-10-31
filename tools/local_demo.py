@@ -4,7 +4,7 @@
     python tools/local_demo.py                 # 默认 127.0.0.1:18900
     python tools/local_demo.py --port 18901
 
-数据写在 --data 指定的目录（默认系统临时目录下的 tongpin-demo），
+数据写在 --data 指定的目录（默认系统临时目录下的 syncnote-demo），
 删除该目录即可重置。所有账号、交易、行情都是脚本生成的合成数据。
 """
 import argparse
@@ -40,8 +40,8 @@ def build_bars(opened, closed, seed):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=18900)
-    parser.add_argument('--data', default=os.path.join(tempfile.gettempdir(), 'tongpin-demo'))
-    parser.add_argument('--password', default='tongpin-demo-2026')
+    parser.add_argument('--data', default=os.path.join(tempfile.gettempdir(), 'syncnote-demo'))
+    parser.add_argument('--password', default='syncnote-demo-2026')
     args = parser.parse_args()
 
     data_dir = Path(args.data)

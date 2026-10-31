@@ -3,7 +3,7 @@
 从原 `trade_dashboard/live_data/ea_bridge` 迁进来的完整源码：**MT5 EA + 本地网关**。
 它负责和 MT5 通信，并把行情/账户/持仓/下单能力以 HTTP + WebSocket 暴露给本机程序。
 
-同频不直接依赖它也能跑（可以用 `web/TongpinSync.mq5` 直连云端），但如果你已经在用 WebBridge，
+同频不直接依赖它也能跑（可以用 `web/SyncNoteSync.mq5` 直连云端），但如果你已经在用 WebBridge，
 `tools/bridge_push.py` 会读它的接口，把数据和复盘同步到云端。
 
 ## 组成

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 从 GitHub 拉取 SyncNote 更新（公开仓库，HTTPS 无需密钥），有变化才重启，失败回滚。
-# 用法：sudo tongpin-pull
+# 从 GitHub 拉取 SyncNote 更新（公开仓库；服务器用只读 Deploy key，经 SSH 拉取），有变化才重启，失败回滚。
+# 用法：sudo syncnote-pull
 set -euo pipefail
 
 GIT="git -C /SyncTrade -c core.hooksPath=/dev/null"
@@ -15,13 +15,13 @@ if [ "$before" = "$after" ]; then
   exit 0
 fi
 
-systemctl restart tongpin
+systemctl restart syncnote
 sleep 3
 if curl -fsS -m 5 http://127.0.0.1/api/health >/dev/null; then
   echo "已更新：$before -> $after，服务正常"
 else
   echo "健康检查失败，回滚到 $before" >&2
   sudo -u admin $GIT reset --hard "$before"
-  systemctl restart tongpin
+  systemctl restart syncnote
   exit 1
 fi

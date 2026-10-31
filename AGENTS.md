@@ -28,7 +28,7 @@ python tools/local_demo.py            # 本地演示实例（127.0.0.1:18900，�
 cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/chart
 ```
 
-服务器更新（在 43.103.49.141 上）：`sudo tongpin-pull`（git pull → 重启 → 健康检查，失败自动回滚）。
+服务器更新（在 43.103.49.141 上）：`sudo syncnote-pull`（git pull → 重启 → 健康检查，失败自动回滚）。
 
 ## 硬性约定（改动前务必遵守）
 
@@ -48,7 +48,7 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 ## 当前未完成 / 已知限制
 
 - 正式地址是 `https://sync-trade.top`（Let's Encrypt，80 强制跳 443，Cookie 带 Secure）；EA 的 `InpAllowedOrigin` 用 `https://sync-trade.top`，不要再用 IP 访问。
-- **云端不提供下单通道**：`ea_hub` 只收行情/账户，不发单。新本机 EA 预览源码位于 `bridge/TongpinLocal.mq5`，网页连接为独立 `tongpin-local.v1`，默认只读、仅模拟套期保值账户允许交易；真实终端联调状态见发布验收记录。
+- **云端不提供下单通道**：`ea_hub` 只收行情/账户，不发单。新本机 EA 预览源码位于 `bridge/SyncNoteLocal.mq5`，网页连接为独立 `tongpin-local.v1`，默认只读、仅模拟套期保值账户允许交易；真实终端联调状态见发布验收记录。
 - 顶栏价格：有实时行情时用 tick 中间价，否则取图表最后一根 K 线收盘价。
 - 「行情模式」的实时 K 线已接上 `LiveProvider`（3 秒轮询最新一根），本地 demo 验证过渲染与更新。
 - 连接码每个用户只有一条，重新生成会让正在同步的 `bridge_push` / EA 断开。

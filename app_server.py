@@ -206,11 +206,11 @@ class Handler(BaseHTTPRequestHandler):
                     if not auth_security.limit(db,'challenge:'+self.client_ip(),60,60):raise Error('请求过于频繁',429)
                     return self.reply(auth_security.challenge(db))
             if path=='/api/health':return self.reply({'ok':True,'version':'0.2','authentication':True})
-            if path=='/downloads/tongpin-local.zip':
+            if path=='/downloads/syncnote-local.zip':
                 try:body=local_ea.source_package(ROOT)
                 except (OSError,ValueError):raise Error('本机 EA 源码包尚未就绪',503)
                 self.send_response(200)
-                for k,v in [('Content-Type','application/zip'),('Content-Disposition','attachment; filename="tongpin-local.zip"'),('Content-Length',str(len(body))),('Cache-Control','no-store'),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
+                for k,v in [('Content-Type','application/zip'),('Content-Disposition','attachment; filename="syncnote-local.zip"'),('Content-Length',str(len(body))),('Cache-Control','no-store'),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
                 self.end_headers();self.wfile.write(body);return
             if path=='/api/mt5/status':
                 auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
@@ -306,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
                         for m in messages:m['name']=names.get(m['person'],'')
                         return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))],'reviewed':journal.reviewed(db,uid)})
                     raise Error('接口不存在',404)
-            assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/local-ea':'local-ea.html','/local-ea.css':'local-ea.css','/admin':'admin.html','/admin.js':'admin.js','/admin.css':'admin.css','/downloads/TongpinSync.mq5':'TongpinSync.mq5'}
+            assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/local-ea':'local-ea.html','/local-ea.css':'local-ea.css','/admin':'admin.html','/admin.js':'admin.js','/admin.css':'admin.css','/downloads/SyncNoteSync.mq5':'SyncNoteSync.mq5'}
             for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
             if re.fullmatch(r'/avatars/avatar(?:[1-9]|1[0-2])\.svg',path):assets[path]=path.lstrip('/')
             # 首页就是交易台；旧看板挪到 /board。
@@ -416,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_response(200)
                     extension='dmg' if platform=='mac' else 'exe'
                     mimetype='application/x-apple-diskimage' if platform=='mac' else 'application/vnd.microsoft.portable-executable'
-                    for k,v in [('Content-Type',mimetype),('Content-Length',str(len(body))),('Cache-Control','no-store'),('Content-Disposition','attachment; filename="TongpinConnect.'+extension+'"; filename*=UTF-8\'\'%E5%90%8C%E9%A2%91%E8%BF%9E%E6%8E%A5%E5%8A%A9%E6%89%8B.'+extension),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
+                    for k,v in [('Content-Type',mimetype),('Content-Length',str(len(body))),('Cache-Control','no-store'),('Content-Disposition','attachment; filename="SyncNoteConnect.'+extension+'"; filename*=UTF-8\'\'%E5%90%8C%E9%A2%91%E8%BF%9E%E6%8E%A5%E5%8A%A9%E6%89%8B.'+extension),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
                     self.end_headers();self.wfile.write(body);return
                 elif path=='/api/mt5/redeem':
                     code=data.get('code');platform=data.get('platform')
@@ -446,7 +446,7 @@ class Handler(BaseHTTPRequestHandler):
                     key=digest(broker+':'+account)
                     if link['account_key'] and link['account_key']!=key:raise Error('此账号已绑定固定 MT5 账户，暂不支持切换交易账户',409)
                     clock=record_clock(db,uid,broker,s,now)
-                    # 采集端可以两种时间口径：券商墙钟（TongpinSync.mq5 原来的做法），
+                    # 采集端可以两种时间口径：券商墙钟（SyncNoteSync.mq5 原来的做法），
                     # 或者已经换算好的 UTC + 券商时间（WebBridge 这类本地桥）。
                     # 后者不再走“只认当前测量窗口”的校准，历史补传也能落库。
                     def normalize(item):
@@ -597,4 +597,4 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({'error':'请求数据不正确'},400)
         except Exception:self.reply({'error':'服务暂时不可用'},500)
 if __name__=='__main__':
-    host=os.environ.get('HOST','127.0.0.1');port=int(os.environ.get('PORT','18886'));print(f'Tongpin v2: http://{host}:{port}',flush=True);ThreadingHTTPServer((host,port),Handler).serve_forever()
+    host=os.environ.get('HOST','127.0.0.1');port=int(os.environ.get('PORT','18886'));print(f'SyncNote v2: http://{host}:{port}',flush=True);ThreadingHTTPServer((host,port),Handler).serve_forever()

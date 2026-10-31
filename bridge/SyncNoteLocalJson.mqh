@@ -1,6 +1,6 @@
 // Flat JSON helpers adapted from WebBridge.mq5. Strict validation is below.
-#ifndef TONGPIN_LOCAL_JSON
-#define TONGPIN_LOCAL_JSON
+#ifndef SYNCNOTE_LOCAL_JSON
+#define SYNCNOTE_LOCAL_JSON
 string JKey(const string key)
 {
    return "\"" + key + "\":";

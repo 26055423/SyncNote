@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # 同频一键更新：解包 → 换目录 → 保留数据 → 重启 → 健康检查，失败自动回滚。
-# 用法：sudo tongpin-deploy /tmp/tongpin-deploy.tar.gz
+# 用法：sudo syncnote-deploy /tmp/syncnote-deploy.tar.gz
 set -euo pipefail
 
 TGZ="${1:-}"
 if [ -z "$TGZ" ] || [ ! -f "$TGZ" ]; then
-  echo "用法: sudo tongpin-deploy <tar.gz>" >&2
+  echo "用法: sudo syncnote-deploy <tar.gz>" >&2
   exit 2
 fi
 
-STAGE=$(mktemp -d /tmp/tongpin-stage.XXXXXX)
+STAGE=$(mktemp -d /tmp/syncnote-stage.XXXXXX)
 trap 'rm -rf "$STAGE"' EXIT
 
 tar xzf "$TGZ" -C "$STAGE"
@@ -18,7 +18,7 @@ if [ ! -f "$STAGE/app_server.py" ] || [ ! -f "$STAGE/web/chart/index.html" ]; th
   exit 2
 fi
 
-systemctl stop tongpin
+systemctl stop syncnote
 
 rm -rf /SyncTrade.new
 mkdir -p /SyncTrade.new
@@ -35,14 +35,14 @@ chmod 750 /SyncTrade.new/data
 mv /SyncTrade /SyncTrade.prev
 mv /SyncTrade.new /SyncTrade
 
-if systemctl start tongpin && sleep 2 && curl -fsS -m 5 http://127.0.0.1:18886/api/health >/dev/null; then
+if systemctl start syncnote && sleep 2 && curl -fsS -m 5 http://127.0.0.1:18886/api/health >/dev/null; then
   rm -rf /SyncTrade.prev
-  echo "更新完成：$(systemctl is-active tongpin)，健康检查通过"
+  echo "更新完成：$(systemctl is-active syncnote)，健康检查通过"
 else
   echo "更新后健康检查失败，回滚" >&2
-  systemctl stop tongpin || true
+  systemctl stop syncnote || true
   mv /SyncTrade /SyncTrade.broken
   mv /SyncTrade.prev /SyncTrade
-  systemctl start tongpin || true
+  systemctl start syncnote || true
   exit 1
 fi

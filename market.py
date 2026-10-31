@@ -25,7 +25,7 @@ def daily(connect,day):
  url='https://datafeed.dukascopy.com/datafeed/XAUUSD/'+day.strftime('%Y/')+f'{day.month-1:02d}/'+day.strftime('%d/')+'BID_candles_min_1.bi5'
  proxy=os.environ.get('MARKET_HTTP_PROXY');opener=urllib.request.build_opener(urllib.request.ProxyHandler({'https':proxy}) if proxy else urllib.request.ProxyHandler())
  try:
-  response=opener.open(urllib.request.Request(url,headers={'User-Agent':'Tongpin-Journal/1.0'}),timeout=15)
+  response=opener.open(urllib.request.Request(url,headers={'User-Agent':'SyncNote-Journal/1.0'}),timeout=15)
   blob=response.read(2*1024*1024+1)
   if len(blob)>2*1024*1024:raise ValueError('Market response too large')
   bars=decode(blob,start)

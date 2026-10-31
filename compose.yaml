@@ -1,6 +1,6 @@
-name: tongpin-standalone
+name: syncnote-standalone
 services:
-  tongpin:
+  syncnote:
     build: .
     restart: unless-stopped
     ports:
@@ -12,7 +12,7 @@ services:
       TRUSTED_PROXY_CIDRS: ""
       TRUSTED_PROXY_HOSTS: ""
     volumes:
-      - tongpin-data:/data
+      - syncnote-data:/data
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -26,4 +26,4 @@ services:
       timeout: 8s
       retries: 3
 volumes:
-  tongpin-data:
+  syncnote-data:

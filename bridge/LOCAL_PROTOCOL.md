@@ -1,4 +1,4 @@
-# Tongpin Local WebSocket Protocol v1
+# SyncNote Local WebSocket Protocol v1
 
 状态：首版本机 EA 与网页的实现协议；**离线编译通过不等于真实 MT5 交易验收通过**。首版交易仅限模拟对冲账户，实盘与净额账户在 EA 内硬性只读。
 
@@ -116,7 +116,7 @@ EA 最终检查本地开关、模拟对冲模式、MT5 权限、身份、期限�
 
 ## 6. 幂等、日志和结果未知
 
-EA 在终端 `MQL5/Files/TongpinLocal/commands-<account hash>.journal` 按账户保存 ID、请求指纹、intent 与 outcome。日志不保存会话 token、配对码或密码；最多 10,000 个不同 ID，容量满后拒绝新交易，不自动删除去重记录。文件按终端独占写入；同一账号多个独立终端不共享去重域。
+EA 在终端 `MQL5/Files/SyncNoteLocal/commands-<account hash>.journal` 按账户保存 ID、请求指纹、intent 与 outcome。日志不保存会话 token、配对码或密码；最多 10,000 个不同 ID，容量满后拒绝新交易，不自动删除去重记录。文件按终端独占写入；同一账号多个独立终端不共享去重域。
 
 提交前先记录 intent 并 FileFlush，随后只调用**一次** OrderSend。不做填单方式降级重试。同步 OrderSend 在返回前仍会占用 EA 线程，这是首版已知限制。FileFlush 不是对突然断电/磁盘故障的端到端 exactly-once 保证。
 

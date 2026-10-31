@@ -7,12 +7,12 @@
 <h1>账户留在 MT5，网页连接你的电脑。</h1>
 <p>这套 EA 源码在你自己的 MetaEditor 中编译。网页通过本机 WebSocket 获取数据、发送受 EA 本地权限限制的交易请求，无需安装 Python 或额外代理程序，也不用在网站填写 MT5 密码。</p>
 <p class="notice">预览版：默认只读。交易功能仅供模拟账户联调；网站发布与源码编译成功不能替代模拟账户的实机验收。实盘请继续使用已验证的 MT5 操作方式。</p>
-<a class="download" href="/downloads/tongpin-local.zip">下载 EA 源码包</a>
+<a class="download" href="/downloads/syncnote-local.zip">下载 EA 源码包</a>
 <p class="muted">包含入口 MQ5、所需 MQH、安装说明、协议和 SHA-256 清单；不包含 EX5、账户、密码或连接码。</p>
 <h2>安装与连接</h2>
 <ol>
 <li><strong>准备环境。</strong>在同一台 Windows 电脑上运行 MT5 与新版 Chrome / Edge。网站使用 HTTPS，手机或另一台电脑上的浏览器无法通过 127.0.0.1 连接这台 MT5。</li>
-<li><strong>检查并编译。</strong>解压源码包，将 TongpinLocal 文件夹放入 MT5 数据目录的 MQL5/Experts。用 MetaEditor 打开 TongpinLocal.mq5，按 F7 编译，确认没有错误。</li>
+<li><strong>检查并编译。</strong>解压源码包，将 SyncNoteLocal 文件夹放入 MT5 数据目录的 MQL5/Experts。用 MetaEditor 打开 SyncNoteLocal.mq5，按 F7 编译，确认没有错误。</li>
 <li><strong>挂载 EA。</strong>在需要查看的品种专用图表挂载 EA。按源码说明启用系统 DLL 导入。系统网络库用于本机监听，密码学库用于生成配对凭据；不需要下载自定义 DLL。</li>
 <li><strong>确认本地设置。</strong>EA 默认只读；允许的网站来源应精确填写本站 HTTPS Origin。交易开关、品种和限额由你在 EA 中决定，网页不能提高这些权限。</li>
 <li><strong>完成配对。</strong>回到交易台，打开本机连接，允许浏览器访问本机网络，输入 EA 显示的一次性配对码，再在 MT5 图表上确认授权。核对网页显示的券商、账号和品种。</li>

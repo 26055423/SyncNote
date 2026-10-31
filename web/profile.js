@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s),esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let profile=null;
-const api=window.tongpinAPI;
+const api=window.syncnoteAPI;
 function feedback(form,text,error=false){const p=form.querySelector('.form-feedback');p.textContent=text;p.classList.toggle('error',error);}
 function memberRow(u,followed,mutual){return `<div class="partner-row"><div class="avatar">${avatarMarkup(u.avatar,u.nickname.slice(0,1))}</div><div class="partner-info"><b>${esc(u.nickname)}</b><small>@${esc(u.username)}${mutual?' · 互相关注':''}</small><small>${u.share_data?'交易数据已开放':'交易数据未开放'}</small></div><button data-target="${esc(u.id)}" data-action="${followed?'unfollow':'follow'}" ${!followed&&!u.allow_follow?'disabled':''}>${followed?'取消关注':u.allow_follow?(mutual?'关注':'关注 / 回关'):'不接受关注'}</button></div>`;}
 function bind(container){container.querySelectorAll('[data-target]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await api('/api/'+b.dataset.action,{target:b.dataset.target});await load(false);if($('#search').value.trim().length>=2)await search();}catch(e){$('#page-feedback').textContent=e.message;}finally{b.disabled=false;}});}

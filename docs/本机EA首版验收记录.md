@@ -5,7 +5,7 @@
 ## 已核对的基础
 
 - 最新迁入的 `bridge/WebBridge.mq5` 包含真实交易执行源码，但依赖 Python gateway；已保留原实现。
-- 新增 `TongpinLocal.mq5`、JSON 与 Winsock 模块，采用独立 `tongpin-local.v1`；源码包按入口和本地 include 白名单生成，不打包账户状态、日志、旧网关数据或 EX5。
+- 新增 `SyncNoteLocal.mq5`、JSON 与 Winsock 模块，采用独立 `tongpin-local.v1`；源码包按入口和本地 include 白名单生成，不打包账户状态、日志、旧网关数据或 EX5。
 - 网页的配对令牌仅存内存；默认不上传新本机数据，断线后不转云端下单、不自动重发交易。
 
 ## 当前检查
@@ -18,7 +18,7 @@
 | 源码包隔离测试 | 3 项通过：依赖白名单、摘要一致、目录越界与非源码引用拒绝 |
 | 浏览器界面 | 独立合成数据实例实际打开四窗格和本机连接面板；未启动 EA 时显示连接不可用，交易禁用 |
 | 网站集成回归 | `python tests/smoke.py`：87 项通过，全新临时数据库；未使用生产数据 |
-| 服务器 | SSH `admin@43.103.49.141` 已确认现有 `/SyncTrade` 与 systemd `tongpin`；通过 Git 更新后核对 revision、HTTP 健康与源码下载 |
+| 服务器 | SSH `admin@43.103.49.141` 已确认现有 `/SyncTrade` 与 systemd `syncnote`；通过 Git 更新后核对 revision、HTTP 健康与源码下载 |
 | HTTPS | 初查 `sync-trade.top` 无 A 记录，服务器只有 HTTP；已请求域名解析。公网 HTTP 下前端拒绝本机交易连接，待配置并验收 HTTPS |
 
 实际浏览器截图和本地演示数据库位于被 Git 忽略的 `data/local-preview/`，均为合成数据，不纳入发布源码。

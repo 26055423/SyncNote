@@ -1,5 +1,5 @@
 // Read requests may retry across a short proxy interruption. Writes never retry.
-window.tongpinAPI=async function(path,data){
+window.syncnoteAPI=async function(path,data){
  const writing=data!==undefined;
  for(let attempt=0;attempt<(writing?1:3);attempt++){
   let response;

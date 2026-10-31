@@ -1,6 +1,6 @@
 // Windows-only loopback RFC 6455 transport. No custom DLLs or helper process.
-#ifndef TONGPIN_LOCAL_SOCKET
-#define TONGPIN_LOCAL_SOCKET
+#ifndef SYNCNOTE_LOCAL_SOCKET
+#define SYNCNOTE_LOCAL_SOCKET
 #import "Ws2_32.dll"
 int WSAStartup(ushort version,uchar &data[]);
 int WSACleanup();

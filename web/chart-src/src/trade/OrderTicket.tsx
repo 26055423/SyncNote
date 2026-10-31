@@ -85,7 +85,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, allowPending
       tp: tpOn ? num(tp) : 0,
       deviation: 20,
       magic: 0,
-      comment: 'tongpin-web',
+      comment: 'syncnote-web',
     }),
     [action, side, symbol, volume, price, slOn, sl, tpOn, tp],
   );

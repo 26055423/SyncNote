@@ -1,6 +1,6 @@
 #property strict
 #property version "1.100"
-#property description "Read-only MT5 uploader for Tongpin. Never sends trade orders."
+#property description "Read-only MT5 uploader for SyncNote. Never sends trade orders."
 input string WebsiteURL="";
 input string ConnectionCode="";
 input int SyncSeconds=5;
@@ -88,7 +88,7 @@ void UploadReview(string job,string base){
  string body="{\"ticket\":"+Q(job)+",\"opened_server\":"+(string)((long)opened)+",\"closed_server\":"+(string)((long)closed)+",\"error\":"+Q(error)+",\"charts\":{"+charts+"},\"errors\":{"+errors+"}}";
  char bytes[],reply[];StringToCharArray(body,bytes,0,WHOLE_ARRAY,CP_UTF8);ArrayResize(bytes,ArraySize(bytes)-1);string headers;
  int code=WebRequest("POST",base+"/api/mt5/review","Content-Type: application/json\r\nAuthorization: Bearer "+ActiveCode+"\r\n",10000,bytes,reply,headers);
- if(code!=200)Print("Tongpin chart upload failed. HTTP: ",code);
+ if(code!=200)Print("SyncNote chart upload failed. HTTP: ",code);
 }
 
 void Upload(){
@@ -115,9 +115,9 @@ void Upload(){
  char bytes[],reply[];StringToCharArray(body,bytes,0,WHOLE_ARRAY,CP_UTF8);ArrayResize(bytes,ArraySize(bytes)-1);string responseHeaders;
  int code=WebRequest("POST",base+"/api/snapshot","Content-Type: application/json\r\nAuthorization: Bearer "+ActiveCode+"\r\n",5000,bytes,reply,responseHeaders);
  if(code==200){historyCursor=next;int left=ArraySize(pendingDeals)-count;for(int i=0;i<left;i++)pendingDeals[i]=pendingDeals[count+i];ArrayResize(pendingDeals,left);string answer=CharArrayToString(reply,0,-1,CP_UTF8);string key="\"review_ticket\": \"";int at=StringFind(answer,key);if(at>=0){at+=StringLen(key);int end=StringFind(answer,"\"",at);if(end>at)UploadReview(StringSubstr(answer,at,end-at),base);}}
- else {string detail=CharArrayToString(reply,0,-1,CP_UTF8);if(code==-1)detail="MT5 error "+(string)GetLastError();Print("Tongpin upload failed. HTTP: ",code,". ",detail);}
+ else {string detail=CharArrayToString(reply,0,-1,CP_UTF8);if(code==-1)detail="MT5 error "+(string)GetLastError();Print("SyncNote upload failed. HTTP: ",code,". ",detail);}
 }
-int OnInit(){ActiveCode=ConnectionCode;if(ActiveCode==""){int f=FileOpen("TongpinConnection.txt",FILE_READ|FILE_TXT|FILE_ANSI);if(f!=INVALID_HANDLE){ActiveCode=FileReadString(f);FileClose(f);}}if(ActiveCode==""){Print("Tongpin: connection assistant has not configured this terminal.");return INIT_FAILED;}EventSetTimer(MathMax(3,SyncSeconds));return INIT_SUCCEEDED;}
+int OnInit(){ActiveCode=ConnectionCode;if(ActiveCode==""){int f=FileOpen("TongpinConnection.txt",FILE_READ|FILE_TXT|FILE_ANSI);if(f!=INVALID_HANDLE){ActiveCode=FileReadString(f);FileClose(f);}}if(ActiveCode==""){Print("SyncNote: connection assistant has not configured this terminal.");return INIT_FAILED;}EventSetTimer(MathMax(3,SyncSeconds));return INIT_SUCCEEDED;}
 void OnDeinit(const int reason){EventKillTimer();}
 void OnTimer(){Upload();}
 void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result){if(trans.type==TRADE_TRANSACTION_DEAL_ADD&&trans.deal>0){int n=ArraySize(pendingDeals);ArrayResize(pendingDeals,n+1);pendingDeals[n]=trans.deal;}}

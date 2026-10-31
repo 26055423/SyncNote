@@ -21,10 +21,10 @@
 
 ```sh
 git clone https://github.com/26055423/SyncNote.git
-cd tongpin
+cd SyncNote
 cp .env.example .env
 docker compose up -d --build
-docker compose exec tongpin python bootstrap_admin.py
+docker compose exec syncnote python bootstrap_admin.py
 ```
 
 最后一步会交互要求设置管理员密码，没有预设密码，不会从其他服务导入账户。默认管理员用户名为 `admin`，首次初始化前可在自己的 `.env` 中修改 `ADMIN_USERNAME`。
@@ -45,8 +45,8 @@ npm run build
 
 ### 本机 EA 直连网页（新增预览版）
 
-交易台右侧提供「连接本机 MT5」，安装说明在网站 `/local-ea`，源码包在 `/downloads/tongpin-local.zip`。
-用户自行审阅和编译 `bridge/TongpinLocal.mq5`，在同一台 Windows 电脑上运行 MT5 和浏览器，通过配对码及 MT5 图表本地确认授权。
+交易台右侧提供「连接本机 MT5」，安装说明在网站 `/local-ea`，源码包在 `/downloads/syncnote-local.zip`。
+用户自行审阅和编译 `bridge/SyncNoteLocal.mq5`，在同一台 Windows 电脑上运行 MT5 和浏览器，通过配对码及 MT5 图表本地确认授权。
 不需要 Python 网关或自定义 DLL；需要允许源码中列明的 Windows 系统 DLL 调用。网页不收集 MT5 密码。
 
 EA 默认只读，首版硬性限定模拟账户及套期保值模式的交易联调，实盘保持只读；交易权限和限额在 EA 参数中设置。
@@ -60,11 +60,11 @@ EA 默认只读，首版硬性限定模拟账户及套期保值模式的交易�
 在个人中心点「生成连接码」，然后二选一：
 
 - **EA 直连服务器（推荐，架构已跑通）**：`ea_hub.py` 在服务器上监听 `8788`，EA 用同频的连接码握手后长期保持连接，网页直接读它的实时状态。WebBridge.mq5 里把 `InpHost` 改成本站地址、`InpPort` 改 `8788`、`InpToken` 填连接码即可；协议（NDJSON v1）一行不用改。需要在安全组放行 TCP 8788，正式使用前还要加 TLS（等域名）。
-- **已经有 WebBridge 且想保留本地面板**：在运行 MT5 的机器上跑 `python tools/bridge_push.py --token <连接码> --tongpin https://自己的域名`，它只读 bridge 的数据再推给同频。
+- **已经有 WebBridge 且想保留本地面板**：在运行 MT5 的机器上跑 `python tools/bridge_push.py --token <连接码> --syncnote https://自己的域名`，它只读 bridge 的数据再推给同频。
 
-没有 bridge 时也可以用 `web/TongpinSync.mq5`（直接读 MT5 账户历史，需要把网站地址加进 WebRequest 白名单）。
+没有 bridge 时也可以用 `web/SyncNoteSync.mq5`（直接读 MT5 账户历史，需要把网站地址加进 WebRequest 白名单）。
 
-bridge 的成交表只保留 `gateway.py` 启动之后的记录；更早的历史要改用 `TongpinSync.mq5`，或者给 bridge 加历史接口。
+bridge 的成交表只保留 `gateway.py` 启动之后的记录；更早的历史要改用 `SyncNoteSync.mq5`，或者给 bridge 加历史接口。
 
 ## 发布到自己的域名
 
@@ -74,7 +74,7 @@ bridge 的成交表只保留 `gateway.py` 启动之后的记录；更早的历�
 
 ## 数据在哪里
 
-程序首次启动创建新数据库。GitHub 中只保存程序里的建表逻辑，不保存数据库文件。Docker 命名卷 `tongpin-data` 只属于本部署，不需要外部 PostgreSQL、统一登录或其他网站。
+程序首次启动创建新数据库。GitHub 中只保存程序里的建表逻辑，不保存数据库文件。Docker 命名卷 `syncnote-data` 只属于本部署，不需要外部 PostgreSQL、统一登录或其他网站。
 
 你的服务器需要自行备份命名卷。升级时不要删除数据卷，不要执行 `docker compose down -v`，除非你明确要永久删除本实例的数据。
 

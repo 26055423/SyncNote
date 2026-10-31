@@ -22,7 +22,7 @@ class Client:
    return json.loads(body) if 'application/json' in r.headers.get('Content-Type','') else body
 
 def main():
- with tempfile.TemporaryDirectory(prefix='tongpin-synthetic-',ignore_cleanup_errors=True) as folder:
+ with tempfile.TemporaryDirectory(prefix='syncnote-synthetic-',ignore_cleanup_errors=True) as folder:
   password=secrets.token_urlsafe(24)
   env={**os.environ,'DATA_DIR':folder,'COOKIE_SECURE':'0','ADMIN_USERNAME':'admin','PYTHONDONTWRITEBYTECODE':'1','TRUSTED_PROXY_CIDRS':'','TRUSTED_PROXY_HOSTS':'','EA_HUB_ENABLE':'0'}
   env['SMOKE_PASSWORD']=password
@@ -35,12 +35,12 @@ def main():
    with sqlite3.connect(db) as conn:ensure(conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]==1,'only freshly initialized admin')
    ensure(anon.request('/api/health')['ok'],'health')
    for path in ('/api/state','/api/profile','/api/history','/api/invite'):anon.request(path,status=401)
-   for path in ('/login','/register','/style.css','/app.js','/downloads/TongpinSync.mq5','/local-ea','/local-ea.css'):ensure(len(anon.request(path))>0,'static content '+path)
-   with zipfile.ZipFile(io.BytesIO(anon.request('/downloads/tongpin-local.zip'))) as archive:
-    manifest=json.loads(archive.read('TongpinLocal/SOURCE_MANIFEST.json'))
-    ensure('TongpinLocal.mq5' in manifest['files'],'EA source entry is packaged')
+   for path in ('/login','/register','/style.css','/app.js','/downloads/SyncNoteSync.mq5','/local-ea','/local-ea.css'):ensure(len(anon.request(path))>0,'static content '+path)
+   with zipfile.ZipFile(io.BytesIO(anon.request('/downloads/syncnote-local.zip'))) as archive:
+    manifest=json.loads(archive.read('SyncNoteLocal/SOURCE_MANIFEST.json'))
+    ensure('SyncNoteLocal.mq5' in manifest['files'],'EA source entry is packaged')
     ensure(all(name.endswith(('.mq5','.mqh','.md','.json')) for name in archive.namelist()),'source download contains no executable or credential files')
-    ensure(all(hashlib.sha256(archive.read('TongpinLocal/'+name)).hexdigest()==digest for name,digest in manifest['files'].items()),'EA source manifest matches package')
+    ensure(all(hashlib.sha256(archive.read('SyncNoteLocal/'+name)).hexdigest()==digest for name,digest in manifest['files'].items()),'EA source manifest matches package')
    admin.request('/api/login',{'username':'admin','password':password})
    ensure(admin.request('/api/me')['user']['role']=='admin','independent owner')
    anon.request('/api/mt5/assistant',{'platform':'mac'},status=401)
