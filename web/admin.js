@@ -118,6 +118,57 @@ function renderRows(invites) {
   }
 }
 
+function renderUsers(users) {
+  const body = $('user-rows');
+  body.innerHTML = '';
+  show('user-empty', users.length <= 1);
+  for (const user of users) {
+    const tr = document.createElement('tr');
+    for (const text of [user.username, user.nickname || '—', fmtTime(user.created)]) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+    const synced = document.createElement('td');
+    synced.textContent = user.synced ? fmtTime(user.synced) : '—';
+    synced.className = 'muted';
+    tr.appendChild(synced);
+
+    const reviews = document.createElement('td');
+    reviews.textContent = String(user.reviews ?? 0);
+    tr.appendChild(reviews);
+
+    const state = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = `state ${user.locked ? 'expired' : user.role === 'admin' ? 'unused' : 'used'}`;
+    badge.textContent = user.locked ? '已锁定' : user.role === 'admin' ? '管理员' : '正常';
+    state.appendChild(badge);
+    tr.appendChild(state);
+
+    const action = document.createElement('td');
+    if (user.role !== 'admin') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = user.locked ? 'primary' : 'ghost';
+      button.textContent = user.locked ? '解锁' : '锁定';
+      button.addEventListener('click', async () => {
+        if (!user.locked && !confirm(`锁定 ${user.username}？会立即下线并禁止登录。`)) return;
+        show('user-error', false);
+        try {
+          await call('/api/admin/users/lock', { id: user.id, locked: !user.locked });
+          await load();
+        } catch (error) {
+          show('user-error', true);
+          $('user-error').textContent = error.message;
+        }
+      });
+      action.appendChild(button);
+    }
+    tr.appendChild(action);
+    body.appendChild(tr);
+  }
+}
+
 async function load() {
   show('list-error', false);
   try {
@@ -125,6 +176,13 @@ async function load() {
     unlock();
     current = data.invites || [];
     renderRows(current);
+    try {
+      const people = await call('/api/admin/users');
+      renderUsers(people.users || []);
+    } catch (error) {
+      show('user-error', true);
+      $('user-error').textContent = error.message;
+    }
   } catch (error) {
     if (error.status === 401) {
       location.replace('/login?next=/admin');
@@ -249,5 +307,6 @@ $('download').addEventListener('click', () => {
 });
 
 $('refresh').addEventListener('click', () => void load());
+$('refresh-users').addEventListener('click', () => void load());
 
 void load();

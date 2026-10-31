@@ -75,6 +75,7 @@ with connect() as db:
             code=''.join(ch for ch in str(legacy[0]).upper() if ch.isalnum())
             db.execute('INSERT INTO invites(code_hash,batch,note,created,expires) VALUES(?,?,?,?,0)',(hashlib.sha256(code.encode()).hexdigest(),'legacy','迁移前的通用邀请码',time.time()))
     if 'onboarding_step' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN onboarding_step INTEGER NOT NULL DEFAULT 4')
+    if 'locked' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0')
 with connect() as db:
     if 'share_reviews' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN share_reviews INTEGER NOT NULL DEFAULT 0')
     auth_security.initialize(db)
@@ -182,6 +183,9 @@ class Handler(BaseHTTPRequestHandler):
         token=c.get('tongpin_session')
         u=db.execute('SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id WHERE hash=? AND expires>?',(digest(token.value),time.time())).fetchone() if token else None
         if not u:raise Error('请先登录',401)
+        if u['locked']:
+            db.execute('DELETE FROM sessions WHERE user_id=?',(u['id'],))
+            raise Error('账号已被停用，请联系管理员',403)
         return u
     def client_ip(self):
         return client_address.resolve_client_ip(self.client_address[0],self.headers,proxy_cidrs=os.environ.get('TRUSTED_PROXY_CIDRS',''),proxy_hosts=os.environ.get('TRUSTED_PROXY_HOSTS',''))
@@ -257,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'sessions':[{'id':r['hash'],'expires':r['expires'],'current':r['hash']==current} for r in rows],'mfa_enabled':bool(mfa and mfa[0])})
                     if path=='/api/admin/users':
                         if u['username']!=ADMIN_USERNAME:raise Error('仅管理员可访问',403)
-                        rows=db.execute('SELECT id,username,nickname,created FROM users ORDER BY created').fetchall()
+                        rows=db.execute('SELECT u.id,u.username,u.nickname,u.created,u.locked,s.updated AS synced,(SELECT COUNT(*) FROM trade_reviews r WHERE r.person=u.id AND r.status=\'ready\') AS reviews FROM users u LEFT JOIN snapshots s ON s.person=u.id ORDER BY u.created').fetchall()
                         return self.reply({'users':[dict(r,role='admin' if r['username']==ADMIN_USERNAME else 'user') for r in rows]})
                     if path=='/api/invite':
                         if u['username']!=ADMIN_USERNAME:raise Error('只有管理员可以查看邀请码',403)
@@ -397,6 +401,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         u=db.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone()
                         if not u or not pw_ok(data.get('password'),u['password']):raise Error('用户名或密码不正确',401)
+                        if u['locked']:raise Error('账号已被停用，请联系管理员',403)
                         uid=u['id']
                         browser_cookies=SimpleCookie();browser_cookies.load(self.headers.get('Cookie',''))
                         device=browser_cookies.get(auth_security.DEVICE_COOKIE)
@@ -502,6 +507,18 @@ class Handler(BaseHTTPRequestHandler):
                                 except sqlite3.IntegrityError:
                                     continue
                         return self.reply({'ok':True,'codes':codes,'batch':batch,'note':note,'expires':expires})
+                    if path=='/api/admin/users/lock':
+                        self.require_admin(u,db)
+                        try:ident=str(data.get('id','')).strip()
+                        except (TypeError,ValueError):raise Error('参数不正确',400)
+                        if not ident:raise Error('参数不正确',400)
+                        target=db.execute('SELECT id,username FROM users WHERE id=?',(ident,)).fetchone()
+                        if not target:raise Error('用户不存在',404)
+                        if target['username']==ADMIN_USERNAME:raise Error('不能锁定管理员自己',409)
+                        locked=1 if data.get('locked') else 0
+                        db.execute('UPDATE users SET locked=? WHERE id=?',(locked,target['id']))
+                        if locked:db.execute('DELETE FROM sessions WHERE user_id=?',(target['id'],))
+                        return self.reply({'ok':True,'id':target['id'],'locked':bool(locked)})
                     if path=='/api/admin/invites/revoke':
                         self.require_admin(u,db)
                         try:ident=int(data.get('id',0))

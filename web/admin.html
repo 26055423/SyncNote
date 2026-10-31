@@ -45,6 +45,22 @@
       <p id="create-error" class="error" hidden></p>
     </section>
 
+
+    <section class="card">
+      <div class="table-head">
+        <h2>用户</h2>
+        <button type="button" class="ghost" id="refresh-users">刷新</button>
+      </div>
+      <table class="invites users">
+        <thead>
+          <tr><th>用户名</th><th>昵称</th><th>注册</th><th>最近同步</th><th>复盘</th><th>状态</th><th></th></tr>
+        </thead>
+        <tbody id="user-rows"></tbody>
+      </table>
+      <p id="user-empty" class="muted" hidden>还没有其他用户。</p>
+      <p id="user-error" class="error" hidden></p>
+    </section>
+
     <section class="card">
       <div class="table-head">
         <h2>邀请码列表</h2>

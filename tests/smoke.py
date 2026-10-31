@@ -105,6 +105,15 @@ def main():
    alice.request('/api/chart/entry?share=999999',status=404)
    for client in (alice,bob):
     client.request('/api/mt5/token',{})
+   people=admin.request('/api/admin/users')['users']
+   ensure(any(row.get('locked')==0 for row in people),'users start unlocked')
+   bob_id=[row['id'] for row in people if row['username']=='bb'][0]
+   admin.request('/api/admin/users/lock',{'id':bob_id,'locked':True})
+   ensure([row for row in admin.request('/api/admin/users')['users'] if row['id']==bob_id][0]['locked']==1,'lock persisted')
+   bob.request('/api/me',status=401)
+   admin.request('/api/admin/users/lock',{'id':bob_id,'locked':False})
+   alice.request('/api/admin/users/lock',{'id':bob_id,'locked':True},status=404)
+   admin.request('/api/admin/users/lock',{'id':'nope','locked':True},status=404)
    alice.request('/api/logout',{});alice.request('/api/me',status=401)
    print(json.dumps({'passed':True,'checks':count,'production_data_used':False,'database':'temporary-generated-only'}))
   finally:
