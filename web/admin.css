@@ -31,3 +31,7 @@ table.invites td { padding: 6px 8px; border-bottom: 1px solid #16212c; white-spa
 .state.unused { background: #12251b; color: #9fe0bb; }
 .state.used { background: #1c2230; color: #8b98a5; }
 .state.expired, .state.revoked { background: #251313; color: #efb3b3; }
+
+
+.table-actions { display: flex; gap: 8px; }
+.code { font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: .5px; margin-right: 8px; }

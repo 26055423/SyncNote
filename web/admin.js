@@ -45,6 +45,8 @@ function fmtTime(seconds) {
 }
 
 const stateText = { unused: '未使用', used: '已使用', expired: '已过期', revoked: '已作废' };
+let current = [];
+const unusedCodes = () => current.filter((row) => row.state === 'unused' && row.code).map((row) => row.code);
 
 function renderRows(invites) {
   const body = $('rows');
@@ -58,6 +60,28 @@ function renderRows(invites) {
       td.textContent = text;
       tr.appendChild(td);
     }
+
+    const codeCell = document.createElement('td');
+    if (item.code) {
+      const code = document.createElement('span');
+      code.className = 'code';
+      code.textContent = item.code;
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'ghost';
+      copy.textContent = '复制';
+      copy.addEventListener('click', async () => {
+        await copyText(item.code);
+        copy.textContent = '已复制';
+        setTimeout(() => { copy.textContent = '复制'; }, 1200);
+      });
+      codeCell.appendChild(code);
+      codeCell.appendChild(copy);
+    } else {
+      codeCell.textContent = item.state === 'used' ? '（已使用，明文已清除）' : '—';
+      codeCell.className = 'muted';
+    }
+    tr.appendChild(codeCell);
     const stateCell = document.createElement('td');
     const state = document.createElement('span');
     state.className = `state ${item.state}`;
@@ -99,7 +123,8 @@ async function load() {
   try {
     const data = await call('/api/admin/invites');
     unlock();
-    renderRows(data.invites || []);
+    current = data.invites || [];
+    renderRows(current);
   } catch (error) {
     if (error.status === 401) {
       location.replace('/login?next=/admin');
@@ -191,6 +216,36 @@ $('copy-all').addEventListener('click', async () => {
   await copyText(codes.join('\n'));
   $('copy-all').textContent = '已复制';
   setTimeout(() => { $('copy-all').textContent = '复制全部'; }, 1200);
+});
+
+$('copy-unused').addEventListener('click', async () => {
+  const codes = unusedCodes();
+  if (!codes.length) {
+    show('list-error', true);
+    $('list-error').textContent = '没有未使用的邀请码';
+    return;
+  }
+  await copyText(codes.join('\n'));
+  $('copy-unused').textContent = `已复制 ${codes.length} 个`;
+  setTimeout(() => { $('copy-unused').textContent = '复制全部未使用'; }, 1600);
+});
+
+$('download').addEventListener('click', () => {
+  const codes = unusedCodes();
+  if (!codes.length) {
+    show('list-error', true);
+    $('list-error').textContent = '没有未使用的邀请码';
+    return;
+  }
+  const stampNow = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const day = `${stampNow.getFullYear()}${pad(stampNow.getMonth() + 1)}${pad(stampNow.getDate())}`;
+  const body = [`# 同频邀请码 ${day}（共 ${codes.length} 个，一次性使用）`, ...codes, ''].join('\n');
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([body], { type: 'text/plain;charset=utf-8' }));
+  link.download = `syncnote-invites-${day}.txt`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 3000);
 });
 
 $('refresh').addEventListener('click', () => void load());

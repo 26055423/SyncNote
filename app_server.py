@@ -68,6 +68,7 @@ with connect() as db:
 with connect() as db:
     db.execute('INSERT OR IGNORE INTO registration_invite VALUES(1,?,?)',(secrets.token_hex(6).upper(),time.time()))
     if 'sudo_until' not in [r[1] for r in db.execute('PRAGMA table_info(sessions)')]:db.execute('ALTER TABLE sessions ADD COLUMN sudo_until REAL NOT NULL DEFAULT 0')
+    if 'code_plain' not in [r[1] for r in db.execute('PRAGMA table_info(invites)')]:db.execute("ALTER TABLE invites ADD COLUMN code_plain TEXT NOT NULL DEFAULT ''")
     if not db.execute('SELECT 1 FROM invites LIMIT 1').fetchone():
         legacy=db.execute('SELECT code FROM registration_invite WHERE id=1').fetchone()
         if legacy:
@@ -268,7 +269,7 @@ class Handler(BaseHTTPRequestHandler):
                         items=[]
                         for r in rows:
                             state='used' if r['used_by'] else 'revoked' if r['revoked'] else 'expired' if r['expires'] and r['expires']<now else 'unused'
-                            items.append({'id':r['id'],'batch':r['batch'],'note':r['note'],'created':r['created'],'expires':r['expires'] or 0,'state':state,'used_by':r['used_by'],'used_name':r['used_name'],'used_at':r['used_at']})
+                            items.append({'id':r['id'],'batch':r['batch'],'note':r['note'],'created':r['created'],'expires':r['expires'] or 0,'state':state,'used_by':r['used_by'],'used_name':r['used_name'],'used_at':r['used_at'],'code':r['code_plain'] or ''})
                         return self.reply({'invites':items,'sudo_until':self.sudo_until(db)})
                     if path=='/api/me':return self.reply({'user':public(u)})
                     if path=='/api/profile':
@@ -390,7 +391,7 @@ class Handler(BaseHTTPRequestHandler):
                         if not 1<=len(nickname)<=30:raise Error('昵称需为 1–30 个字符')
                         pw=pw_hash(data.get('password'));uid=secrets.token_hex(12)
                         if db.execute('SELECT 1 FROM users WHERE username=?',(username,)).fetchone():raise Error('该用户名已注册',409)
-                        claimed=db.execute('UPDATE invites SET used_by=?,used_at=? WHERE id=? AND used_by IS NULL AND revoked=0',(uid,now,grant['id']))
+                        claimed=db.execute("UPDATE invites SET used_by=?,used_at=?,code_plain='' WHERE id=? AND used_by IS NULL AND revoked=0",(uid,now,grant['id']))
                         if claimed.rowcount!=1:raise Error('这个邀请码刚刚被用掉了，请换一个',409)
                         db.execute('INSERT INTO users(id,username,nickname,password,created,share_data,onboarding_step) VALUES(?,?,?,?,?,1,0)',(uid,username,nickname,pw,now))
                     else:
@@ -496,7 +497,7 @@ class Handler(BaseHTTPRequestHandler):
                             for attempt in range(6):
                                 code=new_invite_code()
                                 try:
-                                    db.execute('INSERT INTO invites(code_hash,batch,note,created,expires) VALUES(?,?,?,?,?)',(invite_hash(code),batch,note,now,expires))
+                                    db.execute('INSERT INTO invites(code_hash,code_plain,batch,note,created,expires) VALUES(?,?,?,?,?,?)',(invite_hash(code),code,batch,note,now,expires))
                                     codes.append(code);break
                                 except sqlite3.IntegrityError:
                                     continue
@@ -508,7 +509,7 @@ class Handler(BaseHTTPRequestHandler):
                         row=db.execute('SELECT id,used_by FROM invites WHERE id=?',(ident,)).fetchone()
                         if not row:raise Error('邀请码不存在',404)
                         if row['used_by']:raise Error('这个邀请码已经被使用，无法作废',409)
-                        db.execute('UPDATE invites SET revoked=1 WHERE id=?',(ident,))
+                        db.execute("UPDATE invites SET revoked=1,code_plain='' WHERE id=?",(ident,))
                         return self.reply({'ok':True})
                     if path=='/api/journal':result=journal.save(db,uid,data)
                     elif path=='/api/chart/state':

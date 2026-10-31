@@ -48,11 +48,15 @@
     <section class="card">
       <div class="table-head">
         <h2>邀请码列表</h2>
-        <button type="button" class="ghost" id="refresh">刷新</button>
+        <div class="table-actions">
+          <button type="button" class="ghost" id="copy-unused">复制全部未使用</button>
+          <button type="button" class="ghost" id="download">下载 .txt</button>
+          <button type="button" class="ghost" id="refresh">刷新</button>
+        </div>
       </div>
       <table class="invites">
         <thead>
-          <tr><th>批次</th><th>备注</th><th>状态</th><th>使用人</th><th>创建</th><th>过期</th><th></th></tr>
+          <tr><th>批次</th><th>备注</th><th>邀请码</th><th>状态</th><th>使用人</th><th>创建</th><th>过期</th><th></th></tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
