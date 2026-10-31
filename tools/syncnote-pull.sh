@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从 GitHub 拉取 SyncNote 更新（公开仓库；服务器用只读 Deploy key，经 SSH 拉取），有变化才重启，失败回滚。
+# 从 GitHub 拉取 SyncNote 更新（公开仓库，HTTPS 匿名拉取），有变化才重启，失败回滚。
 # 用法：sudo syncnote-pull
 set -euo pipefail
 
