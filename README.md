@@ -107,6 +107,7 @@ git push -u origin feature/my-change
 |---|---|
 | `web/` | 网页、样式、图标和 MT5 采集源码 |
 | `bridge/` | WebBridge 全套源码：MT5 EA + 本地网关 + 协议文档（可选组件，需要 pip 依赖） |
+| `web/admin.html` | 管理后台：用户锁定、邀请码批量生成与导出（仅管理员，二次密码） |
 | `web/chart-src/` | 复盘图表页源码（Vite + React + `@luxalgo/vela`） |
 | `web/chart/` | 图表页构建产物，由 `app_server.py` 在 `/chart` 提供 |
 | `app_server.py` | 独立 API 与网站服务 |
