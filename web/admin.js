@@ -101,6 +101,10 @@ async function load() {
     unlock();
     renderRows(data.invites || []);
   } catch (error) {
+    if (error.status === 401) {
+      location.replace('/login?next=/admin');
+      return;
+    }
     if (error.status === 403) {
       lock();
       return;

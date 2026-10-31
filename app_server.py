@@ -165,6 +165,8 @@ def assistant_zip(platform,binding):
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*_):pass
+    def redirect(self,location,code=302):
+        self.send_response(code);self.send_header('Location',location);self.send_header('Cache-Control','no-store');self.send_header('Content-Length','0');self.end_headers()
     def reply(self,value,code=200,cookie=None):
         body=json.dumps(value,ensure_ascii=False,allow_nan=False).encode();self.send_response(code)
         for k,v in [('Content-Type','application/json; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
@@ -334,7 +336,11 @@ class Handler(BaseHTTPRequestHandler):
             if path in ('/guides/navigator.png','/guides/expert.png','/guides/webrequest.png','/guides/assistant.png','/guides/mac-security.png'):assets[path]=path.lstrip('/')
             if path=='/admin':
                 with connect() as db:
-                    if not is_admin(self.user(db)):raise Error('页面不存在',404)
+                    try:page_user=self.user(db)
+                    except Error as e:
+                        if e.code==401:return self.redirect('/login?next=/admin')
+                        raise
+                    if not is_admin(page_user):raise Error('页面不存在',404)
             if path not in assets:raise Error('页面不存在',404)
             f=assets[path];body=(ROOT/'web'/f).read_bytes();mime='text/html' if f.endswith('.html') else 'application/javascript' if f.endswith('.js') else 'text/css' if f.endswith('.css') else 'image/svg+xml' if f.endswith('.svg') else 'image/png' if f.endswith('.png') else 'text/plain'
             cache='no-store';etag=None
