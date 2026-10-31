@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理后台 · 同频</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/admin.css">
+</head>
+<body class="admin-page">
+<header class="admin-head">
+  <a class="brand" href="/">同频 · 管理后台</a>
+  <nav><a href="/" class="muted">返回交易台</a></nav>
+</header>
+
+<main class="admin-main">
+  <section id="lock" class="card" hidden>
+    <h1>二次验证</h1>
+    <p class="muted">管理操作需要重新输入一次登录密码，验证后 15 分钟内有效。</p>
+    <form id="sudo-form" autocomplete="off">
+      <label>密码<input type="password" id="sudo-password" autocomplete="current-password" required></label>
+      <button type="submit" class="primary">验证</button>
+      <p id="sudo-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <section id="panel" hidden>
+    <section class="card">
+      <h1>生成邀请码</h1>
+      <form id="create-form" class="inline-form" autocomplete="off">
+        <label>数量<input type="number" id="count" value="20" min="1" max="100" required></label>
+        <label>备注<input type="text" id="note" maxlength="60" placeholder="例如：11 月第一批"></label>
+        <label>有效期（天）<input type="number" id="days" value="7" min="0" max="365"></label>
+        <button type="submit" class="primary">生成</button>
+      </form>
+      <p class="muted" id="create-hint">生成后明文只显示这一次，页面刷新就不再可见。</p>
+      <div id="fresh" hidden>
+        <div class="fresh-head">
+          <strong>刚生成的邀请码</strong>
+          <button type="button" class="ghost" id="copy-all">复制全部</button>
+        </div>
+        <ul id="fresh-list" class="codes"></ul>
+      </div>
+      <p id="create-error" class="error" hidden></p>
+    </section>
+
+    <section class="card">
+      <div class="table-head">
+        <h2>邀请码列表</h2>
+        <button type="button" class="ghost" id="refresh">刷新</button>
+      </div>
+      <table class="invites">
+        <thead>
+          <tr><th>批次</th><th>备注</th><th>状态</th><th>使用人</th><th>创建</th><th>过期</th><th></th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="list-empty" class="muted" hidden>还没有邀请码。</p>
+      <p id="list-error" class="error" hidden></p>
+    </section>
+  </section>
+</main>
+
+<script type="module" src="/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+/* 管理后台：只给管理员用，样式克制一点 */
+.admin-page { background: #0b131b; color: #e6edf3; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; }
+.admin-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; border-bottom: 1px solid #1c2836; }
+.admin-head .brand { color: #e6edf3; text-decoration: none; font-weight: 600; letter-spacing: .3px; }
+.admin-head .muted { color: #8b98a5; text-decoration: none; font-size: 13px; }
+.admin-main { max-width: 980px; margin: 24px auto 60px; padding: 0 18px; display: flex; flex-direction: column; gap: 18px; }
+.card { background: #101922; border: 1px solid #1c2836; border-radius: 12px; padding: 18px 20px; }
+.card h1 { font-size: 17px; margin: 0 0 6px; }
+.card h2 { font-size: 15px; margin: 0; }
+.muted { color: #8b98a5; }
+.admin-page a { color: #7aa7d9; }
+.admin-page label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #8b98a5; }
+.admin-page input { background: #0b131b; border: 1px solid #243244; border-radius: 8px; color: #e6edf3; padding: 7px 9px; font: inherit; width: 100%; box-sizing: border-box; }
+.inline-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0 6px; }
+.inline-form label { width: 120px; }
+.inline-form label:nth-child(2) { flex: 1; min-width: 180px; }
+.admin-page button { border-radius: 8px; border: 1px solid #243244; background: #16222f; color: #e6edf3; padding: 8px 14px; font: inherit; cursor: pointer; }
+.admin-page button.primary { background: #1d3a5c; border-color: #2b5787; }
+.admin-page button.ghost { background: transparent; color: #8b98a5; }
+.admin-page button:disabled { opacity: .5; cursor: default; }
+.error { color: #e6a3a3; font-size: 13px; }
+.codes { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.codes li { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #0b131b; border: 1px solid #243244; border-radius: 8px; padding: 7px 10px; font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: .5px; }
+.codes li button { padding: 2px 8px; font-size: 12px; }
+.fresh-head { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+.table-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+table.invites { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.invites th { text-align: left; font-weight: 400; color: #8b98a5; border-bottom: 1px solid #1c2836; padding: 6px 8px; }
+table.invites td { padding: 6px 8px; border-bottom: 1px solid #16212c; white-space: nowrap; }
+.state { padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+.state.unused { background: #12251b; color: #9fe0bb; }
+.state.used { background: #1c2230; color: #8b98a5; }
+.state.expired, .state.revoked { background: #251313; color: #efb3b3; }

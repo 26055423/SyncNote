@@ -46,8 +46,11 @@ def main():
    anon.request('/api/mt5/assistant',{'platform':'mac'},status=401)
    admin.request('/api/mt5/assistant',{'platform':'mac'},status=501)
    admin.request('/api/profile',{},status=403,origin='https://untrusted.invalid')
-   def register(client,name):
-    invitation=admin.request('/api/invite')['code'];challenge=anon.request('/api/login-challenge');token=challenge['challenge_id']
+   admin.request('/api/admin/sudo',{'password':password})
+   def new_code(days=7):
+    return admin.request('/api/admin/invites',{'count':1,'expires_days':days})['codes'][0]
+   def register(client,name,invitation=None):
+    invitation=invitation or new_code();challenge=anon.request('/api/login-challenge');token=challenge['challenge_id']
     with sqlite3.connect(db) as conn:answer_hash=conn.execute('SELECT answer FROM login_challenges WHERE id=?',(token,)).fetchone()[0]
     answer=next(str(i) for i in range(9) if hashlib.sha256((token+str(i)).encode()).hexdigest()==answer_hash)
     return client.request('/api/register',{'username':name,'nickname':name,'password':password,'invite_code':invitation,'challenge_id':token,'challenge_answer':answer})['user']
@@ -56,7 +59,16 @@ def main():
    alice.request('/api/profile',{'nickname':'Synthetic Alpha','avatar':'avatar1','bio':'fixture-only'})
    ensure(bob.request('/api/profile')['user']['nickname']=='bb','profile ownership')
    alice.request('/api/admin/users',status=403);alice.request('/api/invite',status=403)
-   ensure(len(admin.request('/api/admin/users')['users'])==3,'new accounts only')
+   alice.request('/api/admin/invites',status=404);alice.request('/api/admin/sudo',{'password':password},status=404)
+   used=new_code();register(Client(base),'cc',used)
+   reused=Client(base);challenge=anon.request('/api/login-challenge');rt=challenge['challenge_id']
+   with sqlite3.connect(db) as conn:rh=conn.execute('SELECT answer FROM login_challenges WHERE id=?',(rt,)).fetchone()[0]
+   ra=next(str(i) for i in range(9) if hashlib.sha256((rt+str(i)).encode()).hexdigest()==rh)
+   reused.request('/api/register',{'username':'dd','nickname':'dd','password':password,'invite_code':used,'challenge_id':rt,'challenge_answer':ra},status=403)
+   resp=admin.request('/api/admin/invites')
+   ensure(any(row['state']=='used' for row in resp['invites']),'invite marked used')
+   admin.request('/api/admin/invites/revoke',{'id':0},status=404)
+   ensure(len(admin.request('/api/admin/users')['users'])==4,'new accounts only')
    alice.request('/api/journal',{'person':b['id'],'ticket':'fixture','text':'cross-user attempt'},status=404)
    # 复盘图表页：静态资源、画线存档、作业分享与只读边界。
    page=anon.request('/chart');ensure('交易台'.encode() in page,'chart page served')

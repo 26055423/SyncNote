@@ -56,6 +56,8 @@ with connect() as db:
     CREATE TABLE IF NOT EXISTS presence(user_id TEXT PRIMARY KEY,updated REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS social_notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,recipient TEXT NOT NULL,actor TEXT NOT NULL,created REAL NOT NULL,seen INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS registration_invite(id INTEGER PRIMARY KEY CHECK(id=1),code TEXT NOT NULL,updated REAL NOT NULL);
+ CREATE TABLE IF NOT EXISTS invites(id INTEGER PRIMARY KEY AUTOINCREMENT,code_hash TEXT NOT NULL UNIQUE,batch TEXT NOT NULL DEFAULT '',note TEXT NOT NULL DEFAULT '',created REAL NOT NULL,expires REAL NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0,used_by TEXT,used_at REAL);
+ CREATE INDEX IF NOT EXISTS idx_invites_hash ON invites(code_hash);
     CREATE TABLE IF NOT EXISTS broker_clocks(person TEXT PRIMARY KEY,broker TEXT NOT NULL,offset INTEGER,observed_from REAL NOT NULL,observed_to REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS auth_limits(key TEXT PRIMARY KEY,window REAL NOT NULL,attempts INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_follows_target ON follows(target);
@@ -65,6 +67,12 @@ with connect() as db:
     ''')
 with connect() as db:
     db.execute('INSERT OR IGNORE INTO registration_invite VALUES(1,?,?)',(secrets.token_hex(6).upper(),time.time()))
+    if 'sudo_until' not in [r[1] for r in db.execute('PRAGMA table_info(sessions)')]:db.execute('ALTER TABLE sessions ADD COLUMN sudo_until REAL NOT NULL DEFAULT 0')
+    if not db.execute('SELECT 1 FROM invites LIMIT 1').fetchone():
+        legacy=db.execute('SELECT code FROM registration_invite WHERE id=1').fetchone()
+        if legacy:
+            code=''.join(ch for ch in str(legacy[0]).upper() if ch.isalnum())
+            db.execute('INSERT INTO invites(code_hash,batch,note,created,expires) VALUES(?,?,?,?,0)',(hashlib.sha256(code.encode()).hexdigest(),'legacy','迁移前的通用邀请码',time.time()))
     if 'onboarding_step' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN onboarding_step INTEGER NOT NULL DEFAULT 4')
 with connect() as db:
     if 'share_reviews' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN share_reviews INTEGER NOT NULL DEFAULT 0')
@@ -85,6 +93,25 @@ def pw_hash(p):
 def pw_ok(p,stored):
     if not isinstance(p,str) or len(p)>128:return False
     salt,expected=stored.split(':');return hmac.compare_digest(expected,hashlib.pbkdf2_hmac('sha256',p.encode(),salt.encode(),310000).hex())
+INVITE_ALPHABET='ABCDEFGHJKMNPQRSTVWXYZ23456789'
+
+
+def invite_normalize(code):
+ return ''.join(ch for ch in str(code or '').upper() if ch.isalnum())
+
+
+def invite_hash(code):
+ return digest(invite_normalize(code))
+
+
+def new_invite_code():
+ return '-'.join(''.join(secrets.choice(INVITE_ALPHABET) for _ in range(4)) for _ in range(3))
+
+
+def is_admin(u):
+ return bool(u) and u['username']==ADMIN_USERNAME
+
+
 def public(u):return {**{k:u[k] for k in ('id','username','nickname','avatar','bio','allow_follow','share_data','share_reviews','onboarding_step')},'role':'admin' if u['username']==ADMIN_USERNAME else 'user'}
 def visible(db,uid,target):
     return uid==target or bool(db.execute('SELECT 1 FROM follows JOIN users ON users.id=follows.target WHERE follower=? AND target=? AND share_data=1',(uid,target)).fetchone())
@@ -158,7 +185,19 @@ class Handler(BaseHTTPRequestHandler):
     def session(self,db,uid,cap=None):
         token=secrets.token_urlsafe(32);now=time.time();expires=min(now+2592000,cap) if cap is not None else now+2592000
         if expires<=now:raise Error('登录已到期，请重新登录',401)
-        db.execute('DELETE FROM sessions WHERE expires<?',(now,));db.execute('INSERT INTO sessions VALUES(?,?,?)',(digest(token),uid,expires));return self.cookie(token,max(1,int(expires-now)))
+        db.execute('DELETE FROM sessions WHERE expires<?',(now,));db.execute('INSERT INTO sessions(hash,user_id,expires) VALUES(?,?,?)',(digest(token),uid,expires));return self.cookie(token,max(1,int(expires-now)))
+    def sudo_until(self,db):
+        c=SimpleCookie()
+        try:c.load(self.headers.get('Cookie',''))
+        except Exception:return 0
+        token=c.get('tongpin_session')
+        if not token:return 0
+        row=db.execute('SELECT sudo_until FROM sessions WHERE hash=?',(digest(token.value),)).fetchone()
+        return float(row['sudo_until'] or 0) if row else 0
+    def require_admin(self,u,db,sudo=True):
+        if not is_admin(u):raise Error('页面不存在',404)
+        if sudo and self.sudo_until(db)<time.time():raise Error('请先验证管理员密码',403)
+
     def do_GET(self):
         try:
             path=urlparse(self.path).path;q=parse_qs(urlparse(self.path).query)
@@ -220,6 +259,15 @@ class Handler(BaseHTTPRequestHandler):
                     if path=='/api/invite':
                         if u['username']!=ADMIN_USERNAME:raise Error('只有管理员可以查看邀请码',403)
                         return self.reply(dict(db.execute('SELECT code,updated FROM registration_invite WHERE id=1').fetchone()))
+                    if path=='/api/admin/invites':
+                        self.require_admin(u,db)
+                        rows=db.execute('SELECT i.*,u.nickname AS used_name FROM invites i LEFT JOIN users u ON u.id=i.used_by ORDER BY i.id DESC LIMIT 500').fetchall()
+                        now=time.time()
+                        items=[]
+                        for r in rows:
+                            state='used' if r['used_by'] else 'revoked' if r['revoked'] else 'expired' if r['expires'] and r['expires']<now else 'unused'
+                            items.append({'id':r['id'],'batch':r['batch'],'note':r['note'],'created':r['created'],'expires':r['expires'] or 0,'state':state,'used_by':r['used_by'],'used_name':r['used_name'],'used_at':r['used_at']})
+                        return self.reply({'invites':items,'sudo_until':self.sudo_until(db)})
                     if path=='/api/me':return self.reply({'user':public(u)})
                     if path=='/api/profile':
                         following=[public(r) for r in db.execute('SELECT users.* FROM follows JOIN users ON users.id=follows.target WHERE follower=? ORDER BY follows.created DESC',(uid,))]
@@ -258,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
                         for m in messages:m['name']=names.get(m['person'],'')
                         return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))],'reviewed':journal.reviewed(db,uid)})
                     raise Error('接口不存在',404)
-            assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/local-ea':'local-ea.html','/local-ea.css':'local-ea.css','/downloads/TongpinSync.mq5':'TongpinSync.mq5'}
+            assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/local-ea':'local-ea.html','/local-ea.css':'local-ea.css','/admin':'admin.html','/admin.js':'admin.js','/admin.css':'admin.css','/downloads/TongpinSync.mq5':'TongpinSync.mq5'}
             for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
             if re.fullmatch(r'/avatars/avatar(?:[1-9]|1[0-2])\.svg',path):assets[path]=path.lstrip('/')
             # 首页就是交易台；旧看板挪到 /board。
@@ -284,6 +332,9 @@ class Handler(BaseHTTPRequestHandler):
                 if self.headers.get('If-None-Match')!=etag:self.wfile.write(body)
                 return
             if path in ('/guides/navigator.png','/guides/expert.png','/guides/webrequest.png','/guides/assistant.png','/guides/mac-security.png'):assets[path]=path.lstrip('/')
+            if path=='/admin':
+                with connect() as db:
+                    if not is_admin(self.user(db)):raise Error('页面不存在',404)
             if path not in assets:raise Error('页面不存在',404)
             f=assets[path];body=(ROOT/'web'/f).read_bytes();mime='text/html' if f.endswith('.html') else 'application/javascript' if f.endswith('.js') else 'text/css' if f.endswith('.css') else 'image/svg+xml' if f.endswith('.svg') else 'image/png' if f.endswith('.png') else 'text/plain'
             cache='no-store';etag=None
@@ -325,14 +376,17 @@ class Handler(BaseHTTPRequestHandler):
                     if path=='/api/register':
                         db.execute('BEGIN IMMEDIATE')
                         invite=data.get('invite_code','')
-                        expected=db.execute('SELECT code FROM registration_invite WHERE id=1').fetchone()[0]
-                        if not db.execute("SELECT 1 FROM users WHERE username=?",(ADMIN_USERNAME,)).fetchone() or not isinstance(invite,str) or not hmac.compare_digest(invite.strip().upper(),expected):raise Error('邀请码不正确或已失效，请向管理员获取最新邀请码',403)
+                        if not db.execute("SELECT 1 FROM users WHERE username=?",(ADMIN_USERNAME,)).fetchone():raise Error('站点尚未初始化完成，请稍后再试',503)
+                        if not isinstance(invite,str) or not invite.strip():raise Error('请填写邀请码',403)
+                        grant=db.execute("SELECT id FROM invites WHERE code_hash=? AND used_by IS NULL AND revoked=0 AND (expires=0 OR expires>?)",(invite_hash(invite),now)).fetchone()
+                        if not grant:raise Error('邀请码不正确、已被使用或已过期',403)
                         nickname=str(data.get('nickname','')).strip()
                         if not 1<=len(nickname)<=30:raise Error('昵称需为 1–30 个字符')
                         pw=pw_hash(data.get('password'));uid=secrets.token_hex(12)
                         if db.execute('SELECT 1 FROM users WHERE username=?',(username,)).fetchone():raise Error('该用户名已注册',409)
+                        claimed=db.execute('UPDATE invites SET used_by=?,used_at=? WHERE id=? AND used_by IS NULL AND revoked=0',(uid,now,grant['id']))
+                        if claimed.rowcount!=1:raise Error('这个邀请码刚刚被用掉了，请换一个',409)
                         db.execute('INSERT INTO users(id,username,nickname,password,created,share_data,onboarding_step) VALUES(?,?,?,?,?,1,0)',(uid,username,nickname,pw,now))
-                        db.execute('UPDATE registration_invite SET code=?,updated=? WHERE id=1',(secrets.token_hex(6).upper(),now))
                     else:
                         u=db.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone()
                         if not u or not pw_ok(data.get('password'),u['password']):raise Error('用户名或密码不正确',401)
@@ -408,6 +462,48 @@ class Handler(BaseHTTPRequestHandler):
                     result={'ok':True,'review_ticket':journal.job(db,uid)}
                 else:
                     u=self.user(db);uid=u['id'];result={'ok':True}
+                    if path=='/api/admin/sudo':
+                        if not is_admin(u):raise Error('页面不存在',404)
+                        if not auth_security.limit(db,'sudo:'+self.client_ip(),10,300):raise Error('尝试过于频繁，请稍后再试',429)
+                        if not pw_ok(data.get('password'),u['password']):raise Error('密码不正确',403)
+                        until=time.time()+900
+                        cookies=SimpleCookie()
+                        try:cookies.load(self.headers.get('Cookie',''))
+                        except Exception:raise Error('请重新登录',401)
+                        token=cookies.get('tongpin_session')
+                        if not token:raise Error('请重新登录',401)
+                        db.execute('UPDATE sessions SET sudo_until=? WHERE hash=?',(until,digest(token.value)))
+                        return self.reply({'ok':True,'sudo_until':until})
+                    if path=='/api/admin/invites':
+                        self.require_admin(u,db)
+                        try:count=int(data.get('count',20))
+                        except (TypeError,ValueError):count=20
+                        count=max(1,min(100,count))
+                        try:days=int(data.get('expires_days',7))
+                        except (TypeError,ValueError):days=7
+                        days=max(0,min(365,days))
+                        note=str(data.get('note','')).strip()[:60]
+                        batch=str(data.get('batch','')).strip()[:32] or time.strftime('%Y-%m-%d')
+                        now=time.time();expires=now+days*86400 if days else 0
+                        codes=[]
+                        for _ in range(count):
+                            for attempt in range(6):
+                                code=new_invite_code()
+                                try:
+                                    db.execute('INSERT INTO invites(code_hash,batch,note,created,expires) VALUES(?,?,?,?,?)',(invite_hash(code),batch,note,now,expires))
+                                    codes.append(code);break
+                                except sqlite3.IntegrityError:
+                                    continue
+                        return self.reply({'ok':True,'codes':codes,'batch':batch,'note':note,'expires':expires})
+                    if path=='/api/admin/invites/revoke':
+                        self.require_admin(u,db)
+                        try:ident=int(data.get('id',0))
+                        except (TypeError,ValueError):raise Error('参数不正确',400)
+                        row=db.execute('SELECT id,used_by FROM invites WHERE id=?',(ident,)).fetchone()
+                        if not row:raise Error('邀请码不存在',404)
+                        if row['used_by']:raise Error('这个邀请码已经被使用，无法作废',409)
+                        db.execute('UPDATE invites SET revoked=1 WHERE id=?',(ident,))
+                        return self.reply({'ok':True})
                     if path=='/api/journal':result=journal.save(db,uid,data)
                     elif path=='/api/chart/state':
                         ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
