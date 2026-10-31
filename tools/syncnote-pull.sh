@@ -17,7 +17,8 @@ fi
 
 systemctl restart syncnote
 sleep 3
-if curl -fsS -m 5 http://127.0.0.1/api/health >/dev/null; then
+# 直连应用端口，避开 nginx 对 80 的 301 跳转（curl -f 会把 3xx 当成功）。
+if curl -fsS -m 5 http://127.0.0.1:18886/api/health >/dev/null; then
   echo "已更新：$before -> $after，服务正常"
 else
   echo "健康检查失败，回滚到 $before" >&2
