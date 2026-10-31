@@ -329,3 +329,5 @@ table.grid-table tr:hover td { background: #101b26; }
 .fav-grid label:hover { background: #16222f; }
 .fav-grid label.is-on { color: #a8d8ff; }
 .fav-icon { width: 16px; text-align: center; color: var(--dim); }
+
+.fav-hint { font-size: 11px; color: var(--dim); padding: 0 4px; }

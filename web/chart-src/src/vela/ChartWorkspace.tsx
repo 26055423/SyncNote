@@ -39,6 +39,10 @@ interface Props {
   timeframes?: string[];
   /** 收藏的画图工具（同步给原生工具栏，显示在顶部）。 */
   favorites?: string[];
+  /** 左侧工具栏里收藏变化时回调（顶部栏据此刷新）。 */
+  onFavorites?: (types: string[]) => void;
+  /** 当前激活的画图工具变化时回调。 */
+  onTool?: (type: string | null) => void;
   /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
@@ -61,7 +65,7 @@ function seedCells(available: string[] | undefined): Record<string, { timeframe:
 }
 
 export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorkspace(props, ref) {
-  const { charts, symbol, anchorMs, savedState, readOnly, timeframes, onStateChange, onTimeframe, onLayout, onSyncs, onError } = props;
+  const { charts, symbol, anchorMs, savedState, readOnly, timeframes, onStateChange, onTimeframe, onLayout, onSyncs, onError, onFavorites, onTool } = props;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<any>(null);
   const anchorRef = useRef(anchorMs);
@@ -280,10 +284,19 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             lockDrawings(cell);
             annotate(cell);
             try {
-              cell.chart?.drawings?.setFavorites?.(favoritesRef.current);
+              const api = cell.chart?.drawings;
+              if (favoritesRef.current.length) api?.setFavorites?.(favoritesRef.current);
+              onFavorites?.(api?.favorites?.() ?? favoritesRef.current);
             } catch {
               /* 旧版本没有收藏 API 时忽略 */
             }
+          });
+          cell.chart?.on?.('drawing:favorites', ({ favorites }: { favorites: string[] }) => {
+            favoritesRef.current = favorites;
+            onFavorites?.(favorites);
+          });
+          cell.chart?.on?.('drawing:tool', ({ type }: { type: string | null }) => {
+            onTool?.(type ?? null);
           });
           cell.chart?.on?.('market:changed', () => {
             onTimeframe?.(cell.chart?.market?.timeframe ?? '15');

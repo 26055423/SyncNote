@@ -127,6 +127,14 @@ export default function App() {
     }
   });
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  const saveFavorites = (list: string[]) => {
+    setFavs(list);
+    try {
+      localStorage.setItem('sn-chart-favs', JSON.stringify(list));
+    } catch {
+      /* 存不了就算了 */
+    }
+  };
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') ? 'review' : 'live'));
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
@@ -461,14 +469,6 @@ export default function App() {
             <DrawingFavs
               favorites={favs}
               active={activeTool}
-              onChange={(list) => {
-                setFavs(list);
-                try {
-                  localStorage.setItem('sn-chart-favs', JSON.stringify(list));
-                } catch {
-                  /* 存不了就算了 */
-                }
-              }}
               onUse={(key) => {
                 chartRef.current?.useTool(key);
                 setActiveTool((prev) => (prev === key ? null : key));
@@ -497,6 +497,9 @@ export default function App() {
                 savedState={null}
                 readOnly={false}
                 timeframes={TIMEFRAME_OPTIONS.map((o) => o.id)}
+                favorites={favs}
+                onFavorites={saveFavorites}
+                onTool={setActiveTool}
                 onTimeframe={setTf}
                 onLayout={setLayout}
                 onSyncs={setSyncs}
@@ -524,6 +527,8 @@ export default function App() {
                 readOnly={entry!.read_only}
                 timeframes={availableTfs.map((o) => o.id)}
                 favorites={favs}
+                onFavorites={saveFavorites}
+                onTool={setActiveTool}
                 onStateChange={onStateChange}
                 onTimeframe={setTf}
                 onLayout={setLayout}
