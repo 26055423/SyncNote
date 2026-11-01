@@ -71,6 +71,15 @@ interface ShareRow {
 
 type Tab = 'trade' | 'friends' | 'review' | 'inbox';
 
+/* 复盘图一次抓多宽的行情：按锚点往前/往后取多少天（每个基础周期各自独立）。 */
+const REVIEW_BASE_TFS = ['M1', 'M5', 'M15', 'H1'] as const;
+const REVIEW_WINDOW: Record<(typeof REVIEW_BASE_TFS)[number], [number, number]> = {
+  M1: [2, 0.5],
+  M5: [10, 2],
+  M15: [30, 7],
+  H1: [120, 30],
+};
+
 /* ------------------------------------------------------------------ 工具 */
 
 const sideText = (side: string) => (side === 'sell' ? '做空' : '做多');
@@ -476,6 +485,50 @@ export default function App() {
   const ready = Boolean(
     entry && entry.review.status === 'ready' && Object.values(entry.review.charts || {}).some((bars) => (bars?.length ?? 0) > 1),
   );
+
+  // 复盘图的数据源：先拿交易快照，再按锚点往两边抓该券商 source 的 bars（没覆盖的地方留白）。
+  const [series, setSeries] = useState<ReviewCharts | null>(null);
+  const anchorSeconds = entry?.share?.anchor_ms
+    ? Math.round(entry.share.anchor_ms / 1000)
+    : (entry?.review.opened ?? (entry?.review.trade?.closed as number | undefined) ?? null);
+  useEffect(() => {
+    setSeries(null);
+    if (!entry || entry.review.status !== 'ready' || !ready) return;
+    const payload = entry.review.charts || {};
+    const anchor = anchorSeconds ?? Math.round(Date.now() / 1000);
+    let alive = true;
+    void (async () => {
+      const merged: ReviewCharts = { ...payload };
+      try {
+        await Promise.all(REVIEW_BASE_TFS.map(async (tf) => {
+          const [before, after] = REVIEW_WINDOW[tf];
+          const params = new URLSearchParams({
+            tf,
+            from: String(Math.round(anchor - before * 86400)),
+            to: String(Math.round(anchor + after * 86400)),
+          });
+          if (shareId != null) params.set('share', String(shareId));
+          else if (target?.person && target?.ticket) {
+            params.set('person', target.person);
+            params.set('ticket', target.ticket);
+          } else return;
+          const data = await api<{ bars: number[][] }>('/api/chart/bars?' + params.toString());
+          if (!data?.bars?.length) return;
+          // 服务端（同一券商 source）比交易快照更全：同一时间戳以服务端为准。
+          const byTime = new Map<number, number[]>();
+          for (const bar of payload[tf] ?? []) byTime.set(bar[0], bar);
+          for (const bar of data.bars) byTime.set(bar[0], bar);
+          merged[tf] = [...byTime.values()].sort((a, b) => a[0] - b[0]);
+        }));
+      } catch {
+        /* 拿不到就退回交易快照，不阻塞看图 */
+      }
+      if (alive) setSeries(merged);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [entry, ready, shareId, target?.person, target?.ticket, anchorSeconds]);
   const unseen = inbox.filter((row) => !row.seen).length;
   /** 消息页把「留言」和「复盘分享」合成一条时间线：分享就是一条带切片的消息。 */
   const feed = useMemo<Array<{ kind: 'share'; row: ShareRow } | { kind: 'chat'; row: Board['messages'][number] }>>(() => {
@@ -585,11 +638,11 @@ export default function App() {
                 onSyncs={setSyncs}
                 onError={setError}
               />
-            ) : mode === 'review' && ready ? (
+            ) : mode === 'review' && ready && series ? (
               <ChartWorkspace
                 key={shareId != null ? `share:${shareId}` : `${target?.person}:${target?.ticket}`}
                 ref={chartRef}
-                charts={entry!.review.charts}
+                charts={series ?? entry!.review.charts}
                 symbol={trade.symbol || 'XAUUSD'}
                 anchorMs={anchorMs}
                 savedState={entry!.chart?.document ?? null}

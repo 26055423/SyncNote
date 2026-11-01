@@ -351,7 +351,7 @@ P0 阶段 K 线从哪来：**继续用 `/api/mt5/review` 现有上传**。服务
 | 期 | 内容 | EA 改动 | 风险 |
 |---|---|---|---|
 | **P0** | `bars` + `bar_coverage` 建表；从现有 `/api/mt5/review` 的 `charts` 回收入库；`GET /api/chart/bars`；复盘页按该 feed 渲染 + 缺口留白提示 | 无 | 低，向后兼容 |
-| 现状（2026-11-02） | P0 后端已落地：`bars`/`bar_coverage`/`bar_attempt`/`feeds` 建表、`bars.bind_feed`、`GET /api/chart/bars`、`GET /api/chart/tracks`、复盘上传回填；7 年 XAUUSD 已导入（333 万根）。前端轨道条已接，图表仍读 `trade_reviews.payload`（下一步切数据源）。 |
+| 现状（2026-11-02） | P0 后端已落地：`bars`/`bar_coverage`/`bar_attempt`/`feeds` 建表、`bars.bind_feed`、`GET /api/chart/bars`、`GET /api/chart/tracks`、复盘上传回填；7 年 XAUUSD 已导入（333 万根）。前端轨道条与图表都已接：打开复盘时按锚点抓 M1 2±0.5 天 / M5 10±2 天 / M15 30±7 天 / H1 120±30 天，与交易快照按时间戳合并。 |
 | **P1** | `POST /api/mt5/bars` + `bars-import`；前端按缺口请求（SyncTrade 走本机 WS） | 无 | 中，需处理并发/去重 |
 | **P2** | SyncNote 领 `bars_job`，按时间跨度抓取；窗口从 ±30 根放大到“前 2 天/后 1 天” | 有 | 中，`CopyRates` 可用性要兜底 |
 | **P3** | 「补齐缺口」按钮 + 覆盖百分比提示 + 新用户首次 90 天引导 | 无 | 低 |
