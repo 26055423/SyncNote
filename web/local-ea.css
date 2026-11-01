@@ -1,1 +1,143 @@
-:root{color-scheme:dark;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;color:#e5e9ef;background:#10141c;font-size:16px;line-height:1.8}*{box-sizing:border-box}main{max-width:820px;margin:0 auto;padding:40px 24px 72px}a{color:#73d4c3;text-underline-offset:4px}.back{font-size:14px}.eyebrow{color:#73d4c3;margin-top:36px;letter-spacing:.08em}h1{font-size:clamp(28px,5vw,40px);line-height:1.4;letter-spacing:-.03em;margin:12px 0 24px}h2{font-size:22px;margin-top:38px}p,li{color:#c2cbd8}li{margin:15px 0}strong{color:#f4f6f9}.notice{background:#30291c;border-left:3px solid #d0aa67;padding:16px 20px;border-radius:4px}.download{display:inline-block;margin:12px 0;background:#73d4c3;color:#10141c;padding:10px 24px;border-radius:8px;font-weight:650;text-decoration:none}.download:hover{background:#a5ebde}.muted{font-size:14px;color:#8c9aaf}a:focus-visible{outline:3px solid #e4c98c;outline-offset:5px}ol{padding-left:24px}
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif;
+  color: #e5e9ef;
+  background: #10141c;
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+* { box-sizing: border-box; }
+
+main { max-width: 880px; margin: 0 auto; padding: 40px 24px 72px; }
+
+a { color: #73d4c3; text-underline-offset: 4px; }
+.back { font-size: 14px; }
+.eyebrow { color: #73d4c3; margin-top: 36px; letter-spacing: .08em; }
+
+h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.35; letter-spacing: -.03em; margin: 12px 0 24px; }
+h2 { font-size: 22px; margin-top: 42px; }
+p, li { color: #c2cbd8; }
+li { margin: 12px 0; }
+strong, b { color: #f4f6f9; }
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .9em;
+  background: #1a2230;
+  border: 1px solid #2a3648;
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: #d7e3f2;
+}
+
+.notice {
+  background: #30291c;
+  border-left: 3px solid #d0aa67;
+  padding: 16px 20px;
+  border-radius: 4px;
+}
+
+.muted { font-size: 14px; color: #8c9aaf; }
+
+/* ---------------------------------------------------------------- 两个下载卡 */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+  margin: 28px 0 8px;
+}
+
+.card {
+  border: 1px solid #263241;
+  border-radius: 12px;
+  background: #151c27;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+}
+
+.card h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.card p { margin: 6px 0 10px; }
+.card ul { margin: 0 0 16px; padding-left: 20px; }
+.card li { margin: 6px 0; font-size: 15px; }
+.card .download { margin-top: auto; align-self: flex-start; }
+
+.tag {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  color: #9fe6d8;
+  background: #17332f;
+  border: 1px solid #2b5a53;
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+
+.tag.pro {
+  color: #f0d79a;
+  background: #322a1a;
+  border-color: #5f4d26;
+}
+
+.download {
+  display: inline-block;
+  margin: 8px 0;
+  background: #73d4c3;
+  color: #10141c;
+  padding: 9px 22px;
+  border-radius: 8px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.download:hover { background: #a5ebde; }
+
+/* ---------------------------------------------------------------- 对比表 */
+table.cmp {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 18px 0 12px;
+  font-size: 15px;
+}
+
+table.cmp th,
+table.cmp td {
+  text-align: left;
+  padding: 9px 12px;
+  border-bottom: 1px solid #232f3d;
+  vertical-align: top;
+}
+
+table.cmp thead th {
+  color: #8c9aaf;
+  font-weight: 500;
+  border-bottom-color: #33414f;
+  white-space: nowrap;
+}
+
+table.cmp tbody tr:hover td { background: #151c27; }
+table.cmp td:first-child { color: #e5e9ef; }
+table.cmp .yes { color: #7fe0b4; }
+table.cmp .no { color: #77879b; }
+
+ol { padding-left: 24px; }
+ol li { margin: 14px 0; }
+
+a:focus-visible, .download:focus-visible {
+  outline: 3px solid #e4c98c;
+  outline-offset: 4px;
+}
+
+@media (max-width: 560px) {
+  main { padding: 28px 16px 56px; }
+  table.cmp { font-size: 14px; }
+  table.cmp th, table.cmp td { padding: 7px 8px; }
+}

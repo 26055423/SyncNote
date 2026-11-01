@@ -5,6 +5,7 @@ import auth_security
 import chart
 import live
 import local_ea
+import sync_history
 import ea_hub
 import journal
 import market
@@ -80,6 +81,7 @@ with connect() as db:
     if 'share_reviews' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN share_reviews INTEGER NOT NULL DEFAULT 0')
     auth_security.initialize(db)
     journal.initialize(db)
+    sync_history.initialize(db)
     market.initialize(db)
     chart.initialize(db)
     if os.environ.get('EA_HUB_ENABLE','1')!='0':HUB.start()
@@ -89,6 +91,11 @@ with connect() as db:
 class Error(Exception):
     def __init__(self,text,code=400):self.text,self.code=text,code
 def digest(s):return hashlib.sha256(s.encode()).hexdigest()
+
+def history_for(db,person):
+ clock=db.execute('SELECT * FROM broker_clocks WHERE person=?',(person,)).fetchone()
+ rows=[json.loads(row[0]) for row in db.execute('SELECT payload FROM trades WHERE person=?',(person,))]
+ return [utc_trade(row,clock) for row in rows if row.get('history_status') not in ('invalidated','context_unavailable','context_unverified')]
 def pw_hash(p):
     if not isinstance(p,str) or not 8<=len(p)<=128:raise Error('密码需为 8–128 个字符')
     salt=secrets.token_hex(16);return salt+':'+hashlib.pbkdf2_hmac('sha256',p.encode(),salt.encode(),310000).hex()
@@ -188,7 +195,9 @@ class Handler(BaseHTTPRequestHandler):
             raise Error('账号已被停用，请联系管理员',403)
         return u
     def client_ip(self):
-        return client_address.resolve_client_ip(self.client_address[0],self.headers,proxy_cidrs=os.environ.get('TRUSTED_PROXY_CIDRS',''),proxy_hosts=os.environ.get('TRUSTED_PROXY_HOSTS',''))
+        # 空串要当成“没配置”，否则会绕过 client_address 里的 127.0.0.1/32 默认值，
+        # 让所有请求都变成 127.0.0.1（限流桶全局共享）。
+        return client_address.resolve_client_ip(self.client_address[0],self.headers,proxy_cidrs=os.environ.get('TRUSTED_PROXY_CIDRS') or None,proxy_hosts=os.environ.get('TRUSTED_PROXY_HOSTS') or None)
     def session(self,db,uid,cap=None):
         token=secrets.token_urlsafe(32);now=time.time();expires=min(now+2592000,cap) if cap is not None else now+2592000
         if expires<=now:raise Error('登录已到期，请重新登录',401)
@@ -204,6 +213,14 @@ class Handler(BaseHTTPRequestHandler):
     def require_admin(self,u,db,sudo=True):
         if not is_admin(u):raise Error('页面不存在',404)
         if sudo and self.sudo_until(db)<time.time():raise Error('请先验证管理员密码',403)
+    def link_user(self,db):
+        """Bearer 连接码 → mt5_links 行。停用账号与网页会话一样拒绝，数据不落库。"""
+        auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
+        link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
+        if not link:raise Error('连接码无效或已撤销',401)
+        owner=db.execute('SELECT locked FROM users WHERE id=?',(link['user_id'],)).fetchone()
+        if not owner or owner['locked']:raise Error('账号已被停用，请联系管理员',403)
+        return link
 
     def do_GET(self):
         try:
@@ -213,23 +230,24 @@ class Handler(BaseHTTPRequestHandler):
                     if not auth_security.limit(db,'challenge:'+self.client_ip(),60,60):raise Error('请求过于频繁',429)
                     return self.reply(auth_security.challenge(db))
             if path=='/api/health':return self.reply({'ok':True,'version':'0.2','authentication':True})
-            if path=='/downloads/syncnote-local.zip':
-                try:body=local_ea.source_package(ROOT)
+            packages={'/downloads/syncnote-local.zip':'legacy','/downloads/syncnote.zip':'syncnote','/downloads/synctrade.zip':'synctrade'}
+            if path in packages:
+                try:body=local_ea.source_package(ROOT,packages[path])
                 except (OSError,ValueError):raise Error('本机 EA 源码包尚未就绪',503)
                 self.send_response(200)
-                for k,v in [('Content-Type','application/zip'),('Content-Disposition','attachment; filename="syncnote-local.zip"'),('Content-Length',str(len(body))),('Cache-Control','no-store'),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
+                for k,v in [('Content-Type','application/zip'),('Content-Disposition','attachment; filename="'+path.rsplit('/',1)[-1]+'"'),('Content-Length',str(len(body))),('Cache-Control','no-store'),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
                 self.end_headers();self.wfile.write(body);return
             if path=='/api/mt5/status':
-                auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
                 with connect() as db:
-                    link=db.execute('SELECT user_id FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
-                    if not link:raise Error('连接凭证已失效，请从网站重新下载助手',401)
+                    link=self.link_user(db)
                     snap=db.execute('SELECT * FROM snapshots WHERE person=?',(link['user_id'],)).fetchone()
-                    online=bool(snap and time.time()-snap['updated']<=45 and json.loads(snap['payload']).get('online',True))
-                    return self.reply({'online':online,'last_sync':snap['updated'] if snap else None})
+                    last_history=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=?',(link['user_id'],)).fetchone()[0]
+                    online=bool((snap and time.time()-snap['updated']<=45 and json.loads(snap['payload']).get('online',True)) or (last_history and time.time()-last_history<=90))
+                    return self.reply({'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'})
             if path.startswith('/api/'):
                 with connect() as db:
                     u=self.user(db);uid=u['id']
+                    if path=='/api/mt5/history-job':return self.reply({'ok':True,'website_user_id':uid,'review_job':sync_history.review_job(db,uid)})
                     if path=='/api/live':
                         try:limit=int(q.get('limit',['500'])[0])
                         except ValueError:limit=500
@@ -238,7 +256,7 @@ class Handler(BaseHTTPRequestHandler):
                         ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
                         row=None
                         if share:
-                            if not share.isdigit():raise Error('作业不存在，或不是发给你的',404)
+                            if not share.isdigit():raise Error('消息不存在，或不是发给你的',404)
                             row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
                         owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
                         if not owner:raise Error('用户不存在',404)
@@ -280,8 +298,10 @@ class Handler(BaseHTTPRequestHandler):
                         following=[public(r) for r in db.execute('SELECT users.* FROM follows JOIN users ON users.id=follows.target WHERE follower=? ORDER BY follows.created DESC',(uid,))]
                         followers=[public(r) for r in db.execute('SELECT users.* FROM follows JOIN users ON users.id=follows.follower WHERE target=? ORDER BY follows.created DESC',(uid,))]
                         link=db.execute('SELECT * FROM mt5_links WHERE user_id=?',(uid,)).fetchone();snap=db.execute('SELECT * FROM snapshots WHERE person=?',(uid,)).fetchone()
-                        online=bool(link and link['token_hash'] and snap and time.time()-snap['updated']<=45 and json.loads(snap['payload']).get('online',True))
-                        return self.reply({'user':public(u),'following':following,'followers':followers,'mt5':{'configured':bool(link and link['token_hash']),'bound':bool(link and link['account_key']),'online':online,'last_sync':snap['updated'] if snap else None}})
+                        last_history=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=?',(uid,)).fetchone()[0]
+                        configured=bool(link and (link['token_hash'] or link['account_key']))
+                        online=bool(configured and ((snap and time.time()-snap['updated']<=45 and json.loads(snap['payload']).get('online',True)) or (last_history and time.time()-last_history<=90)))
+                        return self.reply({'user':public(u),'following':following,'followers':followers,'mt5':{'configured':configured,'bound':bool(link and link['account_key']),'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'}})
                     if path=='/api/users':
                         text=q.get('q',[''])[0].strip().lower()
                         if not 2<=len(text)<=40:raise Error('请输入至少 2 个字符查找用户')
@@ -291,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
                     if path=='/api/history':
                         target=q.get('person',[uid])[0]
                         if not visible(db,uid,target):raise Error('对方未开放交易数据，或你尚未关注对方',403)
-                        return self.reply({'history':[utc_trade(json.loads(r[0]),db.execute('SELECT * FROM broker_clocks WHERE person=?',(target,)).fetchone()) for r in db.execute('SELECT payload FROM trades WHERE person=?',(target,))]})
+                        return self.reply({'history':history_for(db,target)})
                     if path=='/api/state':
                         db.execute('INSERT INTO presence VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET updated=excluded.updated',(uid,time.time()))
                         following=list(db.execute('SELECT users.* FROM follows JOIN users ON users.id=follows.target WHERE follower=? ORDER BY follows.created',(uid,)))
@@ -303,10 +323,13 @@ class Handler(BaseHTTPRequestHandler):
                             live=HUB.live(r['id'])
                             if live:
                                 # EA 直连服务器时，内存里的实时状态优先于落库快照。
-                                live['history']=live.get('history') or [utc_trade(json.loads(t[0]),db.execute('SELECT * FROM broker_clocks WHERE person=?',(r['id'],)).fetchone()) for t in db.execute('SELECT payload FROM trades WHERE person=?',(r['id'],))]
+                                live['history']=live.get('history') or history_for(db,r['id'])
                                 snapshots[r['id']]={'data':live,'updated':time.time()}
                             elif snap:
-                                payload=json.loads(snap['payload']);payload['history']=[utc_trade(json.loads(t[0]),db.execute('SELECT * FROM broker_clocks WHERE person=?',(r['id'],)).fetchone()) for t in db.execute('SELECT payload FROM trades WHERE person=?',(r['id'],))];snapshots[r['id']]={'data':payload,'updated':snap['updated']}
+                                payload=json.loads(snap['payload']);payload['history']=history_for(db,r['id']);snapshots[r['id']]={'data':payload,'updated':snap['updated']}
+                            else:
+                                history=history_for(db,r['id'])
+                                if history:snapshots[r['id']]={'data':{'history':history,'source':'history-only','online':False,'positions':[]},'updated':max((t.get('closed') or 0 for t in history),default=0)}
                         marks=','.join('?' for _ in allowed);events=[dict(r) for r in db.execute(f'SELECT * FROM events WHERE person IN ({marks}) ORDER BY id DESC LIMIT 100',allowed)]
                         mutual=[r[0] for r in db.execute('SELECT a.target FROM follows a JOIN follows b ON b.follower=a.target AND b.target=a.follower WHERE a.follower=?',(uid,))];chat=[uid]+mutual;cm=','.join('?' for _ in chat)
                         messages=[dict(r) for r in db.execute(f'SELECT * FROM messages WHERE person IN ({cm}) ORDER BY id DESC LIMIT 100',chat)][::-1];names={r['id']:r['nickname'] for r in [u]+following}
@@ -359,6 +382,7 @@ class Handler(BaseHTTPRequestHandler):
             if etag:self.send_header('ETag',etag)
             for k,v in [('Content-Type',mime+'; charset=utf-8'),('Cache-Control',cache),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
             self.end_headers();self.wfile.write(body)
+        except sync_history.HistoryError as e:self.reply({'error':e.text},e.code)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)
         except Error as e:self.reply({'error':e.text},e.code)
@@ -384,34 +408,19 @@ class Handler(BaseHTTPRequestHandler):
                     if not auth_security.verify_challenge(db,data):raise Error('验证码不正确或已过期，请刷新',400)
                     username=str(data.get('username','')).strip().lower()
                     if not re.fullmatch('[a-z0-9_]{2,24}',username):raise Error('用户名需为 2–24 位字母、数字或下划线')
-                    if path=='/api/register':
-                        db.execute('BEGIN IMMEDIATE')
-                        invite=data.get('invite_code','')
-                        if not db.execute("SELECT 1 FROM users WHERE username=?",(ADMIN_USERNAME,)).fetchone():raise Error('站点尚未初始化完成，请稍后再试',503)
-                        if not isinstance(invite,str) or not invite.strip():raise Error('请填写邀请码',403)
-                        grant=db.execute("SELECT id FROM invites WHERE code_hash=? AND used_by IS NULL AND revoked=0 AND (expires=0 OR expires>?)",(invite_hash(invite),now)).fetchone()
-                        if not grant:raise Error('邀请码不正确、已被使用或已过期',403)
-                        nickname=str(data.get('nickname','')).strip()
-                        if not 1<=len(nickname)<=30:raise Error('昵称需为 1–30 个字符')
-                        pw=pw_hash(data.get('password'));uid=secrets.token_hex(12)
-                        if db.execute('SELECT 1 FROM users WHERE username=?',(username,)).fetchone():raise Error('该用户名已注册',409)
-                        claimed=db.execute("UPDATE invites SET used_by=?,used_at=?,code_plain='' WHERE id=? AND used_by IS NULL AND revoked=0",(uid,now,grant['id']))
-                        if claimed.rowcount!=1:raise Error('这个邀请码刚刚被用掉了，请换一个',409)
-                        db.execute('INSERT INTO users(id,username,nickname,password,created,share_data,onboarding_step) VALUES(?,?,?,?,?,1,0)',(uid,username,nickname,pw,now))
-                    else:
-                        u=db.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone()
-                        if not u or not pw_ok(data.get('password'),u['password']):raise Error('用户名或密码不正确',401)
-                        if u['locked']:raise Error('账号已被停用，请联系管理员',403)
-                        uid=u['id']
-                        browser_cookies=SimpleCookie();browser_cookies.load(self.headers.get('Cookie',''))
-                        device=browser_cookies.get(auth_security.DEVICE_COOKIE)
-                        already_trusted=auth_security.trusted(db,uid,device.value if device else '',self.client_ip(),self.headers.get('User-Agent',''))
-                        if not already_trusted and not auth_security.verify_otp(db,uid,data.get('otp','')):raise Error('请输入有效的验证器动态码',401)
-                        mfa=db.execute('SELECT enabled FROM account_mfa WHERE user_id=?',(uid,)).fetchone()
-                        if mfa and mfa[0] and not already_trusted and data.get('remember_device') is True:
-                            device_token=auth_security.trust(db,uid,self.client_ip(),self.headers.get('User-Agent',''))
-                            trusted_cookie=auth_security.device_cookie(device_token) 
-                        db.execute('DELETE FROM security_limits WHERE key=?',('account:'+account,))
+                    db.execute('BEGIN IMMEDIATE')
+                    invite=data.get('invite_code','')
+                    if not db.execute("SELECT 1 FROM users WHERE username=?",(ADMIN_USERNAME,)).fetchone():raise Error('站点尚未初始化完成，请稍后再试',503)
+                    if not isinstance(invite,str) or not invite.strip():raise Error('请填写邀请码',403)
+                    grant=db.execute("SELECT id FROM invites WHERE code_hash=? AND used_by IS NULL AND revoked=0 AND (expires=0 OR expires>?)",(invite_hash(invite),now)).fetchone()
+                    if not grant:raise Error('邀请码不正确、已被使用或已过期',403)
+                    nickname=str(data.get('nickname','')).strip()
+                    if not 1<=len(nickname)<=30:raise Error('昵称需为 1–30 个字符')
+                    pw=pw_hash(data.get('password'));uid=secrets.token_hex(12)
+                    if db.execute('SELECT 1 FROM users WHERE username=?',(username,)).fetchone():raise Error('该用户名已注册',409)
+                    claimed=db.execute("UPDATE invites SET used_by=?,used_at=?,code_plain='' WHERE id=? AND used_by IS NULL AND revoked=0",(uid,now,grant['id']))
+                    if claimed.rowcount!=1:raise Error('这个邀请码刚刚被用掉了，请换一个',409)
+                    db.execute('INSERT INTO users(id,username,nickname,password,created,share_data,onboarding_step) VALUES(?,?,?,?,?,1,0)',(uid,username,nickname,pw,now))
                     cookie=self.session(db,uid)
                     if trusted_cookie:cookie=[cookie,trusted_cookie]
                     result={'ok':True,'user':public(db.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone())}
@@ -441,18 +450,34 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute('UPDATE mt5_bindings SET used=1 WHERE hash=?',(digest(code),))
                     result={'ok':True,'token':token}
                 elif path=='/api/mt5/review':
-                    auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
-                    link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
-                    if not link:raise Error('连接码无效或已撤销',401)
+                    link=self.link_user(db)
+                    current=journal.trade(db,link['user_id'],str(data.get('ticket','')))
+                    if current.get('source')==sync_history.SCHEMA:
+                        account,server,key=sync_history.identity(data)
+                        sync_history.bind_account(db,link['user_id'],account,server,now)
+                        if current.get('source_account_key')!=key:raise Error('复盘任务不属于此 MT5 账户',409)
                     result=journal.receive(db,link['user_id'],data)
+                elif path in ('/api/mt5/history-sync','/api/mt5/history-import'):
+                    if path=='/api/mt5/history-sync':uid=self.link_user(db)['user_id']
+                    else:
+                        uid=self.user(db)['id']
+                        if data.get('website_user_id')!=uid:raise Error('网站登录账号已改变，请重新授权历史同步',409)
+                    result=sync_history.ingest(db,uid,data,now)
+                    clock=data.get('clock')
+                    if isinstance(clock,dict):record_clock(db,uid,data['server'],{'clock':clock},now)
+                    sync_history.queue_review_jobs(db,uid)
+                    result['review_job']=sync_history.review_job(db,uid)
+                elif path=='/api/mt5/history-review':
+                    uid=self.user(db)['id']
+                    if data.get('website_user_id')!=uid:raise Error('网站登录账号已改变，请重新授权历史同步',409)
+                    account,server,key=sync_history.identity(data)
+                    sync_history.bind_account(db,uid,account,server,now)
+                    result=journal.receive(db,uid,data)
                 elif path=='/api/mt5/live':
-                    auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else ''
-                    link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
-                    if not link:raise Error('连接码无效或已撤销',401)
+                    link=self.link_user(db)
                     ingested=LIVE.ingest(link['user_id'],data);result={'ok':True,'bars':ingested['bars'],'bootstrap':ingested['first']}
                 elif path=='/api/snapshot':
-                    auth=self.headers.get('Authorization','');token=auth[7:] if auth.startswith('Bearer ') else '';link=db.execute('SELECT * FROM mt5_links WHERE token_hash=?',(digest(token),)).fetchone() if token else None
-                    if not link:raise Error('连接码无效或已撤销',401)
+                    link=self.link_user(db)
                     s,hs,es=validate(data);uid=link['user_id'];account=str(s.get('account','')).strip();broker=str(s.get('broker','')).strip()
                     if not account or not broker or len(account)>80 or len(broker)>160:raise Error('请同步 MT5 账户及券商标识')
                     key=digest(broker+':'+account)
@@ -537,7 +562,7 @@ class Handler(BaseHTTPRequestHandler):
                         result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''))
                     elif path=='/api/reviews/share/seen':
                         share_id=data.get('id')
-                        if not isinstance(share_id,int) or isinstance(share_id,bool):raise Error('作业编号不正确')
+                        if not isinstance(share_id,int) or isinstance(share_id,bool):raise Error('消息编号不正确')
                         result=chart.mark_seen(db,uid,share_id)
                     elif path=='/api/trade-review/request':
                         target=data.get('person',uid);owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
@@ -610,6 +635,7 @@ class Handler(BaseHTTPRequestHandler):
                         db.execute('INSERT INTO messages(person,text,created) VALUES(?,?,?)',(uid,text,now))
                     else:raise Error('接口不存在',404)
             self.reply(result,cookie=cookie)
+        except sync_history.HistoryError as e:self.reply({'error':e.text},e.code)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)
         except Error as e:

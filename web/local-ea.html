@@ -3,25 +3,82 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本机 EA · 同频</title><link rel="stylesheet" href="/local-ea.css"></head>
 <body><main>
 <a class="back" href="/chart">← 返回交易台</a>
-<p class="eyebrow">同频 · 本机连接预览版</p>
-<h1>账户留在 MT5，网页连接你的电脑。</h1>
-<p>这套 EA 源码在你自己的 MetaEditor 中编译。网页通过本机 WebSocket 获取数据、发送受 EA 本地权限限制的交易请求，无需安装 Python 或额外代理程序，也不用在网站填写 MT5 密码。</p>
-<p class="notice">预览版：默认只读。交易功能仅供模拟账户联调；网站发布与源码编译成功不能替代模拟账户的实机验收。实盘请继续使用已验证的 MT5 操作方式。</p>
-<a class="download" href="/downloads/syncnote-local.zip">下载 EA 源码包</a>
-<p class="muted">包含入口 MQ5、所需 MQH、安装说明、协议和 SHA-256 清单；不包含 EX5、账户、密码或连接码。</p>
-<h2>安装与连接</h2>
+<p class="eyebrow">同频 · 本机 EA 两个版本</p>
+<h1>网页提供全部界面，数据从你自己的 MT5 来。</h1>
+<p>同频不带行情服务器：K 线、成交记录和复盘数据都来自你在本机运行的 MT5。两款 EA 共用同一套只读历史模块，按需要装 <b>一个</b> 就够。</p>
+
+<div class="cards">
+<section class="card">
+<h2>SyncNote <span class="tag">笔记版</span></h2>
+<p>只读上传成交历史，用来做复盘、写笔记、分享给好友。</p>
+<ul>
+<li>没有 DLL、没有本机 WebSocket、没有任何交易函数</li>
+<li>MT5 与 EA 运行期间，<b>关掉浏览器也继续同步</b></li>
+<li>只上传成交记录与复盘 K 线，不上传余额、净值、持仓快照</li>
+</ul>
+<a class="download" href="/downloads/syncnote.zip">下载 SyncNote 源码包</a>
+</section>
+
+<section class="card">
+<h2>SyncTrade <span class="tag pro">SyncNote Pro · 交易版</span></h2>
+<p>在笔记版之上多一个本机 WebSocket：网页看实时行情、在网页上下单（默认只读，仅模拟账户）。</p>
+<ul>
+<li>需要允许系统 DLL（本机监听 + 配对码），不需要 Python 或额外代理</li>
+<li>历史由浏览器转交网站：<b>关掉网页即暂停，下次打开补齐</b></li>
+<li>余额、净值、未平仓持仓只在本机连接里显示，不写进云端快照</li>
+</ul>
+<a class="download" href="/downloads/synctrade.zip">下载 SyncTrade 源码包</a>
+</section>
+</div>
+
+<h2>怎么选</h2>
+<table class="cmp">
+<thead><tr><th>能力</th><th>SyncNote</th><th>SyncTrade</th></tr></thead>
+<tbody>
+<tr><td>交易记录、复盘、笔记、分享</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+<tr><td>读取本机成交历史</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+<tr><td>上传方式</td><td>EA 直接发 HTTPS</td><td>浏览器转交</td></tr>
+<tr><td>关掉浏览器后继续同步</td><td class="yes">✓</td><td>暂停，下次补齐</td></tr>
+<tr><td>网页看实时行情 / 下单</td><td class="no">—</td><td class="yes">✓ 模拟账户，默认只读</td></tr>
+<tr><td>DLL 与算法交易权限</td><td>都不需要</td><td>需要允许 DLL</td></tr>
+<tr><td>凭据</td><td>个人中心生成的连接码</td><td>网页一次性配对码</td></tr>
+<tr><td>运行环境</td><td>MT5 桌面端即可</td><td>仅 Windows MT5</td></tr>
+</tbody>
+</table>
+<p class="muted">同一台机器上装两个也不冲突：服务器按「券商服务器 + 账户 + 成交 deal」去重，同一个账户不会重复入库。但同一个账户不需要两个上传者。</p>
+
+<h2>SyncNote：安装与上传</h2>
 <ol>
-<li><strong>准备环境。</strong>在同一台 Windows 电脑上运行 MT5 与新版 Chrome / Edge。网站使用 HTTPS，手机或另一台电脑上的浏览器无法通过 127.0.0.1 连接这台 MT5。</li>
-<li><strong>检查并编译。</strong>解压源码包，将 SyncNoteLocal 文件夹放入 MT5 数据目录的 MQL5/Experts。用 MetaEditor 打开 SyncNoteLocal.mq5，按 F7 编译，确认没有错误。</li>
-<li><strong>挂载 EA。</strong>在需要查看的品种专用图表挂载 EA。按源码说明启用系统 DLL 导入。系统网络库用于本机监听，密码学库用于生成配对凭据；不需要下载自定义 DLL。</li>
-<li><strong>确认本地设置。</strong>EA 默认只读；允许的网站来源应精确填写本站 HTTPS Origin。交易开关、品种和限额由你在 EA 中决定，网页不能提高这些权限。</li>
-<li><strong>完成配对。</strong>回到交易台，打开本机连接，允许浏览器访问本机网络，输入 EA 显示的一次性配对码，再在 MT5 图表上确认授权。核对网页显示的券商、账号和品种。</li>
-<li><strong>先对照再操作。</strong>先核对 bid/ask、持仓和图表。在模拟账户开启交易时，确认手数和本地限额。请求超时显示“结果待核实”时，先在 MT5 查询，不要再次点击下单。</li>
+<li><strong>拿连接码。</strong>在<a href="/profile">个人中心</a>点「生成连接码」并复制。连接码等同密码，只填进自己的 MT5；重新生成会让旧码立即失效。</li>
+<li><strong>解压并编译。</strong>把 SyncNote 文件夹放进 MT5 数据目录的 <code>MQL5/Experts/</code>，用 MetaEditor 打开 <code>SyncNote.mq5</code>，F7 编译。</li>
+<li><strong>放行 WebRequest。</strong>MT5 → 工具 → 选项 → EA 交易：勾选「允许 WebRequest」，把本站地址加进白名单（源包里只允许你在参数里填的那一个 HTTPS 域名）。</li>
+<li><strong>挂到图表。</strong>任意图表挂载 EA，<b>WebsiteURL</b> 填本站地址，<b>ConnectionCode</b> 粘贴连接码；Algo Trading 可以保持关闭，此 EA 不交易。</li>
+<li><strong>等确认。</strong>EA 会在图表左上角显示同步状态，个人中心的「MT5」状态会出现最近同步时间。首次补录按时间片分页，历史多时需要几分钟。</li>
 </ol>
-<h2>权限和数据</h2>
-<p>网站登录、本机配对、云端采集连接码彼此独立。配对令牌仅存在当前网页内存；页面刷新、EA 重启或切换 MT5 账户后需要重新配对。EA 卸载后本机连接停止，但券商已接受的订单不会因此撤销。</p>
-<p>本机模式不会自动把账户与行情上传到网站。你以前主动启用的旧 EA / 网关上传仍按原配置运行，需要分别关闭。网页复盘和好友分享继续使用你已保存在网站上的数据。</p>
+
+<h2>SyncTrade：安装、配对与交易</h2>
+<ol>
+<li><strong>解压并编译。</strong>把 SyncTrade 文件夹放进 <code>MQL5/Experts/</code>，MetaEditor 打开 <code>SyncTrade.mq5</code>，F7 编译；需要先在 MT5 选项里允许 DLL 导入。</li>
+<li><strong>挂到图表。</strong>在要交易的品种图表上挂载。默认 <b>InpAllowTrading=false</b>，只读；真实账户和净额账户硬性只读，只有模拟对冲账户可以本地开启交易。</li>
+<li><strong>网页配对。</strong>在交易台右栏「本机 MT5」里连接，允许浏览器访问本机网络，输入 MT5 图表显示的一次性配对码，再在 MT5 图表上点击「允许本次连接」。令牌只留在网页内存。</li>
+<li><strong>核对账户。</strong>对照网页显示的券商、账号、品种和 bid/ask 是否与 MT5 一致，再决定是否开启交易。</li>
+<li><strong>开启笔记同步（可选）。</strong>右栏「交易笔记同步」勾选后，浏览器会把本机历史分页上传到你的网站账户；每页收到确认才推进进度，重新打开网页可继续。</li>
+<li><strong>先对照再操作。</strong>模拟账户也先小额验证。请求超时显示「结果待核实」时，先在 MT5 查询，不要重复点击下 单。</li>
+</ol>
+
+<h2>权限与数据</h2>
+<p>网站登录、本机配对、云端采集连接码彼此独立。EA 不读取、也不上传 MT5 密码；网页无法提高 EA 里设定的品种、手数、点差和权限。</p>
+<p>历史通道只接受成交记录：原始 deal（含手动单、其他 EA、部分平仓、反转、手续费与资金变动）保留在网站，交易摘要由服务器按成交重建。当券商历史不足以确认开仓上下文时，网站会明确标记「无法完整重建」，不会编造开仓价，也不会丢弃原始记录。</p>
+<p>入金、出金、佣金和手续费属于历史记录，会随原始 deal 一起上传；这与「不上传实时余额和持仓快照」是两件事。</p>
+<p>SyncTrade 的余额、净值、持仓只在本机 WebSocket 会话里读取，用于网页显示，不进入云端快照。</p>
+
+<h2>关闭网页之后</h2>
+<p>SyncNote 自己在 MT5 里发 HTTPS，所以浏览器关掉、电脑锁屏都继续同步；只要 MT5 和 EA 在跑。</p>
+<p>SyncTrade 不直接上传，历史由浏览器代传。关掉网页同步就暂停，下次打开时按上次确认的游标续传，不会丢已确认的页，但会晚一段时间。需要「一边交易、一边关网页也能归档」时，装两个：SyncTrade 负责交易，SyncNote 负责归档。</p>
+
 <h2>连接失败时</h2>
-<p>检查 EA 是否运行、DLL 权限、端口占用、网站是否为 HTTPS，以及浏览器是否允许访问本机网络。不要关闭浏览器安全检查，不要安装陌生证书。连接失败时网页不会切换成云端代下单。</p>
-<p class="muted">当前本机端点为 ws://127.0.0.1:18765/ws。不同终端、非 Windows 环境和远程访问不属于首版支持范围。源码和网站的协议版本不一致时请保持只读并重新核对版本。</p>
+<p>检查 EA 是否在跑、DLL 权限、WebRequest 白名单、端口占用（本机端点 <code>ws://127.0.0.1:18765/ws</code>）、网站是否为 HTTPS，以及浏览器是否允许访问本机网络。不要关闭浏览器的安全检查，不要安装陌生证书。连接失败时网页不会退回云端代下单。</p>
+
+<p class="muted">源码包内含入口 MQ5、所需 MQH、说明文档、协议和 <code>SOURCE_MANIFEST.json</code>（逐文件 SHA-256）；不含 EX5、账户、密码或连接码。SyncNote 包内没有任何 <code>#import</code>、<code>OrderSend</code> 或 <code>SocketCreate</code>，服务器在打包时会校验这一点，校验不通过就不提供下载。</p>
+<p class="muted">旧版单文件采集程序 <code>SyncNoteSync.mq5</code> 保留兼容（<a href="/downloads/syncnote-local.zip">下载旧包</a>），它会同时上传余额与持仓快照，新用户请使用上面的两个版本。</p>
 </main></body></html>

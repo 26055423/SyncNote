@@ -26,6 +26,9 @@ export interface LocalTerminalState {
   read_only: boolean;
   demo: boolean;
   capabilities: string[];
+  product: string;
+  features: string[];
+  server_offset_sec: number;
   latency: number | null;
   account: Record<string, any>;
   tick: { symbol?: string; bid: number; ask: number; time: number } | null;
@@ -37,9 +40,35 @@ export interface LocalTerminalState {
   revision: number;
 }
 
+export interface NoteHistoryPage {
+  type: 'history';
+  request_id: string;
+  account_id: string;
+  account_key: string;
+  server: string;
+  epoch: string;
+  range: { from_server: number; to_server: number };
+  deals: Array<Record<string, unknown>>;
+  next_cursor: string;
+  has_more: boolean;
+  through_server: number;
+  time_basis: 'broker_server';
+  server_offset_sec: number;
+}
+export interface NoteReviewBars {
+  type: 'bars';
+  request_id: string;
+  symbol: string;
+  tf: string;
+  range: { from_server: number; to_server: number };
+  time_basis: 'broker_server';
+  bars: number[][];
+}
+
 const freshState = (): LocalTerminalState => ({
   phase: 'disconnected', error: '', instance_id: '', account_id: '', server: '', epoch: '',
-  symbol: 'XAUUSD', read_only: true, demo: false, capabilities: [], latency: null, account: {}, tick: null,
+  symbol: 'XAUUSD', read_only: true, demo: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
+  latency: null, account: {}, tick: null,
   positions: [], orders: [], bars: {}, history_ready: false, commands: [], revision: 0,
 });
 const terminalStates = new Set(['completed', 'rejected']);
@@ -59,6 +88,8 @@ export class LocalTerminal {
   private historyQueue: string[] = [];
   private pendingHistory: { id: string; tf: string; timer: number } | null = null;
   private deadlines = new Map<string, number>();
+  private noteReads = new Map<string, { resolve: (page: NoteHistoryPage) => void; reject: (error: Error) => void; cleanup: () => void }>();
+  private reviewReads = new Map<string, { resolve: (page: NoteReviewBars) => void; reject: (error: Error) => void; cleanup: () => void }>();
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -121,6 +152,16 @@ export class LocalTerminal {
     this.heartbeat = null;
     for (const timer of this.deadlines.values()) window.clearTimeout(timer);
     this.deadlines.clear();
+    for (const read of this.noteReads.values()) {
+      read.cleanup();
+      read.reject(new Error('本机连接已结束，笔记同步已暂停。'));
+    }
+    this.noteReads.clear();
+    for (const read of this.reviewReads.values()) {
+      read.cleanup();
+      read.reject(new Error('本机连接已结束，复盘同步已暂停。'));
+    }
+    this.reviewReads.clear();
     const commands = this.state.commands.map((command) => terminalStates.has(command.state) ? command : {
       ...command, state: 'uncertain', error: '连接已结束，执行结果待核实；不会自动重发。',
     });
@@ -160,6 +201,9 @@ export class LocalTerminal {
       symbol: String(message.symbol ?? this.state.symbol), read_only: message.read_only !== false,
       demo: message.demo === true,
       capabilities: Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : this.state.capabilities,
+      product: typeof message.product === 'string' ? message.product : this.state.product,
+      features: Array.isArray(message.features) ? message.features.filter((value: unknown): value is string => typeof value === 'string') : this.state.features,
+      server_offset_sec: typeof message.server_offset_sec === 'number' && Number.isFinite(message.server_offset_sec) ? message.server_offset_sec : this.state.server_offset_sec,
     };
   }
   private receive(message: Record<string, any>) {
@@ -184,11 +228,25 @@ export class LocalTerminal {
     } else if (message.type === 'error') {
       this.update({ error: String(message.error || message.message || 'EA 拒绝了请求。'), ...(this.state.phase === 'confirming' ? { phase: 'pairing' as const } : {}) });
       if (this.pendingHistory && message.request_id === this.pendingHistory.id) this.nextHistory();
+      const read = this.noteReads.get(message.request_id);
+      if (read) {
+        this.noteReads.delete(message.request_id);
+        read.cleanup();
+        read.reject(new Error(String(message.error || message.message || 'EA 历史读取失败。')));
+      }
+      const reviewRead = this.reviewReads.get(message.request_id);
+      if (reviewRead) {
+        this.reviewReads.delete(message.request_id);
+        reviewRead.cleanup();
+        reviewRead.reject(new Error(String(message.code || 'HISTORY_UNAVAILABLE')));
+      }
     } else if (message.type === 'account_changed' || message.type === 'revoked') {
       this.disconnect();
       this.update({ phase: 'error', error: 'MT5 账户或本地授权已改变，请重新配对。' });
     } else if (this.state.phase === 'connected') {
-      if (message.epoch !== undefined && String(message.epoch) !== this.state.epoch) {
+      if ((message.epoch !== undefined && String(message.epoch) !== this.state.epoch)
+        || (message.account_id !== undefined && String(message.account_id) !== this.state.account_id)
+        || (message.server !== undefined && String(message.server) !== this.state.server)) {
         this.disconnect();
         this.update({ phase: 'error', error: 'MT5 会话已改变，请重新配对并核查未完成指令。' });
         return;
@@ -201,10 +259,18 @@ export class LocalTerminal {
           tick: message.tick || this.state.tick,
           read_only: message.read_only === undefined ? this.state.read_only : message.read_only !== false,
           demo: message.demo === undefined ? this.state.demo : message.demo === true,
+          server_offset_sec: typeof message.server_offset_sec === 'number' && Number.isFinite(message.server_offset_sec) ? message.server_offset_sec : this.state.server_offset_sec,
         });
       } else if (message.type === 'tick') {
         this.update({ tick: message.tick || message });
       } else if (message.type === 'bars' && tfKeys.has(message.tf) && Array.isArray(message.bars)) {
+        const reviewRead = this.reviewReads.get(message.request_id);
+        if (reviewRead) {
+          this.reviewReads.delete(message.request_id);
+          reviewRead.cleanup();
+          reviewRead.resolve(message as NoteReviewBars);
+          return;
+        }
         if (!this.pendingHistory || message.request_id !== this.pendingHistory.id || message.tf !== this.pendingHistory.tf) return;
         const rows = message.bars.filter((row: unknown) => Array.isArray(row) && row.length >= 5 && row.slice(0, 5).every((value: unknown) => typeof value === 'number' && Number.isFinite(value)));
         this.update({ bars: { ...this.state.bars, [message.tf]: rows.slice(-3000) } });
@@ -219,6 +285,12 @@ export class LocalTerminal {
         this.update({ bars: { ...this.state.bars, [message.tf]: rows.slice(-3000) } });
       } else if (message.type === 'pong') {
         this.update({ latency: Math.round(performance.now() - this.pingSent) });
+      } else if (message.type === 'history') {
+        const read = this.noteReads.get(message.request_id);
+        if (!read) return;
+        this.noteReads.delete(message.request_id);
+        read.cleanup();
+        read.resolve(message as NoteHistoryPage);
       } else if (message.type === 'command_result') {
         const id = String(message.command_id || '');
         const old = this.state.commands.find((command) => command.command_id === id);
@@ -263,6 +335,69 @@ export class LocalTerminal {
     const command = this.state.commands.find((row) => row.command_id === command_id);
     if (!command || command.account_id !== this.state.account_id || command.server !== this.state.server) throw new Error('请连接这条指令对应的 MT5 账户后查询。');
     this.send({ type: 'command_status', command_id });
+  }
+  requestHistoryPage(range: { from_server: number; to_server: number }, cursor: string, signal: AbortSignal): Promise<NoteHistoryPage> {
+    if (this.state.phase !== 'connected' || !this.state.features.includes('history')) return Promise.reject(new Error('当前 EA 不支持笔记历史同步，请使用 SyncTrade（SyncNote Pro）或独立 SyncNote EA。'));
+    if (!this.state.history_ready) return Promise.reject(new Error('请等待图表初始化完成后再同步笔记。'));
+    if (signal.aborted) return Promise.reject(new Error('笔记同步已取消。'));
+    if (this.noteReads.size || this.reviewReads.size) return Promise.reject(new Error('已有一页笔记历史正在读取。'));
+    const id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const cancel = () => {
+        const read = this.noteReads.get(id);
+        if (!read) return;
+        this.noteReads.delete(id);
+        read.cleanup();
+        reject(new Error('笔记同步已取消。'));
+      };
+      const timer = window.setTimeout(() => {
+        const read = this.noteReads.get(id);
+        if (!read) return;
+        this.noteReads.delete(id);
+        read.cleanup();
+        reject(new Error('读取本机交易历史超时，可稍后安全重试历史同步。'));
+      }, 30000);
+      const cleanup = () => { window.clearTimeout(timer); signal.removeEventListener('abort', cancel); };
+      this.noteReads.set(id, { resolve, reject, cleanup });
+      signal.addEventListener('abort', cancel, { once: true });
+      try { this.send({ type: 'history', request_id: id, from: range.from_server, to: range.to_server, cursor, limit: 100 }); }
+      catch (error) {
+        this.noteReads.delete(id);
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+  requestReviewBars(symbol: string, tf: string, range: { from_server: number; to_server: number }, signal: AbortSignal): Promise<NoteReviewBars> {
+    if (this.state.phase !== 'connected' || !this.state.features.includes('history') || !this.state.history_ready) return Promise.reject(new Error('本机历史读取尚未就绪。'));
+    if (signal.aborted) return Promise.reject(new Error('复盘同步已取消。'));
+    if (this.noteReads.size || this.reviewReads.size) return Promise.reject(new Error('已有笔记历史读取任务。'));
+    const id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const cancel = () => {
+        const read = this.reviewReads.get(id);
+        if (!read) return;
+        this.reviewReads.delete(id);
+        read.cleanup();
+        reject(new Error('复盘同步已取消。'));
+      };
+      const timer = window.setTimeout(() => {
+        const read = this.reviewReads.get(id);
+        if (!read) return;
+        this.reviewReads.delete(id);
+        read.cleanup();
+        reject(new Error('HISTORY_TIMEOUT'));
+      }, 30000);
+      const cleanup = () => { window.clearTimeout(timer); signal.removeEventListener('abort', cancel); };
+      this.reviewReads.set(id, { resolve, reject, cleanup });
+      signal.addEventListener('abort', cancel, { once: true });
+      try { this.send({ type: 'bars', request_id: id, symbol, tf, from_server: range.from_server, to_server: range.to_server, limit: 2000 }); }
+      catch (error) {
+        this.reviewReads.delete(id);
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 }
 

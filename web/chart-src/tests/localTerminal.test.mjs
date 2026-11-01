@@ -162,3 +162,42 @@ test('command expiry uses the EA clock sample and the same request keeps its ID'
   assert.equal(socket.sent.at(-1).command_id, id);
   assert.ok(Math.abs(socket.sent.at(-1).expires_at_ms - (clock + 10000)) < 100);
 });
+
+test('note history reads use broker ranges and cancel without issuing any trading command', async () => {
+  const { client, connect } = fixture();
+  const socket = connect('1001', { features: ['history'], product: 'SyncTrade', server_offset_sec: 10800 });
+  for (let index = 0; index < 4; index += 1) {
+    const request = socket.sent.at(-1);
+    socket.emit({ type: 'bars', request_id: request.request_id, tf: request.tf, bars: [[100, 1, 2, 1, 2]] });
+  }
+  const controller = new AbortController();
+  const read = client.requestHistoryPage({ from_server: 1700000000, to_server: 1700100000 }, 'scan-cursor', controller.signal);
+  const request = socket.sent.at(-1);
+  assert.equal(request.type, 'history');
+  assert.equal(request.from, 1700000000);
+  assert.equal(request.to, 1700100000);
+  assert.equal(request.cursor, 'scan-cursor');
+  assert.equal(request.limit, 100);
+  assert.equal(request.token, 'test-session-only');
+  controller.abort();
+  await assert.rejects(read, /取消/);
+  socket.emit({ type: 'history', request_id: request.request_id, deals: [{ deal_ticket: '1' }] });
+  assert.equal(socket.sent.filter((message) => message.type === 'command').length, 0);
+});
+
+test('review range bars are returned to the note job without overwriting live-chart UTC cache', async () => {
+  const { client, connect } = fixture();
+  const socket = connect('1001', { features: ['history'], product: 'SyncTrade' });
+  for (let index = 0; index < 4; index += 1) {
+    const request = socket.sent.at(-1);
+    socket.emit({ type: 'bars', request_id: request.request_id, tf: request.tf, bars: [[100, 1, 2, 1, 2]] });
+  }
+  const controller = new AbortController();
+  const range = { from_server: 1700000000, to_server: 1700100000 };
+  const read = client.requestReviewBars('EURUSD', '1m', range, controller.signal);
+  const request = socket.sent.at(-1);
+  socket.emit({ type: 'bars', request_id: request.request_id, symbol: 'EURUSD', tf: '1m', range, time_basis: 'broker_server', bars: [[1700000000, 1, 2, 1, 2]] });
+  const page = await read;
+  assert.equal(page.bars[0][0], 1700000000);
+  assert.equal(client.getSnapshot().bars['1m'][0][0], 100);
+});

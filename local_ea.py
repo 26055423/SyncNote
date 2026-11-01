@@ -3,7 +3,15 @@ import hashlib,json,re,zipfile
 from io import BytesIO
 from pathlib import Path
 
-def source_package(root):
+PRODUCTS={
+ 'legacy':('SyncNoteLocal','SyncNoteLocal.mq5',('LOCAL_README.md','LOCAL_PROTOCOL.md')),
+ 'syncnote':('SyncNote','SyncNote.mq5',('SyncNote_README.md','SYNCNOTE_PROTOCOL.md')),
+ 'synctrade':('SyncTrade','SyncTrade.mq5',('SyncTrade_README.md','SYNCNOTE_PROTOCOL.md','LOCAL_PROTOCOL.md')),
+}
+
+def source_package(root,product='legacy'):
+ if product not in PRODUCTS:raise ValueError('Unknown EA product')
+ folder,entry,docs=PRODUCTS[product]
  base=(Path(root)/'bridge').resolve()
  files={}
  def collect(relative):
@@ -18,15 +26,18 @@ def source_package(root):
   source=body.decode('utf-8-sig')
   for include in re.findall(r'^\s*#include\s+"([^"\r\n]+)"',source,re.M):
    collect((path.parent/include).relative_to(base))
- collect(Path('SyncNoteLocal.mq5'))
- for name in ('LOCAL_README.md','LOCAL_PROTOCOL.md'):
+ collect(Path(entry))
+ if product=='syncnote':
+  for name,body in files.items():
+   if re.search(r'^\s*#import\b|\b(?:OrderSend|OrderSendAsync|CTrade|SocketCreate)\s*\(',body.decode('utf-8-sig'),re.M):raise ValueError('SyncNote must remain read-only without DLL or trade execution dependencies')
+ for name in docs:
   files[name]=(base/name).read_bytes()
- manifest={'format':1,'entry':'SyncNoteLocal.mq5','files':{name:hashlib.sha256(body).hexdigest() for name,body in sorted(files.items())}}
+ manifest={'format':1,'product':folder,'entry':entry,'files':{name:hashlib.sha256(body).hexdigest() for name,body in sorted(files.items())}}
  files['SOURCE_MANIFEST.json']=(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n').encode('utf-8')
  output=BytesIO()
  with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as archive:
   for name,body in sorted(files.items()):
-   info=zipfile.ZipInfo('SyncNoteLocal/'+name,date_time=(2026,10,30,0,0,0))
+   info=zipfile.ZipInfo(folder+'/'+name,date_time=(2026,11,1,0,0,0))
    info.compress_type=zipfile.ZIP_DEFLATED
    archive.writestr(info,body)
  return output.getvalue()

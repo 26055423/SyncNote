@@ -64,8 +64,11 @@ def progressive_login(handler,db,data,path,pw_ok):
   network,agent_hash=device_fingerprint(ip,agent)
   if not row or row['expires']<now or row['attempts']>=5 or row['network_hash']!=network or row['agent_hash']!=agent_hash:return 401,{'error':'验证已过期，请重新登录'},None
   uid=row['user_id'];db.execute('UPDATE login_pending SET attempts=attempts+1 WHERE token_hash=?',(key,))
+  u=db.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone()
+  # 管理员锁定必须拦住认证本身，而不是只拦住认证之后的请求。
+  if not u or u['locked']:return 403,{'error':'账号已被停用，请联系管理员'},None
   if not verify_otp(db,uid,data.get('otp','')):return 401,{'error':'动态码不正确或已使用'},None
-  db.execute('DELETE FROM login_pending WHERE token_hash=?',(key,));u=db.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone();cookies=[handler.session(db,uid)]
+  db.execute('DELETE FROM login_pending WHERE token_hash=?',(key,));cookies=[handler.session(db,uid)]
   if True:  # Fresh MFA establishes the standalone 30-day device trust.
    token=trust(db,uid,ip,agent);cookies.append(device_cookie(token))
   return 200,{'ok':True,'user':{k:u[k] for k in ('id','username','nickname','avatar','bio','onboarding_step')}},cookies
@@ -80,6 +83,8 @@ def progressive_login(handler,db,data,path,pw_ok):
  if not u or not pw_ok(data.get('password'),u['password']):
   db.execute('INSERT OR REPLACE INTO login_failures VALUES(?,?)',(account,now));return 401,{'error':'账号或密码不正确','challenge_required':True},None
  db.execute('DELETE FROM login_failures WHERE account=?',(account,));uid=u['id']
+ # 锁定判定放在密码校验之后，避免向猜密码的人泄露账号状态。
+ if u['locked']:return 403,{'error':'账号已被停用，请联系管理员'},None
  from http.cookies import SimpleCookie
  browser=SimpleCookie();browser.load(handler.headers.get('Cookie',''));device=browser.get(DEVICE_COOKIE)
  mfa=db.execute('SELECT enabled FROM account_mfa WHERE user_id=?',(uid,)).fetchone()

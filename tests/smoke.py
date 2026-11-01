@@ -2,6 +2,7 @@
 import hashlib,http.cookiejar,io,json,os,secrets,sqlite3,subprocess,sys,tempfile,urllib.request,urllib.error,zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT))
 count=0
 
 def ensure(value,message):
@@ -12,8 +13,9 @@ def ensure(value,message):
 class Client:
  def __init__(self,base):
   self.base=base;self.opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
- def request(self,path,data=None,status=200,origin=None):
+ def request(self,path,data=None,status=200,origin=None,extra=None):
   headers={'Content-Type':'application/json','Origin':origin or self.base}
+  if extra:headers.update(extra)
   req=urllib.request.Request(self.base+path,headers=headers,data=json.dumps(data).encode() if data is not None else None)
   try:r=self.opener.open(req,timeout=15)
   except urllib.error.HTTPError as error:r=error
@@ -34,6 +36,13 @@ def main():
    db=Path(folder)/'board.sqlite3'
    with sqlite3.connect(db) as conn:ensure(conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]==1,'only freshly initialized admin')
    ensure(anon.request('/api/health')['ok'],'health')
+   # 空串必须等价于“没配置”：否则所有客户端都会塌缩成代理自己的地址，限流桶变成全局共享。
+   import client_address
+   os.environ['TRUSTED_PROXY_CIDRS']=''
+   ensure(client_address.resolve_client_ip('127.0.0.1',{'X-Auth-Client':'203.0.113.9'})=='203.0.113.9','empty proxy config falls back to the loopback default')
+   os.environ['TRUSTED_PROXY_CIDRS']='203.0.113.0/24'
+   ensure(client_address.resolve_client_ip('127.0.0.1',{'X-Auth-Client':'203.0.113.9'})=='127.0.0.1','untrusted peer cannot spoof a client ip')
+   os.environ.pop('TRUSTED_PROXY_CIDRS',None)
    for path in ('/api/state','/api/profile','/api/history','/api/invite'):anon.request(path,status=401)
    for path in ('/login','/register','/style.css','/app.js','/downloads/SyncNoteSync.mq5','/local-ea','/local-ea.css'):ensure(len(anon.request(path))>0,'static content '+path)
    with zipfile.ZipFile(io.BytesIO(anon.request('/downloads/syncnote-local.zip'))) as archive:
@@ -103,17 +112,70 @@ def main():
    ensure(bob.request('/api/reviews/inbox')['unseen']==0,'unseen cleared')
    bob.request('/api/chart/entry?person='+a['id']+'&ticket=fixture-1',status=403)
    alice.request('/api/chart/entry?share=999999',status=404)
-   for client in (alice,bob):
-    client.request('/api/mt5/token',{})
+   alice_token=alice.request('/api/mt5/token',{})['token']
+   bob_token=bob.request('/api/mt5/token',{})['token']
    people=admin.request('/api/admin/users')['users']
    ensure(any(row.get('locked')==0 for row in people),'users start unlocked')
    bob_id=[row['id'] for row in people if row['username']=='bb'][0]
    admin.request('/api/admin/users/lock',{'id':bob_id,'locked':True})
    ensure([row for row in admin.request('/api/admin/users')['users'] if row['id']==bob_id][0]['locked']==1,'lock persisted')
    bob.request('/api/me',status=401)
+   # 锁定必须同时拦住认证本身和 EA 上报，而不只是拦住已有会话。
+   bob.request('/api/login',{'username':'bb','password':password},status=403)
+   bearer={'Authorization':'Bearer '+bob_token}
+   bob.request('/api/mt5/status',status=403,extra=bearer)
+   bob.request('/api/mt5/live',{'bars':{'1m':[[1700000000,1,2,0.5,1.5]]}},status=403,extra=bearer)
+   bob.request('/api/snapshot',{'snapshot':{'balance':1.0,'equity':1.0,'currency':'USD','positions':[],'history':[]},'events':[]},status=403,extra=bearer)
    admin.request('/api/admin/users/lock',{'id':bob_id,'locked':False})
    alice.request('/api/admin/users/lock',{'id':bob_id,'locked':True},status=404)
    admin.request('/api/admin/users/lock',{'id':'nope','locked':True},status=404)
+   # ---- 只读历史通道：SyncNote（EA 直传）与 SyncTrade（浏览器代传）共用同一套入库逻辑 ----
+   history_bearer={'Authorization':'Bearer '+alice_token}
+   server_name='Synthetic-Demo';mt5_account='90012345'
+   history_key=hashlib.sha256((server_name+'\n'+mt5_account).encode()).hexdigest()
+   window_from=1700000000;window_to=window_from+3600;anchor_ms=window_from*1000+1000
+   def raw_deal(ticket,offset_ms,entry,price,ttype,profit=0.0):
+    return {'deal_ticket':str(ticket),'order_ticket':'5001','position_id':'5001','time_msc_server':anchor_ms+offset_ms,
+            'type':ttype,'entry':entry,'symbol':'XAUUSD','volume':0.1,'price':price,'profit':profit,
+            'commission':0.0,'swap':0.0,'fee':0.0,'magic':'0','reason':0,'comment':'','external_id':'',
+            'position_first_deal_ticket':'501','position_first_time_msc_server':anchor_ms,'position_context_status':'available'}
+   history_deals=[raw_deal(501,0,0,2400.0,0),raw_deal(502,60000,1,2410.0,1,100.0)]
+   def history_body(batch,deals=None,**extra):
+    body={'schema':'syncnote-history.v1','account_key':history_key,'account':mt5_account,'server':server_name,
+          'currency':'USD','batch_id':batch,'server_offset_sec':10800,
+          'clock':{'server':window_to,'utc':window_to-10800},'time_basis':'broker_server',
+          'range':{'from_server':window_from,'to_server':window_to},'deals':history_deals if deals is None else deals,
+          'checkpoint':{'through_server':window_to,'last_deal_ticket':'502','window_complete':True,'next_cursor':''}}
+    body.update(extra);return body
+   ack=alice.request('/api/mt5/history-sync',history_body('batch-0001'),extra=history_bearer)
+   ensure(ack['ok'] and ack['summary_status']=='complete','history batch accepted without warnings')
+   ensure(ack['closed_trades_updated']==1,'closed trade is derived server-side from raw deals')
+   job=alice.request('/api/mt5/history-job',extra=history_bearer)['review_job']
+   ensure(bool(job) and job['ticket'].startswith('deal:'),'derived trade queues a review chart job')
+   replay=alice.request('/api/mt5/history-sync',history_body('batch-0001'),extra=history_bearer)
+   ensure(replay['changed']==ack['changed'] and replay['closed_trades_updated']==ack['closed_trades_updated'],'replaying an acknowledged batch is idempotent')
+   patched=[raw_deal(501,0,0,2401.0,0),raw_deal(502,60000,1,2410.0,1,100.0)]
+   alice.request('/api/mt5/history-sync',history_body('batch-0001',patched),status=409,extra=history_bearer)
+   alice.request('/api/mt5/history-sync',history_body('batch-0002',balance=1.0),status=400,extra=history_bearer)
+   tampered=history_body('batch-0003');tampered['account_key']='0'*64
+   alice.request('/api/mt5/history-sync',tampered,status=400,extra=history_bearer)
+   anon.request('/api/mt5/history-sync',history_body('batch-0004'),status=401)
+   ensure(any(str(row.get('ticket','')).startswith('deal:') for row in alice.request('/api/history')['history']),'imported trades show up in the site history')
+   ensure(alice.request('/api/profile')['mt5']['mode']=='history','profile reports history-only mode')
+   imported=history_body('batch-0005');imported['website_user_id']=a['id']
+   ensure(alice.request('/api/mt5/history-import',imported)['ok'],'browser-proxied import uses the same ingest')
+   wrong_owner=history_body('batch-0006');wrong_owner['website_user_id']='somebody-else'
+   alice.request('/api/mt5/history-import',wrong_owner,status=409)
+   # ---- 两个源码包：同一套打包器，SyncNote 必须在打包时就被证明没有 DLL / 交易 / socket ----
+   for path,product in (('/downloads/syncnote.zip','SyncNote'),('/downloads/synctrade.zip','SyncTrade')):
+    with zipfile.ZipFile(io.BytesIO(anon.request(path))) as archive:
+     manifest=json.loads(archive.read(product+'/SOURCE_MANIFEST.json'))
+     ensure(manifest['product']==product and manifest['entry']==product+'.mq5','packaged '+product+' manifest')
+     ensure(all(hashlib.sha256(archive.read(product+'/'+name)).hexdigest()==digest for name,digest in manifest['files'].items()),product+' manifest matches package')
+     ensure(any(name.endswith('SYNCNOTE_PROTOCOL.md') for name in archive.namelist()),product+' ships the history protocol')
+   with zipfile.ZipFile(io.BytesIO(anon.request('/downloads/syncnote.zip'))) as archive:
+    note_source=b''.join(archive.read(name) for name in archive.namelist() if name.endswith(('.mq5','.mqh')))
+    ensure(not any(token in note_source for token in (b'#import',b'OrderSend',b'CTrade',b'SocketCreate')),'SyncNote package stays free of DLL, trading and socket imports')
    alice.request('/api/logout',{});alice.request('/api/me',status=401)
    print(json.dumps({'passed':True,'checks':count,'production_data_used':False,'database':'temporary-generated-only'}))
   finally:

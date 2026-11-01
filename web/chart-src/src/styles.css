@@ -226,6 +226,21 @@ button { font: inherit; cursor: pointer; }
   position: absolute; top: 3px; right: 4px; background: var(--bad); color: var(--dot-ink);
   font-size: 10px; font-weight: 700; border-radius: 999px; padding: 0 4px; font-style: normal;
 }
+/* 有新消息：信封轻微呼吸 + 角标闪动；打开「消息」标记已读后自动停。 */
+@keyframes rail-ping {
+  0%, 100% { background: transparent; }
+  50% { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+}
+@keyframes dot-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .4; transform: scale(.82); }
+}
+.rail-icons button.has-new { animation: rail-ping 2.4s ease-in-out infinite; }
+.rail-icons button.has-new .dot { animation: dot-blink 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .rail-icons button.has-new { animation: none; background: var(--accent-soft); }
+  .rail-icons button.has-new .dot { animation: none; }
+}
 .rail-body { flex: 1; min-width: 0; overflow: auto; }
 
 .pane { padding: 12px; display: flex; flex-direction: column; gap: 10px; }

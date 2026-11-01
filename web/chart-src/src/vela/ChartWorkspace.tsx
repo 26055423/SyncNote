@@ -9,7 +9,7 @@ import { resolveZone } from '../lib/time';
  * - 数据：ReviewProvider（这笔交易已同步的四组 K 线）
  * - 画线：Vela 自带用户绘图，`getState()` 的状态文档就是存档格式
  * - 定位：`?t=<UTC 秒>` → 每个格子把视窗挪到那根 K 线附近
- * - 只读：作业（别人发来的复盘）隐藏绘图工具栏并锁住所有画线
+ * - 只读：消息里的复盘（别人发来的）隐藏绘图工具栏并锁住所有画线
  * - 外观：主题 / 显示时区 / 图表语言跟着「设置」实时变（`setTheme`/`setTimezone`/`setLocale`）
  */
 

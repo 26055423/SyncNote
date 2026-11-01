@@ -12,6 +12,7 @@ import time
 
 _cache = {}
 _lock = threading.Lock()
+DEFAULT_PROXY_CIDRS = '127.0.0.1/32,::1/128'
 
 
 def _address(value):
@@ -55,9 +56,12 @@ def resolve_client_ip(peer, headers, *, proxy_cidrs=None, proxy_hosts=None, tunn
     if address is None:
         return peer
     if proxy_cidrs is None:
-        proxy_cidrs = os.environ.get('TRUSTED_PROXY_CIDRS', '127.0.0.1/32,::1/128')
+        # An empty environment variable must mean "not configured", not "trust nothing":
+        # otherwise a deployment that runs `TRUSTED_PROXY_CIDRS=` collapses every client
+        # onto the proxy's own address and the per-IP limits become one global bucket.
+        proxy_cidrs = os.environ.get('TRUSTED_PROXY_CIDRS') or DEFAULT_PROXY_CIDRS
     if proxy_hosts is None:
-        proxy_hosts = os.environ.get('TRUSTED_PROXY_HOSTS', '')
+        proxy_hosts = os.environ.get('TRUSTED_PROXY_HOSTS') or ''
     if tunnel_cidrs is None:
         tunnel_cidrs = os.environ.get('TRUSTED_TUNNEL_CIDRS', '')
     if isinstance(proxy_hosts, str):

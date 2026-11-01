@@ -35,6 +35,8 @@ def utc_trade(trade, clock=None):
     elif clock and clock.get('offset') is not None:
         instant=raw-clock['offset']
         if not clock['observed_from']-10<=instant<=clock['observed_to']+10:return result
+    elif isinstance(result.get('history_offset_seconds'),int) and not isinstance(result['history_offset_seconds'],bool) and -43200<=result['history_offset_seconds']<=50400:
+        instant=raw-result['history_offset_seconds'];estimated=True
     else:return result
     result.update(closed=instant,time_verified=not estimated,time_estimated=estimated,time_basis='utc')
     return result

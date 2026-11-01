@@ -10,6 +10,7 @@ import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
+import { localHistorySync } from './localHistorySync';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -239,6 +240,16 @@ export default function App() {
   useEffect(() => () => localTerminal.disconnect(), []);
 
   useEffect(() => {
+    localHistorySync.bindUser(board?.user.id || '');
+  }, [board?.user.id]);
+
+  useEffect(() => {
+    const pause = () => localHistorySync.stop('网页已关闭，笔记同步已暂停。');
+    window.addEventListener('pagehide', pause);
+    return () => { window.removeEventListener('pagehide', pause); pause(); };
+  }, []);
+
+  useEffect(() => {
     if (localConnected) return;
     let alive = true;
     const tick = async () => {
@@ -291,13 +302,27 @@ export default function App() {
     };
   }, [mode, liveBars, localConnected]);
 
-  /* ------------------------------------------------- 会话：作业 / 关注 */
+  /* ------------------------------------------------- 会话：消息 / 关注 */
 
   useEffect(() => {
     if (!board) return;
     void api<{ items: ShareRow[] }>('/api/reviews/inbox').then((r) => setInbox(r.items)).catch(() => undefined);
     void api<{ following: Array<{ id: string; name: string }> }>('/api/profile').then((r) => setFollowing(r.following)).catch(() => undefined);
   }, [board?.user.id]);
+
+  /** 打开「消息」就把未读标成已读：角标和小铃不再闪，下次刷新也不会再算未读。 */
+  useEffect(() => {
+    if (tab !== 'inbox') return;
+    const unread = inbox.filter((row) => !row.seen).map((row) => row.id);
+    if (!unread.length) return;
+    let alive = true;
+    void Promise.all(unread.map((id) => api('/api/reviews/share/seen', { id }).catch(() => undefined))).then(() => {
+      if (alive) setInbox((rows) => rows.map((row) => (unread.includes(row.id) ? { ...row, seen: true } : row)));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [tab, inbox]);
 
   useEffect(() => {
     const person = target?.person;
@@ -558,20 +583,23 @@ export default function App() {
                 ['social', '💬', '交流'],
                 ['friends', '👥', '好友'],
                 ['review', '📝', '复盘'],
-                ['inbox', '📬', '作业'],
-              ] as Array<[Tab, string, string]>).map(([key, icon, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={tab === key ? 'is-active' : ''}
-                  title={label}
-                  aria-label={label}
-                  onClick={() => setTab(key)}
-                >
-                  {icon}
-                  {key === 'inbox' && unseen ? <i className="dot">{unseen}</i> : null}
-                </button>
-              ))}
+                ['inbox', '✉', '消息'],
+              ] as Array<[Tab, string, string]>).map(([key, icon, label]) => {
+                const fresh = key === 'inbox' && unseen > 0;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`${tab === key ? 'is-active' : ''} ${fresh ? 'has-new' : ''}`.trim()}
+                    title={fresh ? `${label}（${unseen} 条未读）` : label}
+                    aria-label={fresh ? `${label}，${unseen} 条未读` : label}
+                    onClick={() => setTab(key)}
+                  >
+                    {icon}
+                    {fresh ? <i className="dot">{unseen}</i> : null}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="rail-body">
@@ -724,7 +752,7 @@ export default function App() {
 
               {tab === 'inbox' ? (
                 <div className="pane">
-                  <h3>作业 <small>{inbox.length}</small></h3>
+                  <h3>消息 <small>{inbox.length}</small></h3>
                   {inbox.length ? inbox.map((row) => (
                     <button
                       key={row.id}
@@ -736,7 +764,7 @@ export default function App() {
                       <span className="dim">{row.trade ? `净盈亏 ${money(row.trade.profit)}` : '交易记录未同步'} · {stamp(row.created)}</span>
                       {row.message ? <em>{row.message}</em> : null}
                     </button>
-                  )) : <p className="dim">还没有收到作业。好友在复盘里点「发给好友」后会出现在这里。</p>}
+                  )) : <p className="dim">还没有收到消息。好友在复盘里点「发给好友」后会出现在这里。</p>}
                 </div>
               ) : null}
             </div>

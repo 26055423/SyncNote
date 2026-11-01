@@ -3,6 +3,7 @@ import { money, quotePrice } from './api';
 import { localTerminal, type LocalTerminalState } from './localTerminal';
 import { OrderTicket } from './trade/OrderTicket';
 import { submitMarketOrder } from './trade/localSubmit';
+import { HistorySyncPanel } from './HistorySyncPanel';
 
 const phaseText = { disconnected: '尚未连接', connecting: '连接中…', pairing: '等待配对码', confirming: '请在 MT5 图表允许本次连接', connected: '本机已连接', error: '连接不可用' };
 const commandText: Record<string, string> = { sending: '正在发送', received: 'EA 已接收', submitted: '已提交，等待回报', completed: '执行完成', rejected: '已拒绝', uncertain: '结果待核实', not_found: 'EA 未找到记录，仍需核查' };
@@ -34,7 +35,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   };
 
   return <section className="local-terminal">
-    <div className="local-heading"><h3>本机 MT5</h3><span className={`link-dot ${connected ? 'on' : 'off'}`}>{phaseText[state.phase]}</span></div>
+    <div className="local-heading"><h3>{state.product === 'SyncTrade' ? 'SyncTrade · SyncNote Pro' : '本机 MT5'}</h3><span className={`link-dot ${connected ? 'on' : 'off'}`}>{phaseText[state.phase]}</span></div>
     <p className="dim">MT5 密码留在终端。行情和交易指令直接连接本机 EA。</p>
     <div className="local-buttons">
       {state.phase === 'disconnected' || state.phase === 'error' ? <button className="primary" type="button" onClick={() => perform(() => localTerminal.connect())}>连接本机 MT5</button> : <button className="tool-btn" type="button" onClick={() => { localTerminal.disconnect(); setPrepared(null); setCode(''); }}>断开本机</button>}
@@ -47,6 +48,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
     {state.phase === 'confirming' ? <p className="local-notice">请切换到 MT5，在 EA 图表上点击「允许本次连接」。</p> : null}
     {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || !state.demo ? '只读 · 模拟账户验收阶段' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
     {state.error || error ? <p className="local-error" role="alert">{error || state.error}</p> : null}
+    <HistorySyncPanel terminal={state} />
     <OrderTicket
         account={{ login: state.account_id, balance: state.account?.balance, equity: state.account?.equity, currency: state.account?.currency, leverage: state.account?.leverage }}
         symbol={state.symbol}
