@@ -25,6 +25,10 @@
 | `web/chart-src/src/trade/OrderTicket.tsx` | 市价单票：手数、SL/TP、风险预览、解锁与确认 |
 | `web/chart-src/src/BottomDock.tsx` | 底部「持仓 / 挂单 / 历史」 |
 | `web/chart-src/src/DrawingFavs.tsx` | 顶部画图收藏栏（镜像 Vela 左侧工具栏的收藏） |
+| `web/chart-src/src/SettingsMenu.tsx` | 顶部「设置」：深/浅主题、显示时区、图表语言 |
+| `web/chart-src/src/ui/prefs.ts` | 本机偏好存储（`localStorage.sn-ui.v1`）+ 写 `<html data-theme>` |
+| `web/chart-src/src/lib/time.ts` | 显示时区格式化（`stamp()` 用的就是它），不要再写死 `+8` |
+| `web/chart-src/src/styles.css` | 设计令牌（`:root` 深色 / `:root[data-theme='light']` 亮色） |
 | `web/admin.html` / `web/admin.js` | 管理后台：用户锁定、邀请码生成与导出 |
 | `tools/bridge_push.py` | 本机 WebBridge → 同频 的同步器（成交 + 实时行情） |
 | `bridge/` | WebBridge 全套源码（MT5 EA + 本地 gateway + 协议） |
@@ -49,6 +53,10 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 5. 提交前跑 `python tests/smoke.py`；前端改动至少跑一次 `npm run build`（含 `tsc --noEmit`）。
 6. 不要在仓库里写连接码、管理员密码、`.env`；服务器上的数据在 `/SyncTrade/data/`。
 7. 管理接口一律走 `self.require_admin(u, db)`（管理员身份 + 15 分钟 sudo 窗口），非管理员返回 **404**，不暴露页面存在。
+8. **新样式一律用 `styles.css` 里的 CSS 令牌**（`var(--panel)`/`var(--line)`/…），不要写十六进制颜色：
+   `:root` 是深色、`:root[data-theme='light']` 是亮色，写死颜色就会在亮色主题下留一块深色补丁。
+9. 页面里显示时间一律用 `stamp()`（`lib/time.ts`），它按「设置 → 显示时区」格式化；
+   图表时间轴靠 `ws.setTimezone()`，两边必须同源，否则复盘定位会对不上。
 
 ## 数据源有两种，别混淆
 
@@ -66,3 +74,5 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 - 服务器 SSH 已关闭密码登录（只认密钥）；ufw 未启用（靠云安全组），fail2ban 未安装。
 - 连接码每个用户一条，重新生成会让正在同步的 `bridge_push` / EA 断开。
 - 画图收藏存在浏览器 `localStorage`（`sn-chart-favs`），不跨设备。
+- 主题 / 显示时区 / 图表语言存在浏览器 `localStorage`（`sn-ui.v1`），不跨设备、不上云；默认深色 + `Asia/Shanghai`。
+- 设置只作用于 `/chart` 交易台；`/history`、`/profile` 等页面还是各自的静态页面。

@@ -1,3 +1,5 @@
+import { fmtLocal } from './lib/time';
+
 /** 同频 API 客户端：读请求短重试，写请求不重试，401 统一回登录页。 */
 export async function api<T = any>(path: string, data?: unknown, init?: { keepalive?: boolean }): Promise<T> {
   const writing = data !== undefined;
@@ -37,11 +39,13 @@ export async function api<T = any>(path: string, data?: unknown, init?: { keepal
   throw new Error('请求失败，请稍后重试');
 }
 
-export const BEIJING = 'Asia/Shanghai';
-
+/**
+ * 时间戳 → `2026-11-01 20:38:12`，按「设置 → 显示时区」格式化。
+ * 不要在页面里自己写死时区或调 `toLocaleString`。
+ */
 export function stamp(seconds: number | null | undefined): string {
   if (seconds == null || !Number.isFinite(seconds)) return '时间待校准';
-  return new Date(seconds * 1000).toLocaleString('zh-CN', { timeZone: BEIJING, hour12: false });
+  return fmtLocal(seconds * 1000);
 }
 
 export function money(value: number | null | undefined): string {

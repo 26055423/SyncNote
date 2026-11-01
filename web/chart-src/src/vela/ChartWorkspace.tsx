@@ -1,5 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type ReviewCharts } from './provider';
+import { prefs, usePrefs } from '../ui/prefs';
+import { resolveZone } from '../lib/time';
 
 /**
  * Vela 工作区（多窗格 K 线）在同频里的封装。
@@ -8,7 +10,15 @@ import { ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type ReviewChar
  * - 画线：Vela 自带用户绘图，`getState()` 的状态文档就是存档格式
  * - 定位：`?t=<UTC 秒>` → 每个格子把视窗挪到那根 K 线附近
  * - 只读：作业（别人发来的复盘）隐藏绘图工具栏并锁住所有画线
+ * - 外观：主题 / 显示时区 / 图表语言跟着「设置」实时变（`setTheme`/`setTimezone`/`setLocale`）
  */
+
+/** 开平仓标注在深色/浅色底上的配色（浅色底要更深，否则虚线看不见）。 */
+function markColors(theme: string): { line: string; buy: string; sell: string } {
+  return theme === 'light'
+    ? { line: '#b8862b', buy: '#1f6fd0', sell: '#c0392b' }
+    : { line: '#e2bd77', buy: '#86c7ed', sell: '#e08a8a' };
+}
 
 export interface ChartHandle {
   setLayout(id: string): void;
@@ -73,6 +83,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const markIdsRef = useRef<Set<string>>(new Set());
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   const [ready, setReady] = useState(false);
+  const { theme, timezone, chartLocale } = usePrefs();
+  // 标注是在事件回调里画的，回调闭包拿不到最新的 props，用 ref 兜住当前主题。
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
 
   anchorRef.current = anchorMs;
 
@@ -175,15 +189,17 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
 
         const provider = (props.provider as never) ?? new ReviewProvider(charts, symbol);
         const providerName = props.provider ? (props.providerName || 'live') : 'review';
+        const initial = prefs.getState();
         const ws = new VelaWorkspace(hostRef.current, {
           layout: '4',
           symbol: `${providerName}:${symbol}`,
           timeframe: '15',
           cells: seedCells(timeframes),
           live: Boolean(props.provider),
-          theme: 'dark',
-          locale: 'zh-Hans',
-          timezone: 'Asia/Shanghai',
+          theme: initial.theme,
+          locale: initial.chartLocale,
+          // 表格和 K 线时间轴必须用同一个显示时区，否则「复盘跳到这根 K 线」会对不上。
+          timezone: resolveZone(initial.timezone),
           providers: { [providerName]: () => provider },
           sync: { crosshair: true },
           persist: false,
@@ -237,11 +253,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           if (known && [...known].some((id) => present.has(id))) return;
           const opened = marks.openedAt * 1000;
           const closed = marks.closedAt * 1000;
-          const color = marks.side === 'sell' ? '#e08a8a' : '#86c7ed';
+          const palette = markColors(themeRef.current);
+          const color = marks.side === 'sell' ? palette.sell : palette.buy;
           try {
             const line = api.add('trendline', {
               anchors: [{ time: opened, price: marks.open }, { time: closed, price: marks.close }],
-              style: { lineColor: '#e2bd77', lineWidth: 1, lineStyle: 'dashed' },
+              style: { lineColor: palette.line, lineWidth: 1, lineStyle: 'dashed' },
             });
             const entry = api.add('text', {
               anchors: [{ time: opened, price: marks.open }],
@@ -321,15 +338,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         ws.on?.('layout:changed', ({ layout }: { layout: string }) => {
           onLayout?.(layout);
           ws.cells().forEach(bind);
-        // 轮询到 K 线就绪再标注（每格只标一次），15 秒后放弃。
-        const markTimer = window.setInterval(() => {
-          if (disposed) {
-            window.clearInterval(markTimer);
-            return;
-          }
-          ws.cells().forEach(annotate);
-        }, 400);
-        window.setTimeout(() => window.clearInterval(markTimer), 15000);
         });
         ws.on?.('state:changed', () => {
           try {
@@ -363,6 +371,32 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     };
     // charts 的一次性数据：换交易时整个组件重挂载（key 由上层控制）。
   }, [charts, symbol]);
+
+  // 外观三项跟着「设置」实时切换：主题、显示时区、图表语言。
+  // `ready` 之前 ws 还没建好，等就绪后这套 effect 会再跑一次把初始值补上。
+  useEffect(() => {
+    try {
+      wsRef.current?.setTheme?.(theme);
+    } catch {
+      /* 旧版本没有 setTheme 时忽略 */
+    }
+  }, [theme, ready]);
+
+  useEffect(() => {
+    try {
+      wsRef.current?.setTimezone?.(resolveZone(timezone));
+    } catch {
+      /* ignore */
+    }
+  }, [timezone, ready]);
+
+  useEffect(() => {
+    try {
+      wsRef.current?.setLocale?.(chartLocale);
+    } catch {
+      /* ignore */
+    }
+  }, [chartLocale, ready]);
 
   return (
     <div className="chart-shell">
