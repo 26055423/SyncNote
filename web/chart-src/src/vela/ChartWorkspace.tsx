@@ -460,7 +460,14 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         onTimeframe?.(ws.active?.chart?.market?.timeframe ?? '15');
         onSyncs?.((ws.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>);
         // 首批 K 线落地前 setVisibleRange 会被边界夹住，这里补一次定位。
+        // 再补几拍：静态复盘数据没有 load:end 事件，首帧宽度也可能是 0，
+        // 早跳会被夹到最左边，看起来就像"没跳到开仓"。
         focusAll(ws, anchorRef.current);
+        for (const delay of [80, 240, 600, 1200]) {
+          window.setTimeout(() => {
+            if (!disposed) focusAll(ws, anchorRef.current);
+          }, delay);
+        }
       } catch (error) {
         onError?.(error instanceof Error ? error.message : String(error));
       }
