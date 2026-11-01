@@ -67,10 +67,7 @@ export function SettingsMenu() {
           </div>
 
           <div className="settings-group">
-            <span className="settings-title">
-              显示时区
-              <em className="settings-hint">{systemZone()} · {zoneOffsetLabel(resolved)}</em>
-            </span>
+            <span className="settings-title">显示时区</span>
             <div className="settings-list">
               {ZONES.map((zone) => (
                 <button
@@ -79,12 +76,14 @@ export function SettingsMenu() {
                   className={`settings-opt settings-zone ${timezone === zone.id ? 'is-active' : ''}`}
                   onClick={() => prefs.setTimezone(zone.id)}
                 >
-                  {zone.id === 'auto' ? `自动（跟随系统） · ${systemZone()}` : zone.label}
+                  <span className="settings-zone-label">{zone.id === 'auto' ? `自动（跟随系统） · ${systemZone()}` : zone.label}</span>
                   <em className="settings-offset">{zoneOffsetLabel(zone.id)}</em>
                 </button>
               ))}
             </div>
-            <span className="settings-foot">成交时间、复盘时间与 K 线时间轴都用这个时区。</span>
+            <span className="settings-foot">
+              本机系统时区 {systemZone()} · 当前偏移 {zoneOffsetLabel(resolved)}。成交时间、复盘时间与 K 线时间轴都用这个时区。
+            </span>
           </div>
 
           <div className="settings-group">
