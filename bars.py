@@ -426,3 +426,28 @@ def mark_coverage(db, source, symbol, tf, start, end, state='have', now=None):
   if not tf:
     raise BarsError('周期不正确')
   _apply_coverage(db, source, symbol, tf, int(start), int(end), state, now)
+
+def latest(db, source, symbol, tf, limit=4000, now=None):
+  """取这条轨最新的 N 根（行情页用）：不按“前后几天”切，按根数，多少数据就显示多少。"""
+  now = time.time() if now is None else now
+  tf = normalize_tf(tf)
+  if not tf:
+    raise BarsError('周期不正确')
+  limit = max(50, min(20000, int(limit)))
+  period = tf_seconds(tf)
+  rows = db.execute(
+    'SELECT t,o,h,l,c,v FROM bars WHERE source=? AND symbol=? AND tf=? AND t+?<=? ORDER BY t DESC LIMIT ?',
+    (source, symbol, tf, period, now, limit),
+  ).fetchall()
+  bars = [[r['t'], r['o'], r['h'], r['l'], r['c'], r['v']] for r in reversed(rows)]
+  return {
+    'schema': SCHEMA,
+    'source': source,
+    'symbol': symbol,
+    'tf': tf,
+    'bars': bars,
+    'count': len(bars),
+    'from_server': bars[0][0] if bars else None,
+    'to_server': bars[-1][0] if bars else None,
+    'now': now,
+  }

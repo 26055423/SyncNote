@@ -73,6 +73,14 @@ type Tab = 'trade' | 'friends' | 'review' | 'inbox';
 
 /* 复盘图一次抓多宽的行情：按锚点往前/往后取多少天（每个基础周期各自独立）。 */
 const REVIEW_BASE_TFS = ['M1', 'M5', 'M15', 'H1'] as const;
+/* 行情页一次取多少根（最新 N 根）：这条轨有多少就给多少，按根数而不是按天数。 */
+const MARKET_LIMIT: Record<(typeof REVIEW_BASE_TFS)[number], number> = {
+  M1: 6000,
+  M5: 6000,
+  M15: 6000,
+  H1: 6000,
+};
+
 const REVIEW_WINDOW: Record<(typeof REVIEW_BASE_TFS)[number], [number, number]> = {
   M1: [2, 0.5],
   M5: [10, 2],
@@ -316,17 +324,16 @@ export default function App() {
 
   useEffect(() => {
     // 既没有本机 EA、也没有 /api/live 缓存时，退回自己券商轨的历史 K 线。
+    // 按“最新 N 根”取：这条轨里有 7 年数据，就有多少显示多少，不按天数切。
     if (mode !== 'live' || liveBars || localConnected) return;
     let alive = true;
     void (async () => {
-      const now = Math.round(Date.now() / 1000);
       const out: ReviewCharts = {};
       let info: { server: string; last: number | null } | null = null;
       await Promise.all(REVIEW_BASE_TFS.map(async (tf) => {
-        const [before, after] = REVIEW_WINDOW[tf];
         try {
           const data = await api<{ bars: number[][]; feed?: { server?: string }; last_bar?: number | null }>(
-            `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${tf}&from=${now - before * 86400}&to=${now + after * 86400}`,
+            `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${tf}&limit=${MARKET_LIMIT[tf]}`,
           );
           if (data?.bars?.length) out[tf] = data.bars;
           if (data?.feed?.server) info = { server: data.feed.server, last: data.last_bar ?? null };
