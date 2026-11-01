@@ -249,6 +249,12 @@ GET /api/chart/bars?person=<uid>&ticket=108245&tf=M15&from=…&to=…
 - 返回：`{bars:[[t,o,h,l,c,v],…], covered:[[from,to],…], missing:[[from,to],…], feed_label:"Broker-Demo · 90012345"}`；
 - `feed_label` 只给显示用（“数据：分享者的行情”），不回 `account_key` 原文以外的任何凭据。
 
+### 7.3b 新增：`GET /api/market/bars`
+
+「行情」页没有具体交易时用：取**当前登录用户自己那条券商轨**（`feeds`）的 K 线。
+没有本机实时推送、`/api/live` 也是空的时候，前端的行情页会退到这里，避免整页空白；
+返回里带 `feed`（券商/账户标签）与 `last_bar`，前端据此显示「历史行情 · 最新 …」角标。
+
 ### 7.3 新增：`GET /api/chart/tracks`
 
 给前端「数据轨道」用：一个券商服务器一条轨，返回每条轨在给定窗口内的覆盖段与覆盖率，

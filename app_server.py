@@ -331,6 +331,21 @@ class Handler(BaseHTTPRequestHandler):
                         payload=bars.tracks(db,str(trade.get('symbol') or ''),source,start,end)
                         payload['active_source']=source
                         return self.reply(payload)
+                    if path=='/api/market/bars':
+                        # 「行情」页没有具体交易时，用当前用户自己那条券商轨；
+                        # 没有本机实时推送就靠它兜底，避免整个页面空白。
+                        feed=bars.feed_of(db,uid)
+                        if not feed:raise Error('还没有绑定 MT5 账户，先连接一次 EA',404)
+                        symbol=str(q.get('symbol',['XAUUSD'])[0] or 'XAUUSD')[:64]
+                        try:
+                            start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
+                        except ValueError:raise Error('时间范围不正确')
+                        if end<=start:raise Error('时间范围不正确')
+                        payload=bars.read(db,feed['source'],symbol,str(q.get('tf',['M15'])[0]),start,end,time.time())
+                        last=db.execute('SELECT max(t) FROM bars WHERE source=? AND symbol=? AND tf=?',(feed['source'],symbol,payload['tf'])).fetchone()[0]
+                        payload['feed']={'source':feed['source'],'server':feed['server'],'account':feed['account']}
+                        payload['last_bar']=last
+                        return self.reply(payload)
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))

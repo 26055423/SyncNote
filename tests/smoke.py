@@ -206,6 +206,9 @@ def main():
    conn.commit();conn.close()
    legacy=alice.request('/api/chart/bars?person='+a['id']+'&ticket=fixture-1&tf=M1&from='+str(window_from)+'&to='+str(window_to))
    ensure(legacy['source']=='srv:'+server_name,'trades without a server fall back to their owner feed')
+   market=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&from='+str(window_from)+'&to='+str(window_to))
+   ensure(market['source']=='srv:'+server_name and market['feed']['account']==mt5_account,'market bars use the owner feed')
+   anon.request('/api/market/bars?tf=M1&from=1&to=2',status=401)
    # ---- 两个源码包：同一套打包器，SyncNote 必须在打包时就被证明没有 DLL / 交易 / socket ----
    for path,product in (('/downloads/syncnote.zip','SyncNote'),('/downloads/synctrade.zip','SyncTrade')):
     with zipfile.ZipFile(io.BytesIO(anon.request(path))) as archive:

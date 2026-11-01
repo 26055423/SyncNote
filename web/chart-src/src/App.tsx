@@ -160,6 +160,9 @@ export default function App() {
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') || params.get('share') ? 'review' : 'live'));
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
+  /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
+  const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
+  const [marketInfo, setMarketInfo] = useState<{ server: string; last: number | null } | null>(null);
   const liveRef = useRef<ReviewCharts>({});
   const liveListeners = useRef(new Set<() => void>());
   const liveSymbol = localConnected ? local.symbol : 'XAUUSD';
@@ -310,6 +313,35 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, [mode, localConnected]);
+
+  useEffect(() => {
+    // 既没有本机 EA、也没有 /api/live 缓存时，退回自己券商轨的历史 K 线。
+    if (mode !== 'live' || liveBars || localConnected) return;
+    let alive = true;
+    void (async () => {
+      const now = Math.round(Date.now() / 1000);
+      const out: ReviewCharts = {};
+      let info: { server: string; last: number | null } | null = null;
+      await Promise.all(REVIEW_BASE_TFS.map(async (tf) => {
+        const [before, after] = REVIEW_WINDOW[tf];
+        try {
+          const data = await api<{ bars: number[][]; feed?: { server?: string }; last_bar?: number | null }>(
+            `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${tf}&from=${now - before * 86400}&to=${now + after * 86400}`,
+          );
+          if (data?.bars?.length) out[tf] = data.bars;
+          if (data?.feed?.server) info = { server: data.feed.server, last: data.last_bar ?? null };
+        } catch {
+          /* 还没绑定账户或没有这段数据：保持原来的空态提示 */
+        }
+      }));
+      if (!alive) return;
+      setMarketSeries(Object.keys(out).length ? out : null);
+      setMarketInfo(info);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [mode, liveBars, localConnected, liveSymbol]);
 
   useEffect(() => {
     if (localConnected || mode !== 'live' || liveBars) return;
@@ -470,6 +502,13 @@ export default function App() {
     const last = rows[rows.length - 1];
     return last ? last[0] * 1000 : Date.now();
   })();
+  /** 行情页的数据源：优先本机/云端的实时推送，没有就用自己券商轨的历史 K 线。 */
+  const liveSeries = liveBars ?? marketSeries;
+  const marketAnchorMs = (() => {
+    const rows = marketSeries?.M1 ?? [];
+    const last = rows[rows.length - 1];
+    return last ? last[0] * 1000 : Date.now();
+  })();
   const availableTfs = useMemo(() => {
     if (mode === 'live') return TIMEFRAME_OPTIONS;
     const charts = entry?.review.charts ?? {};
@@ -599,6 +638,9 @@ export default function App() {
             <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} onClick={() => setMode('live')}>行情</button>
             <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} disabled={!target} onClick={() => setMode('review')}>复盘</button>
             <button type="button" className="tool-btn" onClick={() => chartRef.current?.focus()}>回到开仓</button>
+            {mode === 'live' && !liveBars && marketSeries ? (
+              <span className="badge">历史行情{marketInfo?.last ? ' · 最新 ' + stamp(marketInfo.last) : ''}</span>
+            ) : null}
             <span className="spacer" />
             {entry?.read_only ? <span className="badge">只读 · {entry.owner.name} 的复盘</span> : null}
             <span className="save-hint">
@@ -618,15 +660,15 @@ export default function App() {
           ) : null}
 
           <div className="chart-body">
-            {mode === 'live' && liveBars ? (
+            {mode === 'live' && liveSeries ? (
               <ChartWorkspace
-                key={`live:${localConnected ? local.instance_id + ':' + local.epoch : 'cloud'}:${liveSymbol}`}
+                key={`live:${liveBars ? 'push' : 'store'}:${localConnected ? local.instance_id + ':' + local.epoch : 'cloud'}:${liveSymbol}`}
                 ref={chartRef}
-                charts={liveBars}
-                provider={liveProvider}
-                providerName="live"
+                charts={liveSeries}
+                provider={liveBars ? liveProvider : undefined}
+                providerName={liveBars ? 'live' : 'market'}
                 symbol={liveSymbol}
-                anchorMs={liveAnchor}
+                anchorMs={liveBars ? liveAnchor : marketAnchorMs}
                 savedState={null}
                 readOnly={false}
                 timeframes={TIMEFRAME_OPTIONS.map((o) => o.id)}

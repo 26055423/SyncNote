@@ -76,6 +76,8 @@ export class ReviewProvider implements DataProvider {
   constructor(
     private readonly charts: ReviewCharts,
     private readonly symbol: string,
+    /** 图例里显示的数据源名：复盘是 review，行情页的历史兜底是 market。 */
+    private readonly providerName: string = 'review',
   ) {}
 
   /** 周期菜单只列真正拿得到 K 线的周期。 */
@@ -85,8 +87,8 @@ export class ReviewProvider implements DataProvider {
 
   info() {
     return {
-      name: 'review',
-      displayName: '同频复盘行情',
+      name: this.providerName,
+      displayName: this.providerName === 'market' ? '同频历史行情' : '同频复盘行情',
       supportedTimeframes: this.availableTimeframes,
       capabilities: { enumerate: true, stream: false, symbolInfo: false },
     };

@@ -242,8 +242,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         const { VelaWorkspace } = await import('@luxalgo/vela/workspace');
         if (disposed || !hostRef.current) return;
 
-        const provider = (props.provider as never) ?? new ReviewProvider(charts, symbol);
-        const providerName = props.provider ? (props.providerName || 'live') : 'review';
+        const provider = (props.provider as never) ?? new ReviewProvider(charts, symbol, props.providerName || 'review');
+        const providerName = props.provider ? (props.providerName || 'live') : (props.providerName || 'review');
         const initial = prefs.getState();
         const ws = new VelaWorkspace(hostRef.current, {
           layout: '4',
