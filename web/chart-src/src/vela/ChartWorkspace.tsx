@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type ReviewCharts } from './provider';
+import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type BaseTimeframe, type ReviewCharts } from './provider';
 import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
 
@@ -59,6 +59,8 @@ export interface ChartHandle {
   activeTool(): string | null;
   /** 把收藏的工具同步给所有格子的原生工具栏。 */
   setFavorites(types: string[]): void;
+  /** 用新的一段 K 线替换某个基础周期，并按各格子的周期重绘（保持视窗）。 */
+  applySeries(base: BaseTimeframe, bars: number[][]): void;
 }
 
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
@@ -76,6 +78,8 @@ interface Props {
   onFavorites?: (types: string[]) => void;
   /** 当前激活的画图工具变化时回调。 */
   onTool?: (type: string | null) => void;
+  /** 某个格子的可见范围变了（已节流）：上层据此补段/删段。 */
+  onViewport?: (info: { timeframe: string; from: number; to: number }) => void;
   /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
@@ -99,6 +103,10 @@ function seedCells(available: string[] | undefined): Record<string, { timeframe:
 
 export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorkspace(props, ref) {
   const { charts, symbol, anchorMs, savedState, readOnly, timeframes, onStateChange, onTimeframe, onLayout, onSyncs, onError, onFavorites, onTool } = props;
+  // 拖动补段用：数据副本 + 可见范围回调（回调放 ref，避免闭包拿到旧的 props）。
+  const dataRef = useRef<ReviewCharts>({ ...(props.charts ?? {}) });
+  const viewportRef = useRef(props.onViewport);
+  viewportRef.current = props.onViewport;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<any>(null);
   const anchorRef = useRef(anchorMs);
@@ -165,6 +173,23 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           cell.chart?.drawings?.setFavorites?.(types);
         } catch {
           /* 忽略 */
+        }
+      }
+    },
+    applySeries(base, bars) {
+      dataRef.current = { ...dataRef.current, [base]: bars };
+      for (const cell of wsRef.current?.cells?.() ?? []) {
+        const tfId: string = cell.chart?.market?.timeframe ?? '15';
+        const recipe = TIMEFRAMES[tfId];
+        if (!recipe || recipe.base !== base) continue;
+        const source = dataRef.current[recipe.base] ?? [];
+        if (!source.length) continue;
+        const baseSeconds = TIMEFRAMES[basePeriodKey(recipe.base)]?.seconds ?? 60;
+        const rendered = recipe.seconds === baseSeconds ? source : aggregate(source, recipe.seconds);
+        try {
+          cell.chart.setBars(rendered.map(toOhlcv), { preserveView: true });
+        } catch {
+          /* 渲染器不支持 setBars 时忽略：下次重挂载会拿到新数据 */
         }
       }
     },
@@ -361,6 +386,18 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         stripRef.current = stripMarks;
 
         const bind = (cell: any) => {
+          // 拖动/缩放时把可见范围报上去，由上层决定补哪段、删哪段。
+          let lastViewport = 0;
+          try {
+            cell.chart?.onViewportChange?.((range: { from: number; to: number }) => {
+              const tick = Date.now();
+              if (tick - lastViewport < 320) return;
+              lastViewport = tick;
+              viewportRef.current?.({ timeframe: cell.chart?.market?.timeframe ?? "15", from: range.from, to: range.to });
+            });
+          } catch {
+            /* 旧版本没有 onViewportChange 时忽略 */
+          }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
           cell.chart?.on?.('load:end', () => {
@@ -472,6 +509,14 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     </div>
   );
 });
+
+function basePeriodKey(base: BaseTimeframe): string {
+  return base === 'M1' ? '1' : base === 'M5' ? '5' : base === 'M15' ? '15' : '60';
+}
+
+function toOhlcv(bar: number[]) {
+  return { time: bar[0] * 1000, open: bar[1], high: bar[2], low: bar[3], close: bar[4], volume: bar[5] ?? 0 };
+}
 
 function focusAll(ws: any, anchorMs: number): void {
   if (!ws || !Number.isFinite(anchorMs) || anchorMs <= 0) return;

@@ -3,7 +3,7 @@ import { api, money, quotePrice, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
 import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
-import { LiveProvider, TIMEFRAMES, type ReviewCharts } from './vela/provider';
+import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
 import { LocalTradePanel } from './LocalTradePanel';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
@@ -185,6 +185,14 @@ export default function App() {
   const chartRef = useRef<ChartHandle>(null);
   const saveTimer = useRef<number | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
+  /** 拖动补段的滑动窗口：每个基础周期当前已加载的 K 线（秒）与范围（毫秒）。 */
+  const seriesRef = useRef<Record<string, number[][]>>({});
+  const windowRef = useRef<Record<string, { from: number; to: number }>>({});
+  const fetchingRef = useRef<Set<string>>(new Set());
+  /** 某一边已经没有更早/更新的数据时，60 秒内不再追问（避免拖到尽头后每次事件都发请求）。 */
+  const edgeBlockRef = useRef<Record<string, number>>({});
+  /** 补段要知道“现在看的是哪笔/哪个品种”，放 ref 避免回调拿到旧值。 */
+  const ctxRef = useRef<{ shareId: number | null; person?: string; ticket?: string; symbol: string }>({ shareId: null, symbol: 'XAUUSD' });
 
   /* ---------------------------------------------------------- 看板轮询 */
 
@@ -575,6 +583,105 @@ export default function App() {
       alive = false;
     };
   }, [entry, ready, shareId, target?.person, target?.ticket, anchorSeconds]);
+
+  /* ------------------------------------------------- 拖动补段 / 远处删段 */
+
+  ctxRef.current = {
+    shareId,
+    person: target?.person,
+    ticket: target?.ticket,
+    symbol: mode === 'live' ? liveSymbol : (entry?.review?.trade?.symbol || 'XAUUSD'),
+  };
+
+  const hydrateWindow = (tf: string, bars: number[][]) => {
+    if (!bars.length) return;
+    seriesRef.current[tf] = bars;
+    windowRef.current[tf] = { from: bars[0][0] * 1000, to: bars[bars.length - 1][0] * 1000 };
+  };
+
+  useEffect(() => {
+    if (!series) return;
+    for (const tf of REVIEW_BASE_TFS) hydrateWindow(tf, series[tf] ?? []);
+  }, [series]);
+
+  useEffect(() => {
+    if (!marketSeries) return;
+    for (const tf of REVIEW_BASE_TFS) hydrateWindow(tf, marketSeries[tf] ?? []);
+  }, [marketSeries]);
+
+  const loadWindow = useCallback(async (base: string, from: number, to: number, span: number) => {
+    if (fetchingRef.current.has(base)) return;
+    fetchingRef.current.add(base);
+    try {
+      const ctx = ctxRef.current;
+      const params = new URLSearchParams({
+        tf: base,
+        from: String(Math.floor((from - span) / 1000)),
+        to: String(Math.floor((to + span) / 1000)),
+      });
+      let path: string;
+      if (ctx.shareId != null) {
+        params.set('share', String(ctx.shareId));
+        path = '/api/chart/bars?';
+      } else if (ctx.person && ctx.ticket) {
+        params.set('person', ctx.person);
+        params.set('ticket', ctx.ticket);
+        path = '/api/chart/bars?';
+      } else {
+        params.set('symbol', ctx.symbol);
+        path = '/api/market/bars?';
+      }
+      const data = await api<{ bars: number[][] }>(path + params.toString());
+      if (!data?.bars?.length) return;
+      // 合并同周期已加载的 K 线，再把整段推回图表（保持视窗）。
+      const byTime = new Map<number, number[]>();
+      for (const bar of seriesRef.current[base] ?? []) byTime.set(bar[0], bar);
+      for (const bar of data.bars) byTime.set(bar[0], bar);
+      const merged = [...byTime.values()].sort((a, b) => a[0] - b[0]);
+      if (merged.length === (seriesRef.current[base]?.length ?? 0)) {
+        // 这一段服务端也没有更多数据：两边都先别再问，等有新增（或 60 秒后）再说。
+        const until = Date.now() + 60_000;
+        edgeBlockRef.current[base + ':left'] = until;
+        edgeBlockRef.current[base + ':right'] = until;
+        return;
+      }
+      seriesRef.current[base] = merged;
+      windowRef.current[base] = { from: merged[0][0] * 1000, to: merged[merged.length - 1][0] * 1000 };
+      chartRef.current?.applySeries(base as BaseTimeframe, merged);
+    } catch {
+      /* 补不到就留白，不拿别的来源顶 */
+    } finally {
+      fetchingRef.current.delete(base);
+    }
+  }, []);
+
+  const handleViewport = useCallback((info: { timeframe: string; from: number; to: number }) => {
+    const recipe = TIMEFRAMES[info.timeframe];
+    if (!recipe) return;
+    const base = recipe.base;
+    const loaded = windowRef.current[base];
+    if (!loaded) return;
+    const span = Math.max(60_000, info.to - info.from);
+    // 离边缘不到一格屏就去补；离得超过 5 屏才删（避免来回抖动时反复增删）。
+    const nearEdge = span * (base === 'H1' ? 1.5 : 0.75);
+    const keep = span * 5;
+    const blocked = (side: string) => (edgeBlockRef.current[base + ':' + side] ?? 0) > Date.now();
+    const needLeft = info.from - loaded.from < nearEdge && !blocked('left');
+    const needRight = loaded.to - info.to < nearEdge && !blocked('right');
+    if (needLeft || needRight) {
+      void loadWindow(base, info.from, info.to, span);
+    }
+    const bars = seriesRef.current[base] ?? [];
+    if (bars.length > 12_000) {
+      const trimmed = bars.filter((bar) => bar[0] * 1000 >= info.from - keep && bar[0] * 1000 <= info.to + keep);
+      if (trimmed.length > 200 && trimmed.length < bars.length) {
+        seriesRef.current[base] = trimmed;
+        windowRef.current[base] = { from: trimmed[0][0] * 1000, to: trimmed[trimmed.length - 1][0] * 1000 };
+        chartRef.current?.applySeries(base as BaseTimeframe, trimmed);
+      }
+    }
+  }, [loadWindow]);
+
   const unseen = inbox.filter((row) => !row.seen).length;
   /** 消息页把「留言」和「复盘分享」合成一条时间线：分享就是一条带切片的消息。 */
   const feed = useMemo<Array<{ kind: 'share'; row: ShareRow } | { kind: 'chat'; row: Board['messages'][number] }>>(() => {
@@ -686,6 +793,7 @@ export default function App() {
                 onLayout={setLayout}
                 onSyncs={setSyncs}
                 onError={setError}
+                onViewport={handleViewport}
               />
             ) : mode === 'review' && ready && series ? (
               <ChartWorkspace
@@ -716,6 +824,7 @@ export default function App() {
                 onLayout={setLayout}
                 onSyncs={setSyncs}
                 onError={setError}
+                onViewport={handleViewport}
               />
             ) : (
               <div className="chart-empty">
