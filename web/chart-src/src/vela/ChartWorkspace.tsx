@@ -316,7 +316,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           const anchor = anchorRef.current;
           if (!Number.isFinite(anchor) || anchor <= 0) return;
           try {
-            cell.chart.setVisibleRange({ from: anchor - width * 32, to: anchor + width * 12 });
+            // 开仓那根 K 线落在正中（左右各 22 根），点开复盘第一眼就对着开仓。
+          cell.chart.setVisibleRange({ from: anchor - width * 22, to: anchor + width * 22 });
           } catch {
             /* ignore */
           }
@@ -529,7 +530,8 @@ function focusAll(ws: any, anchorMs: number): void {
     const minutes = timeframeMinutes(tf) ?? 15;
     const width = minutes * 60_000;
     try {
-      cell.chart.setVisibleRange({ from: anchorMs - width * 32, to: anchorMs + width * 12 });
+      // 开仓那根 K 线落在正中（左右各 22 根）。
+    cell.chart.setVisibleRange({ from: anchorMs - width * 22, to: anchorMs + width * 22 });
     } catch {
       /* ignore */
     }

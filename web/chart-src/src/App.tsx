@@ -710,8 +710,9 @@ export default function App() {
     const opened = entry?.review?.opened ?? null;
     const closed = trade?.closed ?? null;
     const seconds = target?.t ?? opened ?? closed ?? 0;
-    return seconds > 0 ? seconds * 1000 : 0;
-  }, [entry, trade?.closed, target?.t]);
+    // 图上是券商墙钟的 K 线，定位点也要跟着偏移，否则"居中"会偏到另一根上去。
+    return seconds > 0 ? (seconds + barOffsetSec) * 1000 : 0;
+  }, [entry, trade?.closed, target?.t, barOffsetSec]);
 
   if (!board) {
     return (
