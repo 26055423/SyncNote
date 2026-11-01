@@ -40,6 +40,10 @@ interface Checkpoint {
   last_deal_ticket: string;
   window_complete: boolean;
   saved_at: number;
+  /** UTC milliseconds of the last fully acknowledged 365-day reconciliation. */
+  last_full: number;
+  /** Pinned to the current fixed range, including across partial-page resumes. */
+  full_run: boolean;
 }
 export interface HistorySyncState {
   enabled: boolean;
@@ -48,6 +52,8 @@ export interface HistorySyncState {
   pages: number;
   deals: number;
   last_synced: number | null;
+  last_full: number | null;
+  full_run: boolean;
   reviews: number;
   review_message: string;
   account: string;
@@ -66,15 +72,17 @@ interface Dependencies {
   uploadReview?: (body: ReviewImportBody, signal: AbortSignal) => Promise<{ ok: boolean }>;
 }
 
-const EMPTY: HistorySyncState = { enabled: false, status: 'off', message: '', pages: 0, deals: 0, reviews: 0, review_message: '', last_synced: null, account: '', server: '' };
+const EMPTY: HistorySyncState = { enabled: false, status: 'off', message: '', pages: 0, deals: 0, reviews: 0, review_message: '', last_synced: null, last_full: null, full_run: false, account: '', server: '' };
 const DAY = 86400;
+const HISTORY_DAYS = 365;
+const FULL_RECONCILE_MS = DAY * 1000;
 const sameSession = (state: LocalTerminalState) => [state.instance_id, state.account_id, state.server, state.epoch].join('\n');
 export async function historyAccountKey(server: string, account: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${server}\n${account}`));
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
-/** Only acknowledged non-secret scan cursors persist. Consent and raw pages stay in memory. */
+/** Non-secret fixed scan plans and acknowledged cursors persist; consent/raw pages stay in RAM. */
 export class LocalHistorySync {
   private state: HistorySyncState = { ...EMPTY };
   private listeners = new Set<() => void>();
@@ -86,6 +94,7 @@ export class LocalHistorySync {
   private runningGeneration: number | null = null;
   private checkpoint: Checkpoint | null = null;
   private storageKey = '';
+  private planNeedsSave = false;
   private pending: { body: HistoryImportBody; checkpoint: Checkpoint } | null = null;
   constructor(private readonly dependencies: Dependencies) {
     dependencies.terminal.subscribe(() => {
@@ -104,7 +113,7 @@ export class LocalHistorySync {
     if (this.userId === userId) return;
     this.stop(this.userId ? '网站登录账户已改变，同步授权已清除。' : '');
     this.userId = userId;
-    this.update({ pages: 0, deals: 0, reviews: 0, review_message: '', last_synced: null, account: '', server: '' });
+    this.update({ pages: 0, deals: 0, reviews: 0, review_message: '', last_synced: null, last_full: null, full_run: false, account: '', server: '' });
   }
   stop(message = '笔记同步已暂停。') {
     this.generation += 1;
@@ -115,8 +124,9 @@ export class LocalHistorySync {
     this.pending = null;
     this.checkpoint = null;
     this.storageKey = '';
+    this.planNeedsSave = false;
     this.session = '';
-    this.update({ enabled: false, status: 'off', message });
+    this.update({ enabled: false, status: 'off', full_run: false, message });
   }
   async start() {
     const terminal = this.dependencies.terminal.getSnapshot();
@@ -138,13 +148,20 @@ export class LocalHistorySync {
         if (checkpoint.version !== 1 || checkpoint.account_key !== accountKey || checkpoint.account !== terminal.account_id || checkpoint.server !== terminal.server
           || typeof checkpoint.cursor !== 'string' || !Number.isFinite(checkpoint.through_server)
           || !Number.isFinite(checkpoint.range?.from_server) || !Number.isFinite(checkpoint.range?.to_server)
-          || checkpoint.range.from_server > checkpoint.range.to_server) throw new Error('浏览器中的同步进度无效，请清除此网站的同步进度后再试。');
-        this.checkpoint = checkpoint;
-        this.update({ last_synced: checkpoint.saved_at });
+          || checkpoint.range.from_server > checkpoint.range.to_server
+          || (checkpoint.last_full !== undefined && (!Number.isFinite(checkpoint.last_full) || checkpoint.last_full < 0))
+          || (checkpoint.full_run !== undefined && typeof checkpoint.full_run !== 'boolean')) throw new Error('浏览器中的同步进度无效，请清除此网站的同步进度后再试。');
+        // Legacy cursors remain valid. An unfinished range is never replaced just
+        // because a full reconciliation is due; finish that exact range first.
+        this.checkpoint = { ...checkpoint, last_full: checkpoint.last_full ?? 0,
+          full_run: checkpoint.full_run ?? (!checkpoint.window_complete && checkpoint.range.to_server - checkpoint.range.from_server >= HISTORY_DAYS * DAY) };
+        this.update({ last_synced: checkpoint.saved_at, last_full: this.checkpoint.last_full || null, full_run: this.checkpoint.full_run });
       } else {
         const to = Math.floor(this.dependencies.now() / 1000) + terminal.server_offset_sec;
         this.checkpoint = { version: 1, account_key: accountKey, account: terminal.account_id, server: terminal.server,
-          range: { from_server: Math.max(0, to - 365 * DAY), to_server: to }, cursor: '', through_server: Math.max(0, to - 365 * DAY), last_deal_ticket: '0', window_complete: false, saved_at: 0 };
+          range: { from_server: Math.max(1, to - HISTORY_DAYS * DAY), to_server: to }, cursor: '', through_server: Math.max(1, to - HISTORY_DAYS * DAY) - 1, last_deal_ticket: '0', window_complete: false, saved_at: 0, last_full: 0, full_run: true };
+        this.planNeedsSave = true;
+        this.update({ last_full: null, full_run: true });
       }
       await this.pump(generation);
     } catch (error) {
@@ -169,12 +186,24 @@ export class LocalHistorySync {
       if (this.checkpoint.window_complete && !this.pending) {
         const terminal = this.dependencies.terminal.getSnapshot();
         const to = Math.floor(this.dependencies.now() / 1000) + terminal.server_offset_sec;
-        this.checkpoint = { ...this.checkpoint, range: { from_server: Math.max(0, Math.min(to, this.checkpoint.through_server) - DAY), to_server: to }, cursor: '', window_complete: false };
+        const lastFull = this.checkpoint.last_full;
+        const full = !lastFull || this.dependencies.now() - lastFull >= FULL_RECONCILE_MS || this.dependencies.now() < lastFull;
+        const from = Math.max(1, full ? to - HISTORY_DAYS * DAY : Math.min(to, this.checkpoint.through_server) - DAY);
+        this.checkpoint = { ...this.checkpoint, range: { from_server: from, to_server: to }, cursor: '', through_server: from - 1, last_deal_ticket: '0', window_complete: false, full_run: full };
+        this.planNeedsSave = true;
+        this.update({ full_run: full });
+      }
+      if (this.planNeedsSave) {
+        // Pin the range before the first read. A failed first upload/reload must
+        // not move the oldest boundary forward. This records no acknowledged
+        // page and preserves last_full until the final matching server ACK.
+        this.dependencies.storage.setItem(this.storageKey, JSON.stringify(this.checkpoint));
+        this.planNeedsSave = false;
       }
       while (this.active(generation)) {
         if (!this.pending) {
           const checkpoint: Checkpoint = this.checkpoint!;
-          this.update({ status: 'reading', message: '读取本机全品种交易历史，每页最多 100 条…' });
+          this.update({ status: 'reading', message: checkpoint.full_run ? '正在全量核对最近 365 天的全品种历史，每页最多 100 条…' : '正在回查最近一天的全品种历史，每页最多 100 条…' });
           const page = await this.dependencies.terminal.requestHistoryPage(checkpoint.range, checkpoint.cursor, signal);
           if (!this.active(generation)) return;
           this.validatePage(page, checkpoint);
@@ -195,15 +224,17 @@ export class LocalHistorySync {
         const ack = await this.dependencies.upload(pending.body, signal);
         if (!this.active(generation)) return;
         if (ack.ok !== true || ack.batch_id !== pending.body.batch_id || ack.account_key !== pending.body.account_key) throw new Error('服务器未确认本批历史，未推进同步进度；可安全重试。');
-        const saved: Checkpoint = { ...pending.checkpoint, saved_at: this.dependencies.now() };
+        const acknowledgedAt = this.dependencies.now();
+        const saved: Checkpoint = { ...pending.checkpoint, saved_at: acknowledgedAt,
+          last_full: pending.checkpoint.full_run && pending.checkpoint.window_complete ? acknowledgedAt : pending.checkpoint.last_full };
         this.dependencies.storage.setItem(this.storageKey, JSON.stringify(saved));
         this.checkpoint = saved;
         this.pending = null;
-        this.update({ pages: this.state.pages + 1, deals: this.state.deals + pending.body.deals.length, last_synced: saved.saved_at });
+        this.update({ pages: this.state.pages + 1, deals: this.state.deals + pending.body.deals.length, last_synced: saved.saved_at, last_full: saved.last_full || null });
         if (saved.window_complete) {
           await this.processReview(generation, saved);
           if (!this.active(generation)) return;
-          this.update({ status: 'idle', message: '当前窗口已同步，网页保持打开时每 30 秒检查一次；回查最近一天以补齐迟到成交和费用。' });
+          this.update({ status: 'idle', full_run: false, message: '当前窗口已同步；每 30 秒回查最近一天，每隔约 24 小时全量核对最近 365 天，补齐较早成交及费用更正。' });
           this.wakeup = this.dependencies.schedule(() => { this.wakeup = null; void this.pump(generation); }, 30000);
           return;
         }

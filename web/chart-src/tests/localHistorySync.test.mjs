@@ -25,6 +25,7 @@ function fixture(options = {}) {
   const terminalListeners = new Set(), stored = options.stored || new Map(), scheduled = new Map();
   const reads = [], uploads = [], reviewReads = [], reviewUploads = [];
   let sequence = 0;
+  let now = options.now ?? NOW;
   const terminal = {
     getSnapshot: () => terminalState,
     subscribe(listener) { terminalListeners.add(listener); return () => terminalListeners.delete(listener); },
@@ -45,7 +46,7 @@ function fixture(options = {}) {
   const sync = new LocalHistorySync({ terminal,
     storage: { getItem: (key) => stored.get(key) || null, setItem: (key, value) => { if (options.storageFailure) throw new Error('quota'); stored.set(key, value); } },
     upload: async (body, signal) => { uploads.push({ body, signal }); return options.upload ? await options.upload(body, uploads.length) : { ok: true, batch_id: body.batch_id, account_key: body.account_key }; },
-    accountKey: historyAccountKey, uuid: () => `batch-${++sequence}`, now: () => NOW,
+    accountKey: historyAccountKey, uuid: () => `batch-${++sequence}`, now: () => now,
     schedule(callback, ms) { const id = ++sequence; scheduled.set(id, { callback, ms }); return id; }, cancelSchedule(id) { scheduled.delete(id); },
     ...(options.job ? {
       reviewJob: async () => ({ ok: true, website_user_id: 'site-user', review_job: options.job }),
@@ -54,7 +55,25 @@ function fixture(options = {}) {
   });
   sync.bindUser('site-user');
   return { sync, reads, uploads, stored, scheduled, reviewReads, reviewUploads,
+    advance(ms) { now += ms; },
+    async wake() {
+      const [id, timer] = [...scheduled.entries()][0];
+      scheduled.delete(id);
+      timer.callback();
+      await new Promise((resolve) => setImmediate(resolve));
+    },
     changeTerminal(patch) { terminalState = { ...terminalState, ...patch }; for (const listener of terminalListeners) listener(); } };
+}
+
+function unconfirmedPlan(stored) {
+  assert.equal(stored.size, 1);
+  const plan = JSON.parse([...stored.values()][0]);
+  assert.equal(plan.cursor, '');
+  assert.equal(plan.window_complete, false);
+  assert.equal(plan.through_server, plan.range.from_server - 1);
+  assert.equal(plan.saved_at, 0);
+  assert.equal(plan.last_full, 0);
+  return plan;
 }
 
 test('history consent starts off, and import contains raw history without account finances or EA credentials', async () => {
@@ -85,7 +104,7 @@ test('a failed HTTP upload preserves the exact batch for explicit safe retry and
   } });
   await sync.start();
   assert.equal(sync.getSnapshot().status, 'error');
-  assert.equal(stored.size, 0);
+  unconfirmedPlan(stored);
   sync.retry();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(uploads.length, 2);
@@ -98,7 +117,7 @@ test('wrong ACK identity or batch does not persist any progress', async () => {
   for (const patch of [{ batch_id: 'other' }, { account_key: 'other' }, { ok: false }]) {
     const { sync, stored } = fixture({ upload: (body) => ({ ok: true, batch_id: body.batch_id, account_key: body.account_key, ...patch }) });
     await sync.start();
-    assert.equal(stored.size, 0);
+    unconfirmedPlan(stored);
     assert.equal(sync.getSnapshot().status, 'error');
   }
 });
@@ -122,7 +141,7 @@ test('website-user switch aborts an in-flight import and ignores even a late mat
   assert.equal(uploads[0].signal.aborted, true);
   release();
   await start;
-  assert.equal(stored.size, 0);
+  unconfirmedPlan(stored);
   assert.equal(sync.getSnapshot().enabled, false);
 });
 

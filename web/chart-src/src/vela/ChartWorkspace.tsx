@@ -506,6 +506,17 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     }
   }, [chartLocale, ready]);
 
+  // 定位点变化（比如从列表点开另一笔、或时间基对齐后 anchor 被修正）时补一次居中：
+  // 图表已经在屏幕上时，初始化那一跳不会重跑，这里兜住。
+  useEffect(() => {
+    if (!ready || !(anchorMs > 0)) return;
+    try {
+      focusAll(wsRef.current, anchorMs);
+    } catch {
+      /* ignore */
+    }
+  }, [anchorMs, ready]);
+
   return (
     <div className="chart-shell">
       <div ref={hostRef} className={`chart-host ${ready ? 'is-ready' : ''}`} />

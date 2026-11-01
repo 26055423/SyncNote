@@ -50,13 +50,20 @@
   "magic":"0",
   "reason":0,
   "comment":"manual or other EA comment",
-  "external_id":""
+  "external_id":"",
+  "position_context_status":"available",
+  "position_first_deal_ticket":"123456789012345678",
+  "position_first_time_msc_server":1793491200123
 }
 ```
 
 deal/order/position/magic 使用十进制字符串，避免 JavaScript 整数精度丢失；order/position 可以为 `"0"`，例如部分资金记录。type、entry、reason 保留 MT5 枚举整数；全部交易来源与品种均导出，不按当前 EA magic 过滤。不筛掉 INOUT、独立手续费、资金变动或其他非买卖 deal。
 
 数值必须有限，错误不替换成零。time_msc_server 是权威时间精度；time_server 是冗余的服务器秒。稳定原始记录键为 `(网站用户,account_key,deal_ticket)`。重复记录 upsert；同 ticket 的费用等字段修正应更新，并触发对应 position 重建。
+
+买卖成交的起点证据来自 `HistorySelectByPosition(position_id)` 中全部可用买卖成交的最小 `(time_msc_server,deal_ticket)`，不受本次上传窗口限制。每页按持仓缓存，每次 Pump 最多查询一个新的持仓，单次最多扫描 1024 条。查询失败、字段不可读或无买卖记录时 `position_context_status="unavailable"`；超过上限时为 `"too_large"`；这两种状态的起点 ticket/时间必须为 `"0"`/`0`。资金类记录也采用 unavailable，不伪造开仓证据。
+
+查询会替换 MT5 的历史选择列表，分页器先保存页 ticket，序列化前按 ticket 重新选择，并在查询后和页面完成前复核账户。只提供起点元数据，不偷偷上传窗口之外的成交；如果实际开仓不在已收到范围内，服务器继续标记上下文不完整，用户需扩大历史范围。服务端还要求开仓订单与 position_id 匹配、已确认覆盖连续到相应平仓秒，不能仅凭 available 生成交易。
 
 closed_trades / summary_status 由云端基于原始 deal 派生。客户端可不提供。云端不能把单个反向 deal 一概看作完全平仓：须处理加仓、部分平仓、反转、费用分摊和缺失开仓上下文。无法重建时保留原始记录并给出明确原因。
 
@@ -99,7 +106,7 @@ void Reset();
 
 Begin 只校验范围并创建状态，不调用 HistorySelect；from>=1，to<=2100-01-01，范围不超过 3660 天，limit 1–100。to 必须固定，不能每页换成“现在”。
 
-Pump 分阶段：最多一次 HistorySelect；立即复制这个时间片的最多 1024 个 ticket 与毫秒时间；随后跨事件分预算排序、按 ticket 读取及序列化。其他处理逻辑可以在两轮之间调用 HistoryDealSelect/HistoryOrderSelect，因为分页器不跨事件依赖 MT5 的可变选中列表索引。
+Pump 分阶段：选择阶段最多一次 HistorySelect；立即复制这个时间片的最多 1024 个 ticket 与毫秒时间；随后跨事件分预算排序、按 ticket 读取及序列化。序列化阶段每次最多一个新的 HistorySelectByPosition 查询，已缓存的持仓可以在预算内继续输出。其他处理逻辑可以在两轮之间调用 HistoryDealSelect/HistoryOrderSelect，因为分页器不跨事件依赖 MT5 的可变选中列表索引。
 
 时间片初始最多一天。空时间片可以跨 Pump 跳过；密度过大在后续 Pump 二分缩小，单秒超过 1024 条返回 DENSITY_LIMIT，绝不跳过。单条消失、时间戳变化、非有限数或账户变化都返回明确错误，调用者以原游标重试或暂停。
 

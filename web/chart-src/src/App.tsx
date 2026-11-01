@@ -170,8 +170,6 @@ export default function App() {
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') || params.get('share') ? 'review' : 'live'));
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
-  /** 图表用的是哪条时间基：server = 券商服务器墙钟，utc = 交易快照。标注要跟着它对齐。 */
-  const [seriesBasis, setSeriesBasis] = useState<'server' | 'utc'>('utc');
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
   const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
   const [marketInfo, setMarketInfo] = useState<{ server: string; last: number | null } | null>(null);
@@ -523,11 +521,16 @@ export default function App() {
   })();
   /** 行情页的数据源：优先本机/云端的实时推送，没有就用自己券商轨的历史 K 线。 */
   // 服务端 K 线是券商墙钟、交易/复盘时间戳是 UTC：标注按这个差对齐，否则开平仓点会偏。
-  const barOffsetSec = seriesBasis === 'server'
-    ? (typeof entry?.bar_offset === 'number'
-      ? entry.bar_offset
-      : (Math.round(Number(entry?.review?.trade?.closed_server ?? NaN) - Number(entry?.review?.trade?.closed ?? NaN)) || 0))
-    : 0;
+  const serverOffsetSec = typeof entry?.bar_offset === 'number'
+    ? entry.bar_offset
+    : (Math.round(Number(entry?.review?.trade?.closed_server ?? NaN) - Number(entry?.review?.trade?.closed ?? NaN)) || 0);
+  // 交易快照里的 charts 和 bars 表一样，都是 EA 上报的券商标注时间（CopyRates 的 bar_time），
+  // 所以两套数据都要加这个偏移；之前只在 server 序列时加，导致走 payload 的老复盘定位偏 3 小时。
+  const barOffsetSec = serverOffsetSec;
+  // 快照通道的旧交易没有 `review.opened`，只有 `opened_server`：用墙钟减去偏移折算成 UTC，
+  // 否则整笔复盘会定位到平仓时间上去（实测 #43442851 就是这样）。
+  const openedSeconds = entry?.review?.opened
+    ?? (typeof entry?.review?.trade?.opened_server === 'number' ? entry.review.trade.opened_server - serverOffsetSec : null);
   const liveSeries = liveBars ?? marketSeries;
   const marketAnchorMs = (() => {
     const rows = marketSeries?.M1 ?? [];
@@ -563,7 +566,6 @@ export default function App() {
     let alive = true;
     void (async () => {
       const merged: ReviewCharts = { ...payload };
-      let sawServer = false;
       try {
         await Promise.all(REVIEW_BASE_TFS.map(async (tf) => {
           const [before, after] = REVIEW_WINDOW[tf];
@@ -582,14 +584,12 @@ export default function App() {
           // 两条时间基不能混：`bars` 存的是券商服务器墙钟，交易快照 payload 是 UTC。
           // 有服务端数据就整段用它（同一券商 source、完整），标注时间再由 offset 对齐。
           merged[tf] = data.bars;
-          sawServer = true;
         }));
       } catch {
         /* 拿不到就退回交易快照，不阻塞看图 */
       }
       if (alive) {
         setSeries(merged);
-        setSeriesBasis(sawServer ? "server" : "utc");
       }
     })();
     return () => {
@@ -707,12 +707,12 @@ export default function App() {
     // 消息里的切片：分享人当时可见窗口中点，优先于开仓时间。
     const shared = entry?.share?.anchor_ms ?? null;
     if (shared && shared > 0) return shared;
-    const opened = entry?.review?.opened ?? null;
+    const opened = openedSeconds;
     const closed = trade?.closed ?? null;
     const seconds = target?.t ?? opened ?? closed ?? 0;
     // 图上是券商墙钟的 K 线，定位点也要跟着偏移，否则"居中"会偏到另一根上去。
     return seconds > 0 ? (seconds + barOffsetSec) * 1000 : 0;
-  }, [entry, trade?.closed, target?.t, barOffsetSec]);
+  }, [entry, trade?.closed, target?.t, barOffsetSec, openedSeconds]);
 
   if (!board) {
     return (
@@ -820,7 +820,7 @@ export default function App() {
                 tradeMarks={
                   entry!.review.opened != null && trade?.closed != null
                     ? {
-                        openedAt: entry!.review.opened + barOffsetSec,
+                        openedAt: Number(openedSeconds ?? 0) + barOffsetSec,
                         closedAt: Number(trade.closed) + barOffsetSec,
                         open: Number(trade.open) || 0,
                         close: Number(trade.close) || 0,

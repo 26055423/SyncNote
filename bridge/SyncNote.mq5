@@ -1,7 +1,7 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.000"
+#property version "1.001"
 #property description "Read-only history and review charts. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 
@@ -226,7 +226,9 @@ int OnInit()
  for(int i=0;i<StringLen(ConnectionCode);i++){ushort c=StringGetCharacter(ConnectionCode,i);if(c<33||c>126){Print("SyncNote: connection code must be printable ASCII without whitespace");return INIT_PARAMETERS_INCORRECT;}}
  g_sn_account=IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));g_sn_server=AccountInfoString(ACCOUNT_SERVER);
  if(g_sn_account=="0"||g_sn_server==""){Print("SyncNote: log into an MT5 account before attaching");return INIT_FAILED;}
- g_sn_key=SNJAccountKey(g_sn_server,g_sn_account);string token_hash=SNJHash(ConnectionCode),scope=SNJHash(g_sn_origin+"\n"+ConnectionCode+"\n"+IntegerToString(HistoryDays));
+ // New history evidence format needs one full replay, including pages ACKed by
+ // earlier builds without position-origin fields. Keep the old state recoverable.
+ g_sn_key=SNJAccountKey(g_sn_server,g_sn_account);string token_hash=SNJHash(ConnectionCode),scope=SNJHash(g_sn_origin+"\n"+ConnectionCode+"\n"+IntegerToString(HistoryDays)+"\nposition-origin-v1");
  if(g_sn_key==""||token_hash==""||scope=="")return INIT_FAILED;
  FolderCreate("SyncNote");
  g_sn_binding_path="SyncNote\\binding-"+StringSubstr(token_hash,0,24)+".txt";
