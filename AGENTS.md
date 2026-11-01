@@ -37,6 +37,7 @@
 | `web/chart-src/src/styles.css` | 设计令牌（`:root` 深色 / `:root[data-theme='light']` 亮色） |
 | `web/admin.html` / `web/admin.js` | 管理后台：用户锁定、邀请码生成与导出 |
 | `tools/bridge_push.py` | 本机 WebBridge → 同频 的同步器（成交 + 实时行情） |
+| `tools/export_market_bars.py` | 把本地行情库导成 CSV.gz（K 线导入包，确定性导出） |
 | `bridge/SyncNote.mq5` | 笔记版 EA：只读历史上传，无 DLL、无 socket、无交易函数 |
 | `bridge/SyncTrade.mq5` | 交易版 EA：本机 WS 看盘/下单 + 历史导出（由 `SyncNoteLocal.mq5` 派生） |
 | `web/chart-src/src/localHistorySync.ts` | 交易版的历史代传：分页、断点、每页确认后才推进 |

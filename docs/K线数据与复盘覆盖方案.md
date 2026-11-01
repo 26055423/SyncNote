@@ -311,7 +311,35 @@ P2 完成后追加：
 
 ---
 
-## 14. 未决问题
+## 14. 已就绪的数据资产（2026-11-01）
+
+本机 `D:\Projects\trade_dashboard\backend\data\market.db` 的 `klines` 表里有多年 XAUUSD 历史，
+是 MT5 历次下载累积下来的。已导出并**上传到服务器**：
+
+```
+/SyncTrade/data/import/xauusd/         属主 tongpin:tongpin，目录 750 / 文件 640
+  ├── MANIFEST.json                     每个文件的行数、区间、sha256
+  ├── README.md                         这份数据的来源与约定
+  ├── xauusd_1m.csv.gz   2,518,649 行   32.1 MB
+  ├── xauusd_5m.csv.gz     504,141 行    7.1 MB
+  ├── xauusd_15m.csv.gz    168,213 行    2.6 MB
+  ├── xauusd_30m.csv.gz     84,162 行    1.4 MB
+  ├── xauusd_1h.csv.gz      42,111 行    0.7 MB
+  ├── xauusd_4h.csv.gz      11,139 行    0.2 MB
+  └── xauusd_1d.csv.gz       1,874 行    0.04 MB
+```
+
+- 覆盖：**2019-08-21 → 2026-10-27**（服务器墙钟），合计约 333 万根，44 MB；
+- 时间基：`t` 是**券商服务器墙钟秒**，与本文 §5 的约定一致，导入不需要换算；
+- 导出脚本：`tools/export_market_bars.py`（纯标准库，只读源库），可随时重跑；
+  导出是**确定性**的（gzip 头 `mtime=0`），同一份源库重跑得到的 sha256 与 `MANIFEST.json` 完全一致；
+- 校验：上传后已用 `sha256sum` 与 `MANIFEST.json` 逐文件比对，7/7 一致。
+
+**用途与待定**：这批数据作为「参考行情 feed」（§12 的 P4）可以立刻用；若它本来就是当前账户
+的行情，也可以作为该 `feed` 的初始填充。导入前需要确定 `feed` 标签——目前只知道时间基，
+不知道券商服务器名与账户（可以等 SyncTrade 的 `hello` 上报后再绑定，或先用 `ref:xauusd` 入库）。
+
+## 15. 未决问题
 
 1. `bars` 的 `t` 用服务器墙钟（本文选型）还是入库时就转 UTC？——若选 UTC，成交与 K 线需要各自维护换算，好处是查询更直观。
 2. 4 个周期各自独立抓，还是抓 M1 再在服务端聚合？——独立抓与 EA 现有能力一致，但 `M5` 由 5 根 `M1` 聚合会更省；聚合要处理券商空档，风险更高。
