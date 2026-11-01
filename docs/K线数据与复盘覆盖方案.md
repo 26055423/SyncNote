@@ -53,57 +53,99 @@
 
 ## 4. 概念
 
-### 4.1 feed（行情来源）
+### 4.1 feed 与 source（行情来源）
+
+K 线不是某个人的，是**某个券商服务器**的。所以拆成两层：
 
 ```
-feed = account_key = sha256(server + "\n" + account)
+source = 券商服务器           同一服务器 → 同一份行情，可跨账户复用
+feed   = account_key = sha256(server + "\n" + account)
+         → 指向一个 source
 ```
 
-与 `sync_history.account_key` **完全相同**，直接复用，不新增概念。
-`feed` 是行情身份，不是用户身份：同一用户换券商就是另一个 feed；两个用户在同一券商同一账户理论上同 feed（极少见，按同一份数据存即可）。
+| 关系 | 结果 |
+|---|---|
+| C、F 都在「券商 1」 | C 抓过的 K 线，F 打开自己的复盘可以直接用（同一 `source`） |
+| 同一用户在两个券商 | 两个 `source`，互不共享 |
+| `Broker-Live` / `Broker-Live2` / `Broker-Demo` | **按不同 source 处理**：实盘/模拟、不同集群的行情可能不同，宁可各存一份 |
+| 同名品种不同写法（`XAUUSD` / `XAUUSD.raw` / `GOLD`） | 按 `(source, symbol)` 分开存，需要时人工加别名表 |
+
+`source` 有一个“临时态”，等 EA 上报 `server` 再迁移：
+
+| 阶段 | `source` 形态 | 何时迁移 |
+|---|---|---|
+| 只知道账户 | `acct:<account_key>` | EA 的 `hello` 上报 `server` 后，合并进 `srv:<server>` |
+| 知道券商服务器 | `srv:<server>` | 稳定 |
+| 导入的历史包 | 导入时指定（见 §14） | 同上 |
+
+合并只改 `feeds.source` 的指向，`bars` 不必搬（查询时 join）；真要搬也是按主键 upsert 后删旧行。
 
 从哪来：
 
-- 历史通道派生出来的交易，payload 里已有 `source_account_key`；
+- 历史通道派生出来的交易，payload 里已有 `source_account_key`（以及 `server`/`account`，有就是已知服务器）；
 - 快照通道（`/api/snapshot`）的交易没有，视为 `feed = null`，这类交易**不走本方案**，继续用 `trade_reviews.payload`。
 
 ### 4.2 覆盖（coverage）
 
-按 `(feed, symbol, tf)` 记录已扫过的时间区间，区间先合并再存：
+按 `(source, symbol, tf)` 记录已扫过的时间区间，区间先合并再存；**失败是账户级的**，见下表：
 
-| 状态 | 含义 | 会重试吗 |
-|---|---|---|
-| `have` | 请求过，拿到了 K 线 | 不会 |
-| `empty` | 请求过，券商明确没数据（周末、休市、品种未上市） | 不会 |
-| `failed` | 请求过但失败（EA 未加载历史、超时、离线） | **会** |
+| 状态 | 记录在 | 含义 | 会重试吗 |
+|---|---|---|---|
+| `have` | `bar_coverage`（source 级） | 请求过，拿到了 K 线 | 不会，同 source 其他账户也不用再抓 |
+| `empty` | `bar_coverage`（source 级） | 券商明确没数据（周末、休市、品种未上市） | 不会 |
+| `failed` | `bar_attempt`（账户级） | 这次请求失败（终端没本地历史、超时、离线） | **会**：另一个账户或稍后重试，成功即转 `have` |
 
 “没有记录”= 没扫过，下次要用就去请求。
+
+**同券商复用**：`have`/`empty` 是 source 级的并集，C 抓过 F 就不用抓；
+bar 值理论上完全一致，若出现差异（两边在不同时刻缓存了同一根 bar），以**后写入**为准并记一次
+discrepancy 计数，便于发现“未收盘就入库”这类问题。
+
 
 ---
 
 ## 5. 数据模型
 
 ```sql
--- 已收盘的 K 线；主键天然去重
+-- 账户 → 行情来源。合并券商时只改这里，不动 bars。
+CREATE TABLE IF NOT EXISTS feeds(
+  account_key TEXT PRIMARY KEY,      -- sha256(server + "\n" + account)
+  source      TEXT NOT NULL,         -- srv:<server> 或临时的 acct:<account_key>
+  server      TEXT NOT NULL DEFAULT '',
+  account     TEXT NOT NULL DEFAULT '',
+  updated     REAL NOT NULL
+);
+
+-- 已收盘的 K 线；按 source 存，同券商的不同账户共用同一份
 CREATE TABLE IF NOT EXISTS bars(
-  feed TEXT NOT NULL,          -- account_key
+  source TEXT NOT NULL,        -- 见 feeds.source
   symbol TEXT NOT NULL,
   tf TEXT NOT NULL,            -- M1 / M5 / M15 / H1（与 EA 上传口径一致）
   t INTEGER NOT NULL,          -- 服务器时间秒（bar 开盘）
   o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL,
   v REAL NOT NULL DEFAULT 0,   -- tick volume
   updated REAL NOT NULL,       -- 入库时间
-  PRIMARY KEY(feed, symbol, tf, t)
+  PRIMARY KEY(source, symbol, tf, t)
 );
-CREATE INDEX IF NOT EXISTS idx_bars_range ON bars(feed, symbol, tf, t);
+CREATE INDEX IF NOT EXISTS idx_bars_range ON bars(source, symbol, tf, t);
 
--- 已扫区间（合并后），state ∈ have | empty | failed
+-- 已扫区间（合并后），state ∈ have | empty；source 级，跨账户共享
 CREATE TABLE IF NOT EXISTS bar_coverage(
-  feed TEXT NOT NULL, symbol TEXT NOT NULL, tf TEXT NOT NULL,
+  source TEXT NOT NULL, symbol TEXT NOT NULL, tf TEXT NOT NULL,
   from_t INTEGER NOT NULL, to_t INTEGER NOT NULL,   -- 闭区间，按周期对齐
   state TEXT NOT NULL,
   updated REAL NOT NULL,
-  PRIMARY KEY(feed, symbol, tf, from_t)
+  PRIMARY KEY(source, symbol, tf, from_t)
+);
+
+-- 失败重试是账户级的：别人的终端没本地历史，不该拦住你
+CREATE TABLE IF NOT EXISTS bar_attempt(
+  account_key TEXT NOT NULL, source TEXT NOT NULL, symbol TEXT NOT NULL, tf TEXT NOT NULL,
+  from_t INTEGER NOT NULL, to_t INTEGER NOT NULL,
+  state TEXT NOT NULL,        -- failed | ok
+  attempts INTEGER NOT NULL DEFAULT 1,
+  updated REAL NOT NULL,
+  PRIMARY KEY(account_key, source, symbol, tf, from_t)
 );
 ```
 
@@ -113,7 +155,7 @@ CREATE TABLE IF NOT EXISTS bar_coverage(
 |---|---|
 | `trade_reviews.payload` | 这笔交易**当时**的四周期快照（分享切片的兜底）。不改、不删。 |
 | `mt5_history_coverage` | **成交**覆盖，和 K 线覆盖是两回事，不要混用。 |
-| `bars` | 新的、可累积的 K 线序列。 |
+| `bars` | 新的、可累积的 K 线序列（按 source 共享）。 |
 
 时间口径：`t` 一律是**券商服务器墙钟秒**（与 EA 的 `bar_time` 一致），显示时再按 `server_offset_sec` 转 UTC。
 原因：历史成交、复盘窗口、EA 上传都是这个口径，换算只做一次，避免来回转换累积误差。
@@ -229,6 +271,20 @@ SyncNote 在下次 tick 领这个任务；SyncTrade 忽略它（它的 bars 由�
 P0 阶段 K 线从哪来：**继续用 `/api/mt5/review` 现有上传**。服务端解析 `charts` 里的四个周期，
 按 `M1/M5/M15/H1` 映射成 `bars` 入库并写 `have`。这样第一版零 EA 改动，历史数据也能被回收利用。
 
+### EA 能取到“券商的数据”吗
+
+能，但边界是「终端缓存 + 券商保留深度」，不是无限历史：
+
+- EA 用 `CopyRates(symbol, tf, from, to)` 要数据；终端没有时会向券商服务器请求，
+  可能阻塞、也可能先返回部分（`Bars`/`SeriesInfoInteger` 可以判断到底拿到了多少）；
+- 券商保留多久因券商而异（M1 通常 1–2 年，H1 更长），超出范围就是 0 根；
+- 终端的「图表最多 K 线数」也会限制一次能读多少；
+- 拿不到就回 `history_unavailable`，我们记 `failed`，**不冒充完整**。
+
+所以“同券商复用”的收益不止省流量：两个账户能拉到的区间不一定相同（一个补前段、一个补后段），
+合并后比任何单个账户都完整。而像 §14 那种 7 年 1 分钟深度，**任何单个 EA 都拉不下来**，
+它是长期本地缓存累积出来的——这也是为什么这份历史包值得先导进去。
+
 ---
 
 ## 9. 覆盖算法
@@ -335,9 +391,16 @@ P2 完成后追加：
   导出是**确定性**的（gzip 头 `mtime=0`），同一份源库重跑得到的 sha256 与 `MANIFEST.json` 完全一致；
 - 校验：上传后已用 `sha256sum` 与 `MANIFEST.json` 逐文件比对，7/7 一致。
 
-**用途与待定**：这批数据作为「参考行情 feed」（§12 的 P4）可以立刻用；若它本来就是当前账户
-的行情，也可以作为该 `feed` 的初始填充。导入前需要确定 `feed` 标签——目前只知道时间基，
-不知道券商服务器名与账户（可以等 SyncTrade 的 `hello` 上报后再绑定，或先用 `ref:xauusd` 入库）。
+**归属**：已确认这批就是**当前生产账户**的行情。生产库 `mt5_links.account_key` 即该账户的
+`sha256(server + "\n" + account)`，导入时按它建 `feeds` 行：
+
+| 阶段 | `source` | 说明 |
+|---|---|---|
+| 导入时 | `acct:<account_key>` | 只知道账户，先绑在这里；7 年数据立刻可用 |
+| EA 上报 `server` 后 | `srv:<server>` | 建新 source 并把 `feeds.source` 指过去，`bars` 不用搬 |
+| 同券商其他用户接入 | 同一个 `srv:<server>` | 自动共享这 7 年（见 §4.1、§4.2） |
+
+`account_key` 只在服务器侧的 `feeds` 表里出现，不进仓库、不下发给前端。
 
 ## 15. 未决问题
 
