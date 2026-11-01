@@ -340,8 +340,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           const known = markIdsByCellRef.current.get(cell.id);
           const present = new Set((api.all?.() ?? []).map((row: { id: string }) => row.id));
           if (known && [...known].some((id) => present.has(id))) return;
-          const opened = marks.openedAt * 1000;
-          const closed = marks.closedAt * 1000;
+          // 对齐到这一格 K 线的开盘时间：否则标注会落在两根蜡烛之间（看起来"歪了"）。
+          const tfId: string = cell?.chart?.market?.timeframe ?? '15';
+          const stepSec = TIMEFRAMES[tfId]?.seconds ?? 900;
+          const snap = (ms: number): number => Math.floor(ms / 1000 / stepSec) * stepSec * 1000;
+          const opened = snap(marks.openedAt * 1000);
+          const closed = snap(marks.closedAt * 1000);
           const palette = markColors(themeRef.current);
           const color = marks.side === 'sell' ? palette.sell : palette.buy;
           try {
@@ -351,11 +355,11 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             });
             const entry = api.add('text', {
               anchors: [{ time: opened, price: marks.open }],
-              text: { value: '开仓 ' + marks.open.toFixed(2), size: 'small', hAlign: 'left', vAlign: 'bottom', color },
+              text: { value: '开仓 ' + marks.open.toFixed(2), size: 'small', hAlign: 'center', vAlign: 'bottom', color },
             });
             const exit = api.add('text', {
               anchors: [{ time: closed, price: marks.close }],
-              text: { value: '平仓 ' + marks.close.toFixed(2), size: 'small', hAlign: 'left', vAlign: 'top', color },
+              text: { value: '平仓 ' + marks.close.toFixed(2), size: 'small', hAlign: 'center', vAlign: 'top', color },
             });
             const ids = new Set<string>();
             for (const drawing of [line, entry, exit]) {

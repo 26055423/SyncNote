@@ -281,7 +281,10 @@ class Handler(BaseHTTPRequestHandler):
                             stored={'document':view['document'],'updated':row['created'],'source':'share'}
                         share_info=({'id':row['id'],'message':row['message'],'created':row['created'],'seen':bool(row['seen']),
                                      'anchor_ms':(view or {}).get('anchor_ms'),'timeframe':(view or {}).get('timeframe'),'layout':(view or {}).get('layout')} if row else None)
-                        return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored})
+                        # bars 里存的是券商墙钟，交易/复盘时间戳是 UTC：把偏移一起给前端，标注才能压准 K 线。
+                        clock_row=db.execute('SELECT offset FROM broker_clocks WHERE person=?',(target,)).fetchone()
+                        bar_offset=int(clock_row['offset']) if clock_row and isinstance(clock_row['offset'],(int,float)) else 0
+                        return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored,'bar_offset':bar_offset})
                     if path=='/api/chart/bars':
                         # 一笔交易 = 一个 feed = 一个 source；只返回该 source 的 K 线，
                         # 缺口原样返回（前端留白/提示），绝不拿别的 source 补。
