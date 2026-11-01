@@ -524,13 +524,21 @@ table.grid-table td { padding: 4px 8px; border-bottom: 1px solid var(--line-soft
 table.grid-table tr:hover td { background: var(--row-hover); }
 .dock-sort { position: absolute; right: 46px; top: 6px; border: 1px solid var(--line); background: var(--menu); color: var(--dim); border-radius: 6px; font-size: 11px; padding: 2px 8px; }
 
-/* 已复盘：入口保留可点，但用弱化色区分 */
-.link.done { color: var(--done-ink); }
-.link.done::before { content: "✓ "; }
-
-/* 未复盘：保留可点的入口，用空心点提示还没写 */
-.link.todo { color: var(--todo-ink); }
-.link.todo::before { content: "○ "; }
+/* 已复盘 / 未复盘：做成小胶囊，绿色一档表示"写完了"，灰色一档表示"还没写" */
+.link.done,
+.link.todo {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 8px; border-radius: 999px; font-size: 11px; line-height: 18px;
+  border: 1px solid var(--line); background: var(--well); color: var(--dim);
+}
+.link.done {
+  color: var(--good-ink); background: var(--good-bg); border-color: var(--good-line);
+}
+.link.done::before { content: "✓"; font-size: 10.5px; }
+.link.todo { color: var(--dim); background: var(--well); border-color: var(--line); }
+.link.todo::before { content: "○"; font-size: 10.5px; }
+.link.done:hover { border-color: var(--good); color: var(--good); }
+.link.todo:hover { border-color: var(--accent-line); color: var(--accent-ink); background: var(--accent-soft); }
 
 /* ------------------------------------------------------ 画图收藏栏 */
 .fav-tools { position: relative; display: flex; align-items: center; gap: 4px; }
