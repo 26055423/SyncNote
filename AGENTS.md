@@ -23,6 +23,8 @@
 | `journal.py` | 笔记、复盘读写；`reviewed()` 判断哪些成交真的复盘过 |
 | `chart.py` | 画线存档与消息（复盘分享） |
 | `sync_history.py` | 只读历史入库：原始 deal 保留，交易由服务器重建 |
+| `bars.py` | K 线序列：按券商 source 累积、只落已收盘、覆盖/缺口、轨道查询 |
+| `tools/import_bars.py` | 把导出的 CSV.gz 灌进 `bars`（幂等，导入后登记 have 覆盖） |
 | `local_ea.py` | 把 `bridge/` 打成 SyncNote / SyncTrade / 旧版三个源码包 |
 | `web/local-ea.html` | 下载页：两款 EA 的对比、安装、权限与「关网页之后」说明 |
 | `web/chart-src/src/App.tsx` | 交易台（顶栏 / K 线 / 右侧五面板 / 底部持仓历史） |
@@ -32,6 +34,7 @@
 | `web/chart-src/src/DrawingFavs.tsx` | 顶部画图收藏栏（镜像 Vela 左侧工具栏的收藏） |
 | `web/chart-src/src/SettingsMenu.tsx` | 顶部「设置」：深/浅主题、显示时区、图表语言 |
 | `web/chart-src/src/ui/icons.tsx` | 右栏四个线框图标（交易 / 消息 / 好友 / 复盘） |
+| `web/chart-src/src/TrackStrip.tsx` | 「数据轨道」：一个券商一条轨，当前交易的轨提到最上层 |
 | `web/chart-src/src/ui/prefs.ts` | 本机偏好存储（`localStorage.sn-ui.v1`）+ 写 `<html data-theme>` |
 | `web/chart-src/src/lib/time.ts` | 显示时区格式化（`stamp()` 用的就是它），不要再写死 `+8` |
 | `web/chart-src/src/styles.css` | 设计令牌（`:root` 深色 / `:root[data-theme='light']` 亮色） |
@@ -46,7 +49,7 @@
 ## 常用命令
 
 ```bash
-python tests/smoke.py                 # 集成测试（临时库，153 项）
+python tests/smoke.py                 # 集成测试（临时库，166 项）
 python tools/local_demo.py            # 本地演示实例（127.0.0.1:18900，密码 syncnote-demo-2026）
 cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/chart
 ```

@@ -8,6 +8,7 @@ import { LocalTradePanel } from './LocalTradePanel';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
+import { TrackStrip } from './TrackStrip';
 import { FriendsIcon, MailIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
@@ -551,6 +552,17 @@ export default function App() {
               {saveState === 'saving' ? '保存画线…' : saveState === 'saved' ? '画线已保存' : saveState === 'error' ? '画线保存失败' : ''}
             </span>
           </div>
+
+          {mode === 'review' && (target || shareId != null) ? (
+            <TrackStrip
+              person={target?.person}
+              ticket={target?.ticket}
+              shareId={shareId}
+              from={anchorMs - 3 * 86400000}
+              to={anchorMs + 86400000}
+              refreshKey={entry?.chart?.updated ?? 0}
+            />
+          ) : null}
 
           <div className="chart-body">
             {mode === 'live' && liveBars ? (

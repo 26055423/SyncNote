@@ -33,13 +33,6 @@ def identity(data):
  if data.get('account_key')!=key:raise HistoryError('MT5 账户摘要不匹配')
  return account,server,key
 
-def bind_account(db,person,account,server,now):
- # Existing collectors bind with SHA256(server + ':' + login). Keep this invariant.
- legacy=digest(server+':'+account)
- row=db.execute('SELECT account_key FROM mt5_links WHERE user_id=?',(person,)).fetchone()
- if row and row['account_key'] and row['account_key'] not in (legacy,account_key(server,account)):raise HistoryError('此网站账号已绑定其他 MT5 账户，不能混合导入',409)
- db.execute('INSERT INTO mt5_links(user_id,account_key,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET account_key=excluded.account_key,updated=excluded.updated',(person,legacy,now))
-
 def clean_deal(raw,begin,end):
  if not isinstance(raw,dict):raise HistoryError('成交必须是对象')
  fields={'deal_ticket','order_ticket','position_id','time_msc_server','time_server','type','entry','symbol','volume','price','profit','commission','swap','fee','magic','reason','comment','external_id','position_first_deal_ticket','position_first_time_msc_server','position_context_status'}
@@ -160,7 +153,7 @@ def ingest(db,person,data,now=None):
  if not isinstance(raw,list) or len(raw)>MAX_BATCH:raise HistoryError('每批最多 200 条原始成交')
  cleaned=[clean_deal(d,begin,end) for d in raw]
  if len({d['deal_ticket'] for d in cleaned})!=len(cleaned):raise HistoryError('同一批内成交标识重复')
- fingerprint=digest(encoded(data));bind_account(db,person,account,server,now)
+ fingerprint=digest(encoded(data))
  old=db.execute('SELECT fingerprint,ack FROM mt5_history_batches WHERE person=? AND account_key=? AND batch_id=?',(person,key,batch)).fetchone()
  if old:
   if old['fingerprint']!=fingerprint:raise HistoryError('相同批次标识对应了不同数据',409)

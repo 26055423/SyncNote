@@ -2,6 +2,7 @@
 import ipaddress
 import client_address
 import auth_security
+import bars
 import chart
 import live
 import local_ea
@@ -82,6 +83,7 @@ with connect() as db:
     auth_security.initialize(db)
     journal.initialize(db)
     sync_history.initialize(db)
+    bars.initialize(db)
     market.initialize(db)
     chart.initialize(db)
     if os.environ.get('EA_HUB_ENABLE','1')!='0':HUB.start()
@@ -96,6 +98,15 @@ def history_for(db,person):
  clock=db.execute('SELECT * FROM broker_clocks WHERE person=?',(person,)).fetchone()
  rows=[json.loads(row[0]) for row in db.execute('SELECT payload FROM trades WHERE person=?',(person,))]
  return [utc_trade(row,clock) for row in rows if row.get('history_status') not in ('invalidated','context_unavailable','context_unverified')]
+def review_bars(db,person,trade,data,now):
+ """复盘上传顺带回填 K 线（P0 不新增 EA 端点）。回填失败不影响复盘本身。"""
+ source=bars.source_of_trade(trade or {})
+ symbol=str((trade or {}).get('symbol') or '')
+ if not source or not symbol:return None
+ series=bars.series_from_review(data.get('charts'),data.get('errors'))
+ if not series:return None
+ try:return bars.ingest(db,source,str((trade or {}).get('source_account_key') or ''),symbol,series,now)
+ except (bars.BarsError,ValueError,TypeError):return None
 def pw_hash(p):
     if not isinstance(p,str) or not 8<=len(p)<=128:raise Error('密码需为 8–128 个字符')
     salt=secrets.token_hex(16);return salt+':'+hashlib.pbkdf2_hmac('sha256',p.encode(),salt.encode(),310000).hex()
@@ -271,6 +282,48 @@ class Handler(BaseHTTPRequestHandler):
                         share_info=({'id':row['id'],'message':row['message'],'created':row['created'],'seen':bool(row['seen']),
                                      'anchor_ms':(view or {}).get('anchor_ms'),'timeframe':(view or {}).get('timeframe'),'layout':(view or {}).get('layout')} if row else None)
                         return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored})
+                    if path=='/api/chart/bars':
+                        # 一笔交易 = 一个 feed = 一个 source；只返回该 source 的 K 线，
+                        # 缺口原样返回（前端留白/提示），绝不拿别的 source 补。
+                        ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
+                        row=None
+                        if share:
+                            if not share.isdigit():raise Error('消息不存在，或不是发给你的',404)
+                            row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
+                        owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
+                        if not owner:raise Error('用户不存在',404)
+                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
+                        trade=journal.trade(db,target,ticket)
+                        source=bars.source_of_trade(trade)
+                        if not source:raise Error('bars-missing-source server=%s keys=%s' % (trade.get('server'), ','.join(sorted(trade.keys()))[:120]),404)
+                        try:
+                            start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
+                        except ValueError:raise Error('时间范围不正确')
+                        if end<=start:raise Error('时间范围不正确')
+                        payload=bars.read(db,source,str(trade.get('symbol') or ''),q.get('tf',['M15'])[0],start,end,time.time())
+                        feed=db.execute('SELECT server,account FROM feeds WHERE source=? LIMIT 1',(source,)).fetchone()
+                        payload['feed']={'source':source,'server':(feed['server'] if feed else ''),'account':(feed['account'] if feed else '')}
+                        payload['symbol_label']=str(trade.get('symbol') or '')
+                        return self.reply(payload)
+                    if path=='/api/chart/tracks':
+                        # 视频编辑软件式的“轨道”：一个券商服务器一条轨。
+                        ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
+                        row=None
+                        if share:
+                            if not share.isdigit():raise Error('消息不存在，或不是发给你的',404)
+                            row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
+                        owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
+                        if not owner:raise Error('用户不存在',404)
+                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
+                        trade=journal.trade(db,target,ticket)
+                        source=bars.source_of_trade(trade)
+                        try:
+                            start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
+                        except ValueError:raise Error('时间范围不正确')
+                        if end<=start:raise Error('时间范围不正确')
+                        payload=bars.tracks(db,str(trade.get('symbol') or ''),source,start,end)
+                        payload['active_source']=source
+                        return self.reply(payload)
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
@@ -461,14 +514,17 @@ class Handler(BaseHTTPRequestHandler):
                     current=journal.trade(db,link['user_id'],str(data.get('ticket','')))
                     if current.get('source')==sync_history.SCHEMA:
                         account,server,key=sync_history.identity(data)
-                        sync_history.bind_account(db,link['user_id'],account,server,now)
+                        bars.bind_feed(db,link['user_id'],account,server,now)
                         if current.get('source_account_key')!=key:raise Error('复盘任务不属于此 MT5 账户',409)
                     result=journal.receive(db,link['user_id'],data)
+                    review_bars(db,link['user_id'],current,data,now)
                 elif path in ('/api/mt5/history-sync','/api/mt5/history-import'):
                     if path=='/api/mt5/history-sync':uid=self.link_user(db)['user_id']
                     else:
                         uid=self.user(db)['id']
                         if data.get('website_user_id')!=uid:raise Error('网站登录账号已改变，请重新授权历史同步',409)
+                    account,server,key=sync_history.identity(data)
+                    bars.bind_feed(db,uid,account,server,now)
                     result=sync_history.ingest(db,uid,data,now)
                     clock=data.get('clock')
                     if isinstance(clock,dict):record_clock(db,uid,data['server'],{'clock':clock},now)
@@ -478,17 +534,18 @@ class Handler(BaseHTTPRequestHandler):
                     uid=self.user(db)['id']
                     if data.get('website_user_id')!=uid:raise Error('网站登录账号已改变，请重新授权历史同步',409)
                     account,server,key=sync_history.identity(data)
-                    sync_history.bind_account(db,uid,account,server,now)
+                    bars.bind_feed(db,uid,account,server,now)
                     result=journal.receive(db,uid,data)
+                    review_bars(db,uid,journal.trade(db,uid,str(data.get('ticket',''))),data,now)
                 elif path=='/api/mt5/live':
                     link=self.link_user(db)
                     ingested=LIVE.ingest(link['user_id'],data);result={'ok':True,'bars':ingested['bars'],'bootstrap':ingested['first']}
                 elif path=='/api/snapshot':
                     link=self.link_user(db)
-                    s,hs,es=validate(data);uid=link['user_id'];account=str(s.get('account','')).strip();broker=str(s.get('broker','')).strip()
-                    if not account or not broker or len(account)>80 or len(broker)>160:raise Error('请同步 MT5 账户及券商标识')
-                    key=digest(broker+':'+account)
-                    if link['account_key'] and link['account_key']!=key:raise Error('此账号已绑定固定 MT5 账户，暂不支持切换交易账户',409)
+                    s,hs,es=validate(data);uid=link['user_id'];broker=str(s.get('broker','')).strip()
+                    if not broker or len(broker)>160:raise Error('请同步 MT5 账户及券商标识')
+                    # 旧采集程序（SyncNoteSync / bridge_push）的快照通道：只回填账户与成交，
+                    # **不再绑定账户**。绑定统一走 bars.bind_feed，用真实的 ACCOUNT_SERVER 建 source。
                     clock=record_clock(db,uid,broker,s,now)
                     # 采集端可以两种时间口径：券商墙钟（SyncNoteSync.mq5 原来的做法），
                     # 或者已经换算好的 UTC + 券商时间（WebBridge 这类本地桥）。
@@ -498,7 +555,7 @@ class Handler(BaseHTTPRequestHandler):
                             return {**item,'time_verified':True,'time_estimated':False}
                         return utc_trade({**{k:v for k,v in item.items() if k not in ('time_basis','time_verified')},'closed_server':item['closed']},clock)
                     hs=[normalize(t) for t in hs]
-                    db.execute('UPDATE mt5_links SET account_key=?,updated=? WHERE user_id=?',(key,now,uid));s={k:s[k] for k in ('balance','equity','currency','online','positions') if k in s};s['history']=[]
+                    s={k:s[k] for k in ('balance','equity','currency','online','positions') if k in s};s['history']=[]
                     db.execute('INSERT INTO snapshots VALUES(?,?,?) ON CONFLICT(person) DO UPDATE SET payload=excluded.payload,updated=excluded.updated',(uid,json.dumps(s,allow_nan=False),now))
                     for t in hs:db.execute('INSERT INTO trades VALUES(?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET payload=excluded.payload',(uid,str(t['ticket']),json.dumps(t,allow_nan=False)))
                     for e in es:db.execute('INSERT OR IGNORE INTO events(person,event_key,kind,text,created) VALUES(?,?,?,?,?)',(uid,e['key'],e['kind'],e['text'],now))

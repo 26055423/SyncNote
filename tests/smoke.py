@@ -1,5 +1,5 @@
 """Isolated integration checks. All accounts/trades are generated fixtures."""
-import hashlib,http.cookiejar,io,json,os,secrets,sqlite3,subprocess,sys,tempfile,urllib.request,urllib.error,zipfile
+import hashlib,http.cookiejar,io,json,os,secrets,sqlite3,subprocess,sys,tempfile,time,urllib.request,urllib.error,zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -20,7 +20,7 @@ class Client:
   try:r=self.opener.open(req,timeout=15)
   except urllib.error.HTTPError as error:r=error
   with r:
-   body=r.read();ensure(r.status==status,'unexpected HTTP status: '+path)
+   body=r.read();ensure(r.status==status,'unexpected HTTP status: '+path+' -> '+repr(body[:160]))
    return json.loads(body) if 'application/json' in r.headers.get('Content-Type','') else body
 
 def main():
@@ -181,6 +181,30 @@ def main():
    ensure(alice.request('/api/mt5/history-import',imported)['ok'],'browser-proxied import uses the same ingest')
    wrong_owner=history_body('batch-0006');wrong_owner['website_user_id']='somebody-else'
    alice.request('/api/mt5/history-import',wrong_owner,status=409)
+   # ---- K 线轨道：按 source 累积、只落已收盘、覆盖与缺口、同券商复用 ----
+   import bars as _bars
+   _now=int(time.time())
+   traded_ticket=job['ticket']
+   conn=sqlite3.connect(db);conn.row_factory=sqlite3.Row
+   _bars.initialize(conn)
+   fetched=alice.request('/api/chart/bars?person='+a['id']+'&ticket='+traded_ticket+'&tf=M1&from='+str(window_from)+'&to='+str(window_to))
+   ensure(fetched['source']=='srv:'+server_name,'bars endpoint resolves the broker source')
+   ensure(fetched['bars']==[] and len(fetched['missing'])==1,'empty source reports the whole range as missing')
+   ensure(alice.request('/api/chart/tracks?person='+a['id']+'&ticket='+traded_ticket+'&from='+str(window_from)+'&to='+str(window_to))['tracks'][0]['active'],'active track is listed first')
+   feed=_bars.bind_feed(conn,a['id'],mt5_account,server_name,_now)
+   ensure(feed['source']=='srv:'+server_name,'feed binds the broker source')
+   sample=[[window_from+60*i,2400.0,2401.0,2399.0,2400.5,7.0] for i in range(5)]
+   first=_bars.ingest(conn,feed['source'],feed['account_key'],'XAUUSD',{'M1':{'bars':sample,'complete':True,'from_server':window_from,'to_server':window_from+240}},_now)
+   ensure(first['series']['M1']['accepted']==5 and first['series']['M1']['state']=='have','closed bars are stored')
+   _bars.ingest(conn,feed['source'],feed['account_key'],'XAUUSD',{'M1':{'bars':sample,'complete':True,'from_server':window_from,'to_server':window_from+240}},_now)
+   ensure(conn.execute('SELECT count(*) FROM bars WHERE source=?',(feed['source'],)).fetchone()[0]==5,'replaying bars is idempotent')
+   unclosed=_bars.ingest(conn,feed['source'],feed['account_key'],'XAUUSD',{'M5':{'bars':[[int(_now),2400.0,2401.0,2399.0,2400.5,1.0]],'complete':True,'from_server':int(_now),'to_server':int(_now)}},_now)
+   ensure(unclosed['series']['M5']['accepted']==0 and unclosed['series']['M5']['state']=='pending','forming bars are rejected and not covered')
+   ensure(conn.execute("SELECT count(*) FROM bar_coverage WHERE tf='M5'").fetchone()[0]==0,'forming bar range stays missing')
+   after=_bars.read(conn,feed['source'],'XAUUSD','M1',window_from,window_to,_now)
+   ensure(len(after['bars'])==5 and after['missing'][0]['from']==window_from+241,'covered head shrinks the missing gap')
+   conn.commit();conn.close()
+   ensure(alice.request('/api/chart/bars?person='+a['id']+'&ticket=fixture-1&tf=M1&from=1&to=2',status=404) is not None,'trades without a broker source cannot serve bars')
    # ---- 两个源码包：同一套打包器，SyncNote 必须在打包时就被证明没有 DLL / 交易 / socket ----
    for path,product in (('/downloads/syncnote.zip','SyncNote'),('/downloads/synctrade.zip','SyncTrade')):
     with zipfile.ZipFile(io.BytesIO(anon.request(path))) as archive:

@@ -547,3 +547,19 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .fav-icon { width: 16px; text-align: center; color: var(--dim); }
 
 .fav-hint { font-size: 11px; color: var(--dim); padding: 0 4px; }
+/* ------------------------------------------------------ 数据轨道（一个券商一条轨） */
+.tracks { border-bottom: 1px solid var(--line); background: var(--strip); padding: 6px 10px 8px; display: grid; gap: 4px; }
+.tracks.is-collapsed { padding-bottom: 6px; }
+.tracks-head { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: var(--dim); }
+.tracks-head b { color: var(--text); font-size: 11.5px; font-weight: 600; }
+.tracks-toggle { margin-left: auto; padding: 2px 8px; font-size: 11px; }
+.track { display: grid; grid-template-columns: 168px minmax(0, 1fr) 42px 62px; align-items: center; gap: 8px; }
+.track-name { font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-lane { position: relative; height: 14px; border-radius: 4px; background: var(--well); border: 1px solid var(--line); overflow: hidden; }
+.track-block { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; background: var(--line-strong); }
+.track-pct { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
+.track-badge { font-size: 10.5px; color: var(--accent-ink); background: var(--accent-bg); border: 1px solid var(--accent-line); border-radius: 999px; padding: 1px 7px; text-align: center; }
+.track.is-active .track-name { color: var(--text); }
+.track.is-active .track-lane { border-color: var(--accent-line); background: var(--accent-soft); }
+.track.is-active .track-block { background: var(--accent); }
+.track:not(.is-active) { opacity: .66; }
