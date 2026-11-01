@@ -14,10 +14,10 @@ import { resolveZone } from '../lib/time';
  */
 
 /** 开平仓标注在深色/浅色底上的配色（浅色底要更深，否则虚线看不见）。 */
-function markColors(theme: string): { line: string; buy: string; sell: string } {
+function markColors(theme: string): { line: string; buy: string; sell: string; labelEntry: string; labelExit: string } {
   return theme === 'light'
-    ? { line: '#b8862b', buy: '#1f6fd0', sell: '#c0392b' }
-    : { line: '#e2bd77', buy: '#86c7ed', sell: '#e08a8a' };
+    ? { line: '#b8862b', buy: '#1f6fd0', sell: '#c0392b', labelEntry: '#a35b00', labelExit: '#7b2ff7' }
+    : { line: '#e2bd77', buy: '#86c7ed', sell: '#e08a8a', labelEntry: '#ffc53d', labelExit: '#c77dff' };
 }
 
 /**
@@ -348,19 +348,20 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           const opened = snap(marks.openedAt * 1000);
           const closed = snap(marks.closedAt * 1000);
           const palette = markColors(themeRef.current);
-          const color = marks.side === 'sell' ? palette.sell : palette.buy;
           try {
             const line = api.add('trendline', {
               anchors: [{ time: opened, price: marks.open }, { time: closed, price: marks.close }],
               style: { lineColor: palette.line, lineWidth: 1, lineStyle: 'dashed' },
             });
+            // 标签放在 K 线的两侧而不是压在蜡烛上：开仓往左、平仓往右，
+            // 颜色用与涨跌绿/红都拉得开的琥珀 / 品红，并加粗。
             const entry = api.add('text', {
               anchors: [{ time: opened, price: marks.open }],
-              text: { value: '开仓 ' + marks.open.toFixed(2), size: 'small', hAlign: 'center', vAlign: 'bottom', color },
+              text: { value: '开仓 ' + marks.open.toFixed(2), size: 'small', bold: true, hAlign: 'right', vAlign: 'center', color: palette.labelEntry },
             });
             const exit = api.add('text', {
               anchors: [{ time: closed, price: marks.close }],
-              text: { value: '平仓 ' + marks.close.toFixed(2), size: 'small', hAlign: 'center', vAlign: 'top', color },
+              text: { value: '平仓 ' + marks.close.toFixed(2), size: 'small', bold: true, hAlign: 'left', vAlign: 'center', color: palette.labelExit },
             });
             const ids = new Set<string>();
             for (const drawing of [line, entry, exit]) {
