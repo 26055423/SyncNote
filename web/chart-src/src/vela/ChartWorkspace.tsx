@@ -348,33 +348,38 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           const opened = snap(marks.openedAt * 1000);
           const closed = snap(marks.closedAt * 1000);
           const palette = markColors(themeRef.current);
+          const ids = new Set<string>();
+          const keep = (drawing: unknown) => {
+            const id = (drawing as { id?: string } | null)?.id;
+            if (id) {
+              ids.add(id);
+              markIdsRef.current.add(id);
+            }
+          };
+          // 三个图元各自 try：加的选项被旧渲染器拒绝时，只丢一个，不会把整套标注弄没。
           try {
-            const line = api.add('trendline', {
+            keep(api.add('trendline', {
               anchors: [{ time: opened, price: marks.open }, { time: closed, price: marks.close }],
               style: { lineColor: palette.line, lineWidth: 1, lineStyle: 'dashed' },
-            });
-            // 标签放在 K 线的两侧而不是压在蜡烛上：开仓往左、平仓往右，
-            // 颜色用与涨跌绿/红都拉得开的琥珀 / 品红，并加粗。
-            const entry = api.add('text', {
+            }));
+          } catch { /* ignore */ }
+          // 标签放在蜡烛两侧（开仓往左、平仓往右），并用 zIndex 压到最上层：
+          // 原生渲染器默认把用户绘图画在蜡烛下面，不显式抬层就会被实体挡住。
+          try {
+            keep(api.add('text', {
               anchors: [{ time: opened, price: marks.open }],
               text: { value: '开仓 ' + marks.open.toFixed(2), size: 'small', bold: true, hAlign: 'right', vAlign: 'center', color: palette.labelEntry },
-            });
-            const exit = api.add('text', {
+              zIndex: 2000,
+            }));
+          } catch { /* ignore */ }
+          try {
+            keep(api.add('text', {
               anchors: [{ time: closed, price: marks.close }],
               text: { value: '平仓 ' + marks.close.toFixed(2), size: 'small', bold: true, hAlign: 'left', vAlign: 'center', color: palette.labelExit },
-            });
-            const ids = new Set<string>();
-            for (const drawing of [line, entry, exit]) {
-              const id = (drawing as { id?: string } | null)?.id;
-              if (id) {
-                ids.add(id);
-                markIdsRef.current.add(id);
-              }
-            }
-            if (ids.size) markIdsByCellRef.current.set(cell.id, ids);
-          } catch (error) {
-            console.warn('trade marks failed', error);
-          }
+              zIndex: 2000,
+            }));
+          } catch { /* ignore */ }
+          if (ids.size) markIdsByCellRef.current.set(cell.id, ids);
         };
 
         const stripMarks = (document: any) => {
