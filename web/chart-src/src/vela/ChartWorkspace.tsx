@@ -363,22 +363,16 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               style: { lineColor: palette.line, lineWidth: 1, lineStyle: 'dashed' },
             }));
           } catch { /* ignore */ }
-          // 标签放在蜡烛两侧（开仓往左、平仓往右），并用 zIndex 压到最上层：
-          // 原生渲染器默认把用户绘图画在蜡烛下面，不显式抬层就会被实体挡住。
-          try {
-            keep(api.add('text', {
-              anchors: [{ time: opened, price: marks.open }],
-              text: { value: '开仓 ' + marks.open.toFixed(2), size: 'small', bold: true, hAlign: 'right', vAlign: 'center', color: palette.labelEntry },
-              zIndex: 2000,
-            }));
-          } catch { /* ignore */ }
-          try {
-            keep(api.add('text', {
-              anchors: [{ time: closed, price: marks.close }],
-              text: { value: '平仓 ' + marks.close.toFixed(2), size: 'small', bold: true, hAlign: 'left', vAlign: 'center', color: palette.labelExit },
-              zIndex: 2000,
-            }));
-          } catch { /* ignore */ }
+          // 标签：高对比色 + 压在最上层。
+          // Vela 的文字绘图不支持描边/底框（fillColor 会被忽略），所以靠颜色和层序保证可读；
+          // 真要"黑框/白框"得改成 DOM 叠层，这里先不引入。
+          const addLabel = (anchor: { time: number; price: number }, value: string, align: 'left' | 'right', color: string) => api.add('text', {
+            anchors: [anchor],
+            text: { value, size: 'small' as const, bold: true, hAlign: align, vAlign: 'center' as const, color },
+            zIndex: 2000,
+          });
+          try { keep(addLabel({ time: opened, price: marks.open }, '开仓 ' + marks.open.toFixed(2), 'right', palette.labelEntry)); } catch { /* ignore */ }
+          try { keep(addLabel({ time: closed, price: marks.close }, '平仓 ' + marks.close.toFixed(2), 'left', palette.labelExit)); } catch { /* ignore */ }
           if (ids.size) markIdsByCellRef.current.set(cell.id, ids);
         };
 
