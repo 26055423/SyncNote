@@ -170,6 +170,8 @@ export default function App() {
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') || params.get('share') ? 'review' : 'live'));
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
+  /** 图上画的是哪套数据：server = bars 表（券商墙钟），utc = 交易快照（journal.review 已转 UTC）。 */
+  const [seriesBasis, setSeriesBasis] = useState<'server' | 'utc'>('utc');
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
   const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
   const [marketInfo, setMarketInfo] = useState<{ server: string; last: number | null } | null>(null);
@@ -524,9 +526,9 @@ export default function App() {
   const serverOffsetSec = typeof entry?.bar_offset === 'number'
     ? entry.bar_offset
     : (Math.round(Number(entry?.review?.trade?.closed_server ?? NaN) - Number(entry?.review?.trade?.closed ?? NaN)) || 0);
-  // 交易快照里的 charts 和 bars 表一样，都是 EA 上报的券商标注时间（CopyRates 的 bar_time），
-  // 所以两套数据都要加这个偏移；之前只在 server 序列时加，导致走 payload 的老复盘定位偏 3 小时。
-  const barOffsetSec = serverOffsetSec;
+  // bars 表存的是券商墙钟；journal.review 返回的 opened 与 charts 已经换算成 UTC。
+  // 所以只有用 bars 表的数据时才加偏移，走交易快照时保持原值。
+  const barOffsetSec = seriesBasis === 'server' ? serverOffsetSec : 0;
   // 快照通道的旧交易没有 `review.opened`，只有 `opened_server`：用墙钟减去偏移折算成 UTC，
   // 否则整笔复盘会定位到平仓时间上去（实测 #43442851 就是这样）。
   const openedSeconds = entry?.review?.opened
@@ -566,6 +568,7 @@ export default function App() {
     let alive = true;
     void (async () => {
       const merged: ReviewCharts = { ...payload };
+      let sawServer = false;
       try {
         await Promise.all(REVIEW_BASE_TFS.map(async (tf) => {
           const [before, after] = REVIEW_WINDOW[tf];
@@ -584,12 +587,14 @@ export default function App() {
           // 两条时间基不能混：`bars` 存的是券商服务器墙钟，交易快照 payload 是 UTC。
           // 有服务端数据就整段用它（同一券商 source、完整），标注时间再由 offset 对齐。
           merged[tf] = data.bars;
+          sawServer = true;
         }));
       } catch {
         /* 拿不到就退回交易快照，不阻塞看图 */
       }
       if (alive) {
         setSeries(merged);
+        setSeriesBasis(sawServer ? 'server' : 'utc');
       }
     })();
     return () => {
