@@ -16,8 +16,8 @@ import { resolveZone } from '../lib/time';
 /** 开平仓标注在深色/浅色底上的配色（浅色底要更深，否则虚线看不见）。 */
 function markColors(theme: string): { line: string; buy: string; sell: string; labelEntry: string; labelExit: string } {
   return theme === 'light'
-    ? { line: '#b8862b', buy: '#1f6fd0', sell: '#c0392b', labelEntry: '#a35b00', labelExit: '#7b2ff7' }
-    : { line: '#e2bd77', buy: '#86c7ed', sell: '#e08a8a', labelEntry: '#ffc53d', labelExit: '#c77dff' };
+    ? { line: '#b8862b', buy: '#0e7490', sell: '#be1250', labelEntry: '#0e7490', labelExit: '#be1250' }
+    : { line: '#e2bd77', buy: '#22d3ee', sell: '#ff5ea8', labelEntry: '#22d3ee', labelExit: '#ff5ea8' };
 }
 
 /**
@@ -363,16 +363,15 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               style: { lineColor: palette.line, lineWidth: 1, lineStyle: 'dashed' },
             }));
           } catch { /* ignore */ }
-          // 标签：高对比色 + 压在最上层。
-          // Vela 的文字绘图不支持描边/底框（fillColor 会被忽略），所以靠颜色和层序保证可读；
-          // 真要"黑框/白框"得改成 DOM 叠层，这里先不引入。
-          const addLabel = (anchor: { time: number; price: number }, value: string, align: 'left' | 'right', color: string) => api.add('text', {
+          // 标签：高对比色 + 压在最上层，放在蜡烛的上/下方，不压在实体上。
+          // Vela 的文字绘图不支持描边/底框（fillColor 会被忽略），所以靠颜色和层序保证可读。
+          const addLabel = (anchor: { time: number; price: number }, value: string, align: 'left' | 'right', vAlign: 'top' | 'bottom', color: string) => api.add('text', {
             anchors: [anchor],
-            text: { value, size: 'small' as const, bold: true, hAlign: align, vAlign: 'center' as const, color },
+            text: { value, size: 'small' as const, bold: true, hAlign: align, vAlign, color },
             zIndex: 2000,
           });
-          try { keep(addLabel({ time: opened, price: marks.open }, '开仓 ' + marks.open.toFixed(2), 'right', palette.labelEntry)); } catch { /* ignore */ }
-          try { keep(addLabel({ time: closed, price: marks.close }, '平仓 ' + marks.close.toFixed(2), 'left', palette.labelExit)); } catch { /* ignore */ }
+          try { keep(addLabel({ time: opened, price: marks.open }, '开仓 ' + marks.open.toFixed(2), 'left', 'bottom', palette.labelEntry)); } catch { /* ignore */ }
+          try { keep(addLabel({ time: closed, price: marks.close }, '平仓 ' + marks.close.toFixed(2), 'left', 'top', palette.labelExit)); } catch { /* ignore */ }
           if (ids.size) markIdsByCellRef.current.set(cell.id, ids);
         };
 
