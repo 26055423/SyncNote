@@ -668,8 +668,8 @@ export default function App() {
                     </table>
                   ) : <p className="dim">没有持仓</p>}
 
-                  <h3>云端最近成交 <small>{myHistory.length}</small></h3>
-                  <TradeList rows={myHistory.slice(0, 12)} reviewed={board?.reviewed} onPick={(row) => openTicket(me!.id, String(row.ticket))} />
+                  {/* 成交历史统一放在底部「历史」页签里，右栏不再重复列一遍。 */}
+                  <p className="dim">成交历史在底部「历史」页签，点「复盘 / 未复盘」直接打开对应 K 线。</p>
                 </div>
               ) : null}
 
