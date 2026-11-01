@@ -20,6 +20,27 @@ function markColors(theme: string): { line: string; buy: string; sell: string } 
     : { line: '#e2bd77', buy: '#86c7ed', sell: '#e08a8a' };
 }
 
+/**
+ * 存档里的 `rendererConfig` 记的是**生成存档时那台机器**的主题配色
+ * （背景、网格、边框、文字、涨跌色）。回放它会让「面板已换成浅色、K 线还是黑的」，
+ * 所以套用前先剥掉：配色只认本站「设置 → 主题」。
+ */
+function stripTheme(document: unknown): unknown {
+  if (!document || typeof document !== 'object') return document;
+  let copy: any;
+  try {
+    copy = JSON.parse(JSON.stringify(document));
+  } catch {
+    return document;
+  }
+  if (Array.isArray(copy.charts)) {
+    for (const chart of copy.charts) {
+      if (chart && typeof chart === 'object') delete chart.rendererConfig;
+    }
+  }
+  return copy;
+}
+
 export interface ChartHandle {
   setLayout(id: string): void;
   getLayout(): string;
@@ -248,10 +269,19 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
 
         if (savedState) {
           try {
-            ws.applyState(savedState);
+            // 存档里带着当时那台机器的配色（rendererConfig 里有背景/网格/文字色）：
+            // 直接套用会让"面板已经换成浅色、K 线还是黑的"。主题由本站设置统一决定，
+            // 所以回放前把渲染器配置剥掉。
+            ws.applyState(stripTheme(savedState));
           } catch {
             /* 存档不兼容时退回默认布局，不阻塞看图 */
           }
+        }
+        // 回放后再对齐一次当前主题（布局/存档都可能重建过格子）。
+        try {
+          ws.setTheme?.(prefs.getState().theme);
+        } catch {
+          /* ignore */
         }
 
         const focusOne = (cell: any) => {
@@ -323,6 +353,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             if (drawings && Array.isArray(drawings.drawings)) {
               drawings.drawings = drawings.drawings.filter((row: any) => !markIdsRef.current.has(row?.id));
             }
+            // 存档不写配色：换主题的人不该把颜色带给同事的复盘和别人的分享。
+            if (chart && typeof chart === 'object') delete chart.rendererConfig;
           }
           return document;
         };

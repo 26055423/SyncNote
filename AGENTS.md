@@ -63,6 +63,7 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 7. 管理接口一律走 `self.require_admin(u, db)`（管理员身份 + 15 分钟 sudo 窗口），非管理员返回 **404**，不暴露页面存在。
 8. **新样式一律用 `styles.css` 里的 CSS 令牌**（`var(--panel)`/`var(--line)`/…），不要写十六进制颜色：
    `:root` 是深色、`:root[data-theme='light']` 是亮色，写死颜色就会在亮色主题下留一块深色补丁。
+   图表那边同理：画线存档里的 `rendererConfig`（旧的主题配色）在回放前会被剥掉，别再加回去。
 9. 页面里显示时间一律用 `stamp()`（`lib/time.ts`），它按「设置 → 显示时区」格式化；
    图表时间轴靠 `ws.setTimezone()`，两边必须同源，否则复盘定位会对不上。
 10. **历史通道只有一条路**：EA 直传走 `/api/mt5/history-sync`，浏览器代传走 `/api/mt5/history-import`，
