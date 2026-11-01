@@ -30,6 +30,7 @@
 | `web/chart-src/src/BottomDock.tsx` | 底部「持仓 / 挂单 / 历史」 |
 | `web/chart-src/src/DrawingFavs.tsx` | 顶部画图收藏栏（镜像 Vela 左侧工具栏的收藏） |
 | `web/chart-src/src/SettingsMenu.tsx` | 顶部「设置」：深/浅主题、显示时区、图表语言 |
+| `web/chart-src/src/ui/icons.tsx` | 右栏四个线框图标（交易 / 消息 / 好友 / 复盘） |
 | `web/chart-src/src/ui/prefs.ts` | 本机偏好存储（`localStorage.sn-ui.v1`）+ 写 `<html data-theme>` |
 | `web/chart-src/src/lib/time.ts` | 显示时区格式化（`stamp()` 用的就是它），不要再写死 `+8` |
 | `web/chart-src/src/styles.css` | 设计令牌（`:root` 深色 / `:root[data-theme='light']` 亮色） |
@@ -43,7 +44,7 @@
 ## 常用命令
 
 ```bash
-python tests/smoke.py                 # 集成测试（临时库，141 项）
+python tests/smoke.py                 # 集成测试（临时库，153 项）
 python tools/local_demo.py            # 本地演示实例（127.0.0.1:18900，密码 syncnote-demo-2026）
 cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/chart
 ```
@@ -87,6 +88,8 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 - 画图收藏存在浏览器 `localStorage`（`sn-chart-favs`），不跨设备。
 - 主题 / 显示时区 / 图表语言存在浏览器 `localStorage`（`sn-ui.v1`），不跨设备、不上云；默认深色 + `Asia/Shanghai`。
 - 设置只作用于 `/chart` 交易台；`/history`、`/profile` 等页面还是各自的静态页面。
+- 右栏「消息」是**留言 + 复盘分享的合并时间线**；分享存的是切片（当时激活格子的可见窗口中点、周期、画线文档），
+  收件人按切片回放，不读分享人后来改过的存档。
 - **两款 EA 的差别只在"要不要交易"**：SyncNote 只读历史（关浏览器也继续传）；SyncTrade 多了本机 WS，
   历史由浏览器代传（关网页暂停，下次补齐）。旧的 `web/SyncNoteSync.mq5` 仍会上传余额与持仓，只为兼容保留。
 - 历史重建要证据：缺开仓上下文时宁可标记「无法完整重建」，也不猜开仓价；券商改数据后旧派生交易标 `invalidated` 而不删除。

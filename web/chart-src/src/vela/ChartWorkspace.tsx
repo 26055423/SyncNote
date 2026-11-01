@@ -30,6 +30,8 @@ export interface ChartHandle {
   getSyncs(): Partial<Record<SyncKind, boolean>>;
   snapshot(): unknown;
   flush(): void;
+  /** 分享用：激活格子的周期、可见窗口中点（毫秒）、布局，以及当时的画线文档（已去掉开平仓标注）。 */
+  view(): { anchor_ms: number; timeframe: string; layout: string; document: unknown } | null;
   /** 激活某个画图工具（再点一次取消）。 */
   useTool(type: string | null): void;
   /** 当前激活的工具类型。 */
@@ -82,6 +84,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const favoritesRef = useRef<string[]>(props.favorites ?? []);
   const markIdsRef = useRef<Set<string>>(new Set());
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
+  // 分享时要把开平仓标注剔掉，`stripMarks` 定义在初始化闭包里，用 ref 传出来。
+  const stripRef = useRef<((document: unknown) => unknown) | null>(null);
   const [ready, setReady] = useState(false);
   const { theme, timezone, chartLocale } = usePrefs();
   // 标注是在事件回调里画的，回调闭包拿不到最新的 props，用 ref 兜住当前主题。
@@ -165,6 +169,36 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       } catch {
         /* ignore */
       }
+    },
+    view() {
+      const ws = wsRef.current;
+      if (!ws) return null;
+      const cell = ws.active;
+      let range: { from?: number; to?: number } | null = null;
+      try {
+        range = cell?.chart?.getVisibleRange?.() ?? null;
+      } catch {
+        range = null;
+      }
+      const from = Number(range?.from);
+      const to = Number(range?.to);
+      const center = Number.isFinite(from) && Number.isFinite(to) && to > from
+        ? Math.round((from + to) / 2)
+        : Math.round(anchorRef.current || Date.now());
+      let document: unknown = null;
+      try {
+        const state = ws.getState?.() ?? null;
+        document = stripRef.current ? stripRef.current(state) : state;
+      } catch {
+        document = null;
+      }
+      let layout = '4';
+      try {
+        layout = ws.getState?.()?.layout ?? '4';
+      } catch {
+        /* ignore */
+      }
+      return { anchor_ms: center, timeframe: cell?.chart?.market?.timeframe ?? '15', layout, document };
     },
   }));
 
@@ -292,6 +326,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           }
           return document;
         };
+        stripRef.current = stripMarks;
 
         const bind = (cell: any) => {
           if (!cell || cell.__tpBound) return;

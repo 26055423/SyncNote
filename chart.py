@@ -1,14 +1,20 @@
-"""复盘图表页的共享状态：画线/标注存档、复盘作业（分享给其他用户）。
+"""复盘图表页的共享状态：画线/标注存档、复盘消息（分享给其他用户）。
 
 图表的 K 线仍由 journal/market 提供（每笔交易同步或参考行情），这里只负责
 “这张图上画了什么”和“这张图发给了谁”，不做行情计算。
+
+一次分享 = 一条带复盘切片的富文本消息：分享人点击分享那一刻的**激活格子**、
+它的周期、可见窗口中点的时间戳，以及当时的整份画线文档。收件人打开时按这三样
+直接还原同一张图，而不是读分享人后来改过的存档。
 """
 import json
 import time
 
 MAX_STATE_BYTES = 512 * 1024
+MAX_SNAPSHOT_BYTES = 512 * 1024
 MAX_RECIPIENTS = 20
 MAX_MESSAGE = 500
+MAX_ANCHOR_MS = 4102444800000
 
 
 class ChartError(Exception):
@@ -23,6 +29,9 @@ def initialize(db):
     CREATE INDEX IF NOT EXISTS idx_review_shares_recipient ON review_shares(recipient,seen);
     CREATE INDEX IF NOT EXISTS idx_review_shares_owner ON review_shares(owner,ticket);
     ''')
+    columns = {row[1] for row in db.execute('PRAGMA table_info(review_shares)')}
+    if 'snapshot' not in columns:
+        db.execute("ALTER TABLE review_shares ADD COLUMN snapshot TEXT NOT NULL DEFAULT ''")
 
 
 def state(db, person, ticket):
@@ -56,7 +65,44 @@ def clear_state(db, person, ticket):
     return {'ok': True}
 
 
-def share(db, owner, ticket, recipients, message):
+def clean_snapshot(snapshot):
+    """一条消息附带的复盘切片：激活格子的周期 + 可见窗口中点时间 + 画线文档。"""
+    if snapshot is None:
+        return ''
+    if not isinstance(snapshot, dict):
+        raise ChartError('分享视图格式不正确')
+    anchor = snapshot.get('anchor_ms')
+    if isinstance(anchor, bool) or not isinstance(anchor, int) or not 0 < anchor <= MAX_ANCHOR_MS:
+        raise ChartError('分享视图缺少正确的 K 线时间')
+    timeframe = snapshot.get('timeframe', '')
+    if not isinstance(timeframe, str) or len(timeframe) > 8:
+        raise ChartError('分享视图的周期不正确')
+    layout = snapshot.get('layout', '')
+    if not isinstance(layout, str) or len(layout) > 8:
+        raise ChartError('分享视图的布局不正确')
+    document = snapshot.get('document')
+    if document is not None:
+        if not isinstance(document, dict) or document.get('version') != 1 or not isinstance(document.get('charts'), list):
+            raise ChartError('分享的画线存档格式不正确')
+    body = json.dumps({'anchor_ms': anchor, 'timeframe': timeframe, 'layout': layout, 'document': document}, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+    if len(body.encode('utf-8')) > MAX_SNAPSHOT_BYTES:
+        raise ChartError('分享的画线内容过大，请减少标注后重试', 413)
+    return body
+
+
+def share_view(row):
+    """解析一行的分享切片；旧消息没有切片时返回 None（退回读存档）。"""
+    raw = row['snapshot'] if 'snapshot' in row.keys() else ''
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def share(db, owner, ticket, recipients, message, snapshot=None):
     """Send one review chart to other users; re-sending the same ticket updates the message."""
     if not isinstance(recipients, list) or not recipients:
         raise ChartError('请选择至少一位收件人')
@@ -64,6 +110,7 @@ def share(db, owner, ticket, recipients, message):
         raise ChartError('一次最多发给 %d 位用户' % MAX_RECIPIENTS)
     if not isinstance(message, str) or len(message) > MAX_MESSAGE:
         raise ChartError('留言最多 %d 字' % MAX_MESSAGE)
+    body = clean_snapshot(snapshot)
     ids = []
     for value in recipients:
         if not isinstance(value, str) or not value or value == owner:
@@ -79,8 +126,8 @@ def share(db, owner, ticket, recipients, message):
         raise ChartError('收件人不存在')
     now = time.time()
     for recipient in ids:
-        db.execute('INSERT INTO review_shares(owner,ticket,recipient,message,created,seen) VALUES(?,?,?,?,?,0) ON CONFLICT(owner,ticket,recipient) DO UPDATE SET message=excluded.message,created=excluded.created,seen=0', (owner, str(ticket), recipient, message.strip(), now))
-    return {'ok': True, 'sent': len(ids), 'created': now}
+        db.execute('INSERT INTO review_shares(owner,ticket,recipient,message,created,seen,snapshot) VALUES(?,?,?,?,?,0,?) ON CONFLICT(owner,ticket,recipient) DO UPDATE SET message=excluded.message,created=excluded.created,seen=0,snapshot=excluded.snapshot', (owner, str(ticket), recipient, message.strip(), now, body))
+    return {'ok': True, 'sent': len(ids), 'created': now, 'has_snapshot': bool(body)}
 
 
 def inbox(db, uid, limit=50):
@@ -95,9 +142,11 @@ def inbox(db, uid, limit=50):
     items = []
     for row in rows:
         trade = tickets.get((row['owner'], row['ticket'])) or {}
+        view = share_view(row) or {}
         items.append({
             'id': row['id'], 'ticket': row['ticket'], 'owner': {'id': row['owner'], 'name': row['nickname'], 'avatar': row['avatar']},
             'message': row['message'], 'created': row['created'], 'seen': bool(row['seen']),
+            'anchor_ms': view.get('anchor_ms'), 'timeframe': view.get('timeframe'), 'layout': view.get('layout'),
             'trade': {k: trade.get(k) for k in ('symbol', 'side', 'volume', 'open', 'close', 'profit', 'closed')} if trade else None,
         })
     return {'items': items, 'unseen': sum(1 for i in items if not i['seen'])}
@@ -106,7 +155,7 @@ def inbox(db, uid, limit=50):
 def share_row(db, uid, share_id):
     row = db.execute('SELECT * FROM review_shares WHERE id=?', (share_id,)).fetchone()
     if not row or uid not in (row['recipient'], row['owner']):
-        raise ChartError('作业不存在，或不是发给你的', 404)
+        raise ChartError('消息不存在，或不是发给你的', 404)
     return row
 
 

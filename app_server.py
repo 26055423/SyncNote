@@ -263,7 +263,14 @@ class Handler(BaseHTTPRequestHandler):
                         if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
                         review=journal.review(db,target,ticket,db.execute('SELECT * FROM broker_clocks WHERE person=?',(target,)).fetchone(),utc_trade)
                         note=journal.notes(db,target)['notes'].get(str(ticket)) if (target==uid or row or owner['share_reviews']) else None
-                        return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':{'id':row['id'],'message':row['message'],'created':row['created'],'seen':bool(row['seen'])} if row else None,'review':review,'note':note,'chart':chart.state(db,target,str(ticket))})
+                        # 分享切片优先：收件人看到的是分享人当时那个窗口，而不是他后来改过的存档。
+                        view=chart.share_view(row) if row else None
+                        stored=chart.state(db,target,str(ticket))
+                        if view and view.get('document'):
+                            stored={'document':view['document'],'updated':row['created'],'source':'share'}
+                        share_info=({'id':row['id'],'message':row['message'],'created':row['created'],'seen':bool(row['seen']),
+                                     'anchor_ms':(view or {}).get('anchor_ms'),'timeframe':(view or {}).get('timeframe'),'layout':(view or {}).get('layout')} if row else None)
+                        return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored})
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
@@ -559,7 +566,7 @@ class Handler(BaseHTTPRequestHandler):
                         result=chart.clear_state(db,uid,ticket) if data.get('clear') is True else chart.save_state(db,uid,ticket,data.get('state'))
                     elif path=='/api/reviews/share':
                         ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
-                        result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''))
+                        result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''),data.get('snapshot'))
                     elif path=='/api/reviews/share/seen':
                         share_id=data.get('id')
                         if not isinstance(share_id,int) or isinstance(share_id,bool):raise Error('消息编号不正确')

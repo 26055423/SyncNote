@@ -112,6 +112,21 @@ def main():
    ensure(bob.request('/api/reviews/inbox')['unseen']==0,'unseen cleared')
    bob.request('/api/chart/entry?person='+a['id']+'&ticket=fixture-1',status=403)
    alice.request('/api/chart/entry?share=999999',status=404)
+   # 一条消息带一份复盘切片：分享人那一刻的激活周期、窗口中点时间、画线坐标。
+   slice_doc={'version':1,'layout':'2','charts':[{'id':'c1','symbol':'review:XAUUSD','timeframe':'5','drawings':{'version':1,'drawings':[{'id':'s1','type':'rectangle'}]}}]}
+   slice_payload={'anchor_ms':1700000000000,'timeframe':'5','layout':'2','document':slice_doc}
+   posted=alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'message':'看这一刻','snapshot':slice_payload})
+   ensure(posted['sent']==1 and posted['has_snapshot'],'share stores the chart slice')
+   item=[row for row in bob.request('/api/reviews/inbox')['items'] if row['ticket']=='fixture-1'][0]
+   ensure(item['anchor_ms']==1700000000000 and item['timeframe']=='5','inbox exposes the slice anchor')
+   sliced=bob.request('/api/chart/entry?share='+str(item['id']))
+   ensure(sliced['mode']=='shared' and sliced['read_only'],'shared slice stays read only')
+   ensure(sliced['share']['anchor_ms']==1700000000000,'shared entry keeps the sharer anchor')
+   ensure(sliced['share']['layout']=='2','shared entry keeps the sharer layout')
+   ensure(sliced['chart']['document']['layout']=='2' and sliced['chart']['document']['charts'][0]['drawings']['drawings'][0]['id']=='s1','shared entry replays the slice drawings instead of the saved state')
+   alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'snapshot':{'timeframe':'5'}},status=400)
+   alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'snapshot':{'anchor_ms':'now'}},status=400)
+   alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'snapshot':{'anchor_ms':1700000000000,'document':{'version':9}}},status=400)
    alice_token=alice.request('/api/mt5/token',{})['token']
    bob_token=bob.request('/api/mt5/token',{})['token']
    people=admin.request('/api/admin/users')['users']
