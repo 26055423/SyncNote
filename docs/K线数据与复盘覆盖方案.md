@@ -249,7 +249,19 @@ GET /api/chart/bars?person=<uid>&ticket=108245&tf=M15&from=…&to=…
 - 返回：`{bars:[[t,o,h,l,c,v],…], covered:[[from,to],…], missing:[[from,to],…], feed_label:"Broker-Demo · 90012345"}`；
 - `feed_label` 只给显示用（“数据：分享者的行情”），不回 `account_key` 原文以外的任何凭据。
 
-### 7.3 扩展：`/api/mt5/review` 的 ACK
+### 7.3 新增：`GET /api/chart/tracks`
+
+给前端「数据轨道」用：一个券商服务器一条轨，返回每条轨在给定窗口内的覆盖段与覆盖率，
+当前这笔交易所属的轨标 `active: true` 并排在第一位（前端据此提到最上层）。
+
+`
+GET /api/chart/tracks?share=12&from=<server_sec>&to=<server_sec>
+GET /api/chart/tracks?person=<uid>&ticket=108245&from=…&to=…
+`
+
+授权与 `/api/chart/entry` 相同；不传 `from/to` 由前端按“锚点前 3 天、后 1 天”给出。
+
+### 7.4 扩展：`/api/mt5/review` 的 ACK
 
 在现有 ACK 里追加 `bars_job`（与 `review_job` 同构，一次一个）：
 
@@ -339,6 +351,7 @@ P0 阶段 K 线从哪来：**继续用 `/api/mt5/review` 现有上传**。服务
 | 期 | 内容 | EA 改动 | 风险 |
 |---|---|---|---|
 | **P0** | `bars` + `bar_coverage` 建表；从现有 `/api/mt5/review` 的 `charts` 回收入库；`GET /api/chart/bars`；复盘页按该 feed 渲染 + 缺口留白提示 | 无 | 低，向后兼容 |
+| 现状（2026-11-02） | P0 后端已落地：`bars`/`bar_coverage`/`bar_attempt`/`feeds` 建表、`bars.bind_feed`、`GET /api/chart/bars`、`GET /api/chart/tracks`、复盘上传回填；7 年 XAUUSD 已导入（333 万根）。前端轨道条已接，图表仍读 `trade_reviews.payload`（下一步切数据源）。 |
 | **P1** | `POST /api/mt5/bars` + `bars-import`；前端按缺口请求（SyncTrade 走本机 WS） | 无 | 中，需处理并发/去重 |
 | **P2** | SyncNote 领 `bars_job`，按时间跨度抓取；窗口从 ±30 根放大到“前 2 天/后 1 天” | 有 | 中，`CopyRates` 可用性要兜底 |
 | **P3** | 「补齐缺口」按钮 + 覆盖百分比提示 + 新用户首次 90 天引导 | 无 | 低 |
@@ -390,6 +403,10 @@ P2 完成后追加：
 - 导出脚本：`tools/export_market_bars.py`（纯标准库，只读源库），可随时重跑；
   导出是**确定性**的（gzip 头 `mtime=0`），同一份源库重跑得到的 sha256 与 `MANIFEST.json` 完全一致；
 - 校验：上传后已用 `sha256sum` 与 `MANIFEST.json` 逐文件比对，7/7 一致。
+
+**已导入（2026-11-02）**：3,330,289 根全部进了生产库的 ars，source = srv:EasyTradingOnlineLtd-Server，
+eeds 里对应账户 510715；导入时停了约 1 分钟服务，DB 从 0.6 MB 涨到 531 MB（40 GB 盘，占用 8%）。
+旧 mt5_links.account_key（WebBridge: 那个占位哈希）已清空，等 EA 第一次上传时按真实 ACCOUNT_SERVER 重绑。
 
 **归属**：已确认这批就是**当前生产账户**的行情。生产库 `mt5_links.account_key` 即该账户的
 `sha256(server + "\n" + account)`，导入时按它建 `feeds` 行：
