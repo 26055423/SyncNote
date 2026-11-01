@@ -295,7 +295,11 @@ class Handler(BaseHTTPRequestHandler):
                         if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
                         trade=journal.trade(db,target,ticket)
                         source=bars.source_of_trade(trade)
-                        if not source:raise Error('bars-missing-source server=%s keys=%s' % (trade.get('server'), ','.join(sorted(trade.keys()))[:120]),404)
+                        if not source:
+                            # 旧快照交易没带 server：回落到这个人的 feed（他绑定的那台券商）。
+                            feed=bars.feed_of(db,target)
+                            source=feed['source'] if feed else None
+                        if not source:raise Error('这笔交易没有行情来源，暂时只能看复盘快照',404)
                         try:
                             start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
                         except ValueError:raise Error('时间范围不正确')
@@ -317,6 +321,9 @@ class Handler(BaseHTTPRequestHandler):
                         if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
                         trade=journal.trade(db,target,ticket)
                         source=bars.source_of_trade(trade)
+                        if not source:
+                            feed=bars.feed_of(db,target)
+                            source=feed['source'] if feed else None
                         try:
                             start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
                         except ValueError:raise Error('时间范围不正确')

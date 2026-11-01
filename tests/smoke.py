@@ -204,7 +204,8 @@ def main():
    after=_bars.read(conn,feed['source'],'XAUUSD','M1',window_from,window_to,_now)
    ensure(len(after['bars'])==5 and after['missing'][0]['from']==window_from+241,'covered head shrinks the missing gap')
    conn.commit();conn.close()
-   ensure(alice.request('/api/chart/bars?person='+a['id']+'&ticket=fixture-1&tf=M1&from=1&to=2',status=404) is not None,'trades without a broker source cannot serve bars')
+   legacy=alice.request('/api/chart/bars?person='+a['id']+'&ticket=fixture-1&tf=M1&from='+str(window_from)+'&to='+str(window_to))
+   ensure(legacy['source']=='srv:'+server_name,'trades without a server fall back to their owner feed')
    # ---- 两个源码包：同一套打包器，SyncNote 必须在打包时就被证明没有 DLL / 交易 / socket ----
    for path,product in (('/downloads/syncnote.zip','SyncNote'),('/downloads/synctrade.zip','SyncTrade')):
     with zipfile.ZipFile(io.BytesIO(anon.request(path))) as archive:
