@@ -1,9 +1,9 @@
 // SyncTrade (SyncNote Pro) - local trading and read-only history export.
-// Windows MT5 only; system Ws2_32.dll + bcrypt.dll; no Python or custom DLL.
+// Windows 8+ MT5 only; system Ws2_32.dll + bcrypt.dll + kernel32.dll; no custom DLL.
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading is OFF by default and this initial release rejects ALL real accounts.
 #property copyright "SyncTrade"
-#property version "1.100"
+#property version "1.101"
 #property strict
 #property description "Windows localhost WebSocket EA. Default read-only; demo-only trading. Allow system DLL imports."
 
@@ -14,6 +14,9 @@
 input string InpAllowedOrigin="https://sync-trade.top"; // Exact HTTPS website origin, no trailing slash
 input string InpSymbol="XAUUSD";                      // Exact broker symbol, suffix included
 input bool InpAllowTrading=false;                    // Explicit local opt-in; demo accounts only
+input bool InpAllowRealTrading=false;                 // Allow a REAL account (rare; needs hedging + caps below)
+input double InpRealMaxLots=0.05;                     // Real account: max lots per order (0 = block real trading)
+input int InpRealMaxOrdersPerDay=5;                   // Real account: max new market orders per day (0 = block)
 input double InpMaxOrderLots=0.10;                   // Maximum market order / partial close lots
 input double InpMaxSymbolLots=1.00;                  // Maximum gross exposure on selected symbol
 input int InpMaxDeviationPoints=20;                  // Maximum requested deviation in broker points
@@ -25,7 +28,7 @@ input bool InpAllowCancel=true;
 input bool InpAllowModify=true;
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.100"
+#define LOCAL_VERSION "1.101"
 #define JOURNAL_MAX 10000
 #define PAIR_TTL_MS 120000
 
@@ -35,6 +38,8 @@ ulong g_pair_until=0;
 int g_pair_attempts=0,g_pending_peer=-1,g_session_peer=-1;
 ulong g_pending_until=0;
 ulong g_last_tick=0,g_last_snapshot=0,g_last_command=0;
+// 实盘下单计数（本地日，券商时间）：超过 InpRealMaxOrdersPerDay 就拒绝。
+int g_real_orders_day=-1,g_real_orders=0;
 bool g_force_snapshot=true,g_journal_ok=false,g_account_stable=false;
 int g_journal=INVALID_HANDLE;
 string g_journal_path="";
@@ -93,10 +98,15 @@ CSyncNoteHistory g_history_export;
 ulong g_history_defer_until=0;
 
 bool LocalDemo() { return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_DEMO; }
+bool LocalReal() { return !LocalDemo(); }
 bool LocalCanTrade()
 {
    // Netting can merge with manual/other-EA exposure, defeating magic ownership checks.
-   return InpAllowTrading && LocalDemo() && AccountInfoInteger(ACCOUNT_MARGIN_MODE)==ACCOUNT_MARGIN_MODE_RETAIL_HEDGING && g_journal_ok && g_account_stable;
+   if(!InpAllowTrading || !g_journal_ok || !g_account_stable) return false;
+   bool hedging=AccountInfoInteger(ACCOUNT_MARGIN_MODE)==ACCOUNT_MARGIN_MODE_RETAIL_HEDGING;
+   if(LocalDemo()) return hedging;
+   // 实盘：必须单独开关 + 单笔/每日上限都有效，否则一律只读。
+   return InpAllowRealTrading && hedging && InpRealMaxLots>0 && InpRealMaxOrdersPerDay>0;
 }
 string JsonBool(const bool value) { return value ? "true" : "false"; }
 string CapabilitiesJson()
@@ -111,7 +121,8 @@ string CapabilitiesJson()
 string IdentityFields()
 {
    return "\"product\":\"SyncTrade\",\"features\":[\"history\"],\"instance_id\":"+JStr(g_instance)+",\"account_id\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+",\"epoch\":"+JStr(g_epoch)+
-      ",\"demo\":"+JsonBool(LocalDemo())+",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
+      ",\"demo\":"+JsonBool(LocalDemo())+",\"real_trading\":"+JsonBool(LocalReal() && InpAllowRealTrading && LocalCanTrade())+
+      ",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
 }
 void LocalError(const int peer,const string code,const string message,const string request_id="")
 {
@@ -147,10 +158,16 @@ void MakeButton(const string name,const string label,const int x)
    ObjectSetInteger(0,name,OBJPROP_XSIZE,165);ObjectSetInteger(0,name,OBJPROP_YSIZE,30);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);ObjectSetInteger(0,name,OBJPROP_BGCOLOR,clrDarkSlateGray);
    ObjectSetString(0,name,OBJPROP_TEXT,label);
+   // 按钮要在最上层、且可点击：OBJPROP_SELECTABLE 关掉只影响拖动，不影响点击；
+   // ZORDER 不够时会被 Comment/其他对象盖住，看起来"点不到"。
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,false);
+   ObjectSetInteger(0,name,OBJPROP_ZORDER,100);
+   ChartRedraw();
 }
 void PaintStatus()
 {
-   string mode=LocalCanTrade() ? "DEMO trading enabled / 模拟交易已开启" : "READ ONLY / 只读";
+   string mode=!LocalCanTrade() ? "READ ONLY / 只读" : (LocalReal() ? "REAL trading enabled (caps active) / 实盘交易已开启（有上限）" : "DEMO trading enabled / 模拟交易已开启");
    string pending=g_pending_peer>=0 ? "\n网站已输入正确配对码，请核对来源及账号后点击下方【允许本次连接】。" : "";
    Comment("SyncTrade 本机 EA ",LOCAL_VERSION,"\n",mode,"\n网站来源: ",InpAllowedOrigin,
       "\n账号: ",g_account," @ ",g_server,"\n品种: ",InpSymbol,
@@ -508,6 +525,7 @@ bool SetFill(MqlTradeRequest &request)
 }
 void HandleTradeCommand(const int peer,const string js)
 {
+   const long received_utc=LocalUtcMs();const ulong received_mono=GetTickCount64();
    string id="",action="",side="",symbol="",position="",order="",ticket="";
    JsonGetString(js,"command_id",id);JsonGetString(js,"action",action);JsonGetString(js,"side",side);JsonGetString(js,"symbol",symbol);
    JsonGetString(js,"position_ticket",position);JsonGetString(js,"order_ticket",order);JsonGetString(js,"ticket",ticket);
@@ -529,9 +547,9 @@ void HandleTradeCommand(const int peer,const string js)
    }
    string error="";
    if(fingerprint=="") error="Cryptographic hash failed";
-   else if(!LocalCanTrade()) error="READ_ONLY: trading requires DEMO HEDGING account, EA local opt-in and healthy journal";
+   else if(!LocalCanTrade()) error="READ_ONLY: trading needs EA opt-in, hedging account and healthy journal (real accounts also need InpAllowRealTrading and caps)";
    else if(!TerminalInfoInteger(TERMINAL_CONNECTED)||!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)||!MQLInfoInteger(MQL_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_EXPERT)) error="MT5 trading permissions or connection unavailable";
-   else if(expires<LocalUtcMs() || expires>LocalUtcMs()+30000 || expires!=MathFloor(expires)) error="Command expired or deadline is more than 30s ahead; check computer clock";
+   else if(!LocalDeadlineValid(expires,received_utc)) error="Command expired or deadline is more than 30s ahead; check computer clock";
    else if(GetTickCount64()-g_last_command<500) error="Local command rate limit: wait 500ms";
    else if(symbol!="" && symbol!=InpSymbol) error="Symbol is not allowed by this EA";
    else if(deviation<0 || deviation>InpMaxDeviationPoints || deviation!=MathFloor(deviation)) error="Deviation exceeds local limit";
@@ -548,6 +566,15 @@ void HandleTradeCommand(const int peer,const string js)
       for(int i=0;i<PositionsTotal();i++) if(PositionGetTicket(i)>0 && PositionGetString(POSITION_SYMBOL)==InpSymbol) exposure+=PositionGetDouble(POSITION_VOLUME);
       for(int i=0;i<OrdersTotal();i++) if(OrderGetTicket(i)>0 && OrderGetString(ORDER_SYMBOL)==InpSymbol) exposure+=OrderGetDouble(ORDER_VOLUME_CURRENT);
       if(error=="" && exposure+volume>InpMaxSymbolLots+1e-9) error="Total symbol exposure exceeds local limit";
+      // 实盘额外两道闸：单笔手数上限 + 每个券商日的新单数上限。
+      if(error=="" && LocalReal())
+      {
+         int today=(int)(TimeTradeServer()/86400);
+         if(g_real_orders_day!=today) {g_real_orders_day=today;g_real_orders=0;}
+         if(InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9) error="Real account lot cap exceeded";
+         else if(g_real_orders>=InpRealMaxOrdersPerDay) error="Real account daily order limit reached";
+         else g_real_orders++;
+      }
       bool buy=side=="buy";
       if(error=="" && !StopsValid(buy,sl,tp,tick)) error="SL/TP side or broker stop distance invalid";
       request.action=TRADE_ACTION_DEAL;request.type=buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -614,13 +641,20 @@ void HandleTradeCommand(const int peer,const string js)
       g_commands[index].state="rejected";g_commands[index].result=CommandResult(id,"rejected","Account changed before submission");JournalAppend(index);
       WsText(peer,g_commands[index].result);return;
    }
+   // Durable intent/validation may block. Reject after flushing, before touching
+   // MT5, and keep the same command_id durably rejected instead of replaying it.
+   if(!LocalDeadlineReady(expires,received_utc,received_mono,LocalUtcMs(),GetTickCount64()))
+   {
+      g_commands[index].state="rejected";
+      g_commands[index].result=CommandResult(id,"rejected","Command expired before submission; order was not sent");
+      JournalAppend(index);WsText(peer,g_commands[index].result);return;
+   }
    g_last_command=GetTickCount64();
    bool sent=OrderSend(request,result);
    if(!sent && result.retcode==0) result.comment="Submission result unknown; MT5 error "+IntegerToString(GetLastError());
-   string state="rejected";
-   if(result.retcode==10009 || result.retcode==10010 || result.retcode==10025) state="completed";
-   else if(result.retcode==10008) state="submitted";
-   else if(result.retcode==0 || result.retcode==10011 || result.retcode==10012 || result.retcode==10031) state="uncertain";
+   // RETURN leaves the unfilled remainder working: keep tracking its exact order.
+   // IOC cancels the remainder and may finish as a terminal partial execution.
+   string state=LocalSubmissionState(result.retcode,request.type_filling);
    g_commands[index].state=state;
    g_commands[index].broker_order=result.order;g_commands[index].broker_deal=result.deal;
    g_commands[index].result=CommandResult(id,state,result.comment,result.retcode,result.order,result.deal,result.price,result.volume);
@@ -728,6 +762,7 @@ int OnInit()
    if(g_epoch=="" || g_pair_code=="") return INIT_FAILED;
    if(!WsStart(LOCAL_PORT)) {Print("SyncTrade: cannot bind 127.0.0.1:18765; another EA may already own the port. Error=",WSAGetLastError());WsStop();return INIT_FAILED;}
    MakeButton(g_button_allow,"允许本次连接 / Allow",10);MakeButton(g_button_revoke,"撤销授权 / Revoke",185);
+   // Object clicks arrive as CHARTEVENT_OBJECT_CLICK; no ChartSetInteger flag is required.
    if(!EventSetMillisecondTimer(15)) {WsStop();return INIT_FAILED;}
    PaintStatus();return INIT_SUCCEEDED;
 }
@@ -766,13 +801,37 @@ void OnTimer()
 void OnTick() { /* Networking is timer-driven and remains available during quiet markets. */ }
 void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)
 {
+   if(id!=CHARTEVENT_OBJECT_CLICK) {AccountChanged();return;}
+   // 点按钮时不要先跑 AccountChanged：它可能重建配对码/重绘，把这次点击吃掉。
+   // 每一步都留痕，点不动的时候看"专家"日志就知道卡在哪一层。
+   long left=(g_pending_until>GetTickCount64()) ? (long)(g_pending_until-GetTickCount64()) : 0;
+   if(sparam==g_button_allow)
+      Print("SyncTrade: Allow clicked; pending=",g_pending_peer," left_ms=",left,
+            " upgraded=",(g_pending_peer>=0 && g_pending_peer<LOCAL_PEERS ? (string)g_local_peers[g_pending_peer].upgraded : "n/a"));
+   else if(sparam==g_button_revoke)
+      Print("SyncTrade: Revoke clicked; token=",(g_token!=""?"set":"none"));
+   else {AccountChanged();return;}
    AccountChanged();
-   if(id!=CHARTEVENT_OBJECT_CLICK) return;
    if(sparam==g_button_revoke)
    {ClearAuthorization();NewPairCode();ObjectSetInteger(0,g_button_revoke,OBJPROP_STATE,false);PaintStatus();return;}
-   if(sparam!=g_button_allow) return;
    ObjectSetInteger(0,g_button_allow,OBJPROP_STATE,false);
-   if(g_pending_peer<0 || GetTickCount64()>g_pending_until || !g_local_peers[g_pending_peer].upgraded) return;
+   if(g_pending_peer<0 || g_pending_peer>=LOCAL_PEERS)
+   {
+      // 以前这里静默 return，看起来就是"点了没反应"：明确提示重新输码。
+      Print("SyncTrade: Allow ignored - no pairing request is waiting");
+      NewPairCode();PaintStatus();ChartRedraw();return;
+   }
+   if(GetTickCount64()>g_pending_until)
+   {
+      Print("SyncTrade: Allow ignored - pairing request expired");
+      LocalError(g_pending_peer,"PAIR_EXPIRED","Local approval timed out");g_pending_peer=-1;g_pending_until=0;
+      NewPairCode();PaintStatus();ChartRedraw();return;
+   }
+   if(!g_local_peers[g_pending_peer].upgraded || g_local_peers[g_pending_peer].closing)
+   {
+      Print("SyncTrade: Allow ignored - the website socket is gone, reconnect from the site");
+      g_pending_peer=-1;g_pending_until=0;PaintStatus();ChartRedraw();return;
+   }
    // The only route to issue a new session token is this local chart click.
    g_token=RandomHex(32);
    if(g_token=="") {LocalError(g_pending_peer,"RNG","Could not create session token");return;}
@@ -781,6 +840,7 @@ void OnChartEvent(const int id,const long &lparam,const double &dparam,const str
    WsText(peer,"{\"type\":\"paired\",\"token\":"+JStr(g_token)+","+IdentityFields()+",\"symbol\":"+JStr(InpSymbol)+"}");
    g_pair_code="--------";g_pair_until=GetTickCount64()+PAIR_TTL_MS;
    SendSnapshot(peer);PaintStatus();
+   Print("SyncTrade: pairing approved for peer ",peer);
 }
 void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
 {

@@ -25,6 +25,8 @@ export interface LocalTerminalState {
   symbol: string;
   read_only: boolean;
   demo: boolean;
+  /** EA 明确允许在实盘账户上下单（InpAllowRealTrading + 上限都打开时才会是 true）。 */
+  real_trading: boolean;
   capabilities: string[];
   product: string;
   features: string[];
@@ -67,7 +69,7 @@ export interface NoteReviewBars {
 
 const freshState = (): LocalTerminalState => ({
   phase: 'disconnected', error: '', instance_id: '', account_id: '', server: '', epoch: '',
-  symbol: 'XAUUSD', read_only: true, demo: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
+  symbol: 'XAUUSD', read_only: true, demo: false, real_trading: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
   latency: null, account: {}, tick: null,
   positions: [], orders: [], bars: {}, history_ready: false, commands: [], revision: 0,
 });
@@ -200,6 +202,7 @@ export class LocalTerminal {
       server: String(message.server ?? this.state.server), epoch: String(message.epoch ?? this.state.epoch),
       symbol: String(message.symbol ?? this.state.symbol), read_only: message.read_only !== false,
       demo: message.demo === true,
+      real_trading: message.real_trading === true,
       capabilities: Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : this.state.capabilities,
       product: typeof message.product === 'string' ? message.product : this.state.product,
       features: Array.isArray(message.features) ? message.features.filter((value: unknown): value is string => typeof value === 'string') : this.state.features,

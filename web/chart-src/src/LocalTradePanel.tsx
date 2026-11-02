@@ -18,12 +18,14 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   const [modifyTicket, setModifyTicket] = useState('');
   const connected = state.phase === 'connected';
   const unresolved = state.commands.some((command) => command.account_id === state.account_id && command.server === state.server && !['completed', 'rejected'].includes(command.state));
-  const enabled = connected && !state.read_only && state.demo && !unresolved;
+  // 实盘账户：EA 只有在 InpAllowRealTrading + 单笔/日上限都打开时才报 real_trading=true。
+  const realTrading = state.real_trading && !state.demo;
+  const enabled = connected && !state.read_only && (state.demo || realTrading) && !unresolved;
   // 连上了却下不了单时，说清楚是哪一条拦住的：非模拟账户 / 只读 / 还有待核实指令。
   const lockedReason = !connected
     ? ''
-    : !state.demo
-      ? '已连接，但当前账户不是模拟账户：首版只允许模拟对冲账户下单'
+    : !state.demo && !state.real_trading
+      ? '已连接，但当前账户不是模拟账户：需在 EA 里打开 InpAllowRealTrading 和单笔/每日上限'
       : state.read_only
         ? '已连接，但 EA 处于只读模式：请在 EA 参数里开启交易权限'
         : unresolved
@@ -66,8 +68,12 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
         ask={state.tick?.ask ?? 0}
         connected={enabled}
         lockedReason={lockedReason}
+        real={realTrading}
         onSubmit={submitMarketOrder}
       />
+      {realTrading ? (
+        <p className="local-real-warning" role="alert">实盘账户：下单按钮发出的指令会真实成交，请先核对手数、方向与止损。</p>
+      ) : null}
     {connected ? <>
       
       <h3>本机持仓 <small>{state.positions.length}</small></h3>

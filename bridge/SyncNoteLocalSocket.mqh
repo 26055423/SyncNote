@@ -1,6 +1,7 @@
 // Windows-only loopback RFC 6455 transport. No custom DLLs or helper process.
 #ifndef SYNCNOTE_LOCAL_SOCKET
 #define SYNCNOTE_LOCAL_SOCKET
+#include "SyncNoteLocalSafety.mqh"
 #import "Ws2_32.dll"
 int WSAStartup(ushort version,uchar &data[]);
 int WSACleanup();
@@ -17,6 +18,11 @@ int WSAGetLastError();
 #import
 #import "bcrypt.dll"
 int BCryptGenRandom(ulong algorithm,uchar &buffer[],uint length,uint flags);
+#import
+
+// Windows 8 / Server 2012 or later. UTC wall-clock only; durations use GetTickCount64.
+#import "kernel32.dll"
+void GetSystemTimePreciseAsFileTime(ulong &filetime);
 #import
 
 #define LOCAL_PEERS 4
@@ -54,7 +60,11 @@ CLocalPeer g_local_peers[LOCAL_PEERS];
 ulong g_listener=WIN_INVALID_SOCKET;
 bool g_winsock_started=false;
 
-long LocalUtcMs() { return (long)TimeGMT()*1000; }
+long LocalUtcMs()
+{
+   ulong ticks=0;GetSystemTimePreciseAsFileTime(ticks);
+   return LocalUnixMsFromFileTime(ticks);
+}
 bool RandomBytes(uchar &bytes[],const int count)
 {
    ArrayResize(bytes,count);

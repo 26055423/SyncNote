@@ -43,6 +43,8 @@ export interface OrderTicketProps {
   connected: boolean;
   /** 连上了但不能下单时，把原因写在这里（比笼统的"未连接"准确）。 */
   lockedReason?: string;
+  /** 实盘账户：额外显示醒目标签并多一道确认。 */
+  real?: boolean;
   /** EA 是否声明支持挂单（limit/stop）。首版协议没有，默认关闭。 */
   allowPending?: boolean;
   submitting?: boolean;
@@ -50,7 +52,7 @@ export interface OrderTicketProps {
   onConnect?: () => void;
 }
 
-export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason, allowPending = false, submitting = false, onSubmit, onConnect }: OrderTicketProps) {
+export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason, real = false, allowPending = false, submitting = false, onSubmit, onConnect }: OrderTicketProps) {
   const [action, setAction] = useState<OrderAction>('market');
   const [side, setSide] = useState<OrderSide>('buy');
   const [volume, setVolume] = useState('0.01');
@@ -60,6 +62,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
   const [sl, setSl] = useState('');
   const [tp, setTp] = useState('');
   const [armed, setArmed] = useState(false);
+  const [realArmed, setRealArmed] = useState(false);
   const [oneClick, setOneClick] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [attempt, setAttempt] = useState<OrderAttempt | null>(null);
@@ -104,9 +107,11 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
       ? '等待行情报价…'
       : !armed
         ? '请先勾选「解锁下单」'
-        : preview.problems.length > 0
-          ? '请先修正校验问题'
-          : null;
+        : real && !realArmed
+          ? '实盘账户：请再勾选「确认按实盘下单」'
+          : preview.problems.length > 0
+            ? '请先修正校验问题'
+            : null;
   const canSubmit = blocked === null && !submitting && !busy;
 
   function keyFor(payload: OrderRequest): string {
@@ -169,7 +174,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
   return (
     <section className={cls('ticket', !connected && 'is-locked')}>
       <header className="ticket-head">
-        <h3>下单</h3>
+        <h3>下单 {real ? <span className="ticket-real">实盘</span> : null}</h3>
         <span className="dim">手动 · 非自动</span>
       </header>
 
@@ -265,6 +270,13 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
         <input type="checkbox" checked={armed} onChange={(e) => setArmed(e.target.checked)} disabled={!connected} />
         <span>解锁下单 <em className="dim">（仅手动，确认后才会发送）</em></span>
       </label>
+
+      {real ? (
+        <label className="arm arm-real">
+          <input type="checkbox" checked={realArmed} onChange={(e) => setRealArmed(e.target.checked)} disabled={!connected} />
+          <span>确认按实盘下单 <em>（这是真实资金，成交不可撤销）</em></span>
+        </label>
+      ) : null}
 
       <label className={cls('arm', 'oneclick', oneClick && 'is-on')}>
         <input type="checkbox" checked={oneClick} onChange={(e) => setOneClick(e.target.checked)} disabled={!connected || !armed} />
