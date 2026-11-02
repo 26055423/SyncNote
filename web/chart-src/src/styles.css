@@ -719,3 +719,12 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   .dock-body { padding: 0 6px 6px; }
   .rail { width: 94vw; }
 }
+
+/* ---------------------------------------------------------------- 右栏收起态
+   收起时图标条必须和底下的 .rail-icons（宽 64px、按钮 58px）对齐，
+   否则 58px 的按钮塞进 46px 的栏里会被裁掉，看起来"歪"。
+   放在文件末尾，确保覆盖前面的宽屏规则。 */
+.rail.is-collapsed { width: 52px; flex-basis: 52px; }
+.rail.is-collapsed .rail-icons { width: 52px; flex-basis: 52px; }
+.rail.is-collapsed .rail-icons button { width: 44px; height: 46px; font-size: 14px; }
+.rail.is-collapsed .rail-label { font-size: 9.5px; }
