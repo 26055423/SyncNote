@@ -219,6 +219,8 @@ def main():
    ensure(any(row['kind']=='personal' for row in catalog['sources']),'data catalog marks the personal track as personal')
    ensure(all('tfs' in row and 'last_bar' in row for row in catalog['sources']),'data catalog carries coverage per timeframe')
    anon.request('/api/data/sources',status=401)
+   prefs_js=anon.request('/profile-prefs.js')
+   ensure(b'chart-prefs' not in prefs_js and b'sn-ui.v1' in prefs_js,'profile prefs script is served')
    limited=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&limit=100')
    ensure(limited.get('count') is not None and len(limited['bars'])<=100,'market bars honours the latest-N limit')
    anon.request('/api/market/bars?tf=M1&from=1&to=2',status=401)

@@ -470,7 +470,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))],'reviewed':journal.reviewed(db,uid)})
                     raise Error('接口不存在',404)
             assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/local-ea':'local-ea.html','/local-ea.css':'local-ea.css','/admin':'admin.html','/admin.js':'admin.js','/admin.css':'admin.css','/downloads/SyncNoteSync.mq5':'SyncNoteSync.mq5'}
-            for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
+            for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','profile-prefs.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
             if re.fullmatch(r'/avatars/avatar(?:[1-9]|1[0-2])\.svg',path):assets[path]=path.lstrip('/')
             # 首页就是交易台；旧看板挪到 /board。
             if path in ('/','/chart','/chart/'):
