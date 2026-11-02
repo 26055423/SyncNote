@@ -443,6 +443,9 @@ table.mini tr:last-child td { border-bottom: 0; }
 .history-sync-toggle { display: flex; align-items: center; gap: 8px; color: var(--text) !important; font-size: 12px !important; cursor: pointer; }
 .history-sync-toggle input { width: 16px; height: 16px; flex: 0 0 16px; }
 .history-sync a { color: var(--accent); }
+/* 状态行固定一行高 + 省略号：文案长短变化时面板不再上下跳 */
+.sync-line { height: 1.6em; line-height: 1.6em; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.local-error.sync-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------------------------------------------------------------- 下单面板 */
 .ticket { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
