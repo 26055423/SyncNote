@@ -69,6 +69,8 @@ export interface ChartHandle {
 }
 
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
+/** 「时间轴」开关存在本机：只影响点击跳转，不影响缩放。 */
+const TIME_SYNC_KEY = 'sn-time-sync';
 
 interface Props {
   charts: ReviewCharts;
@@ -120,6 +122,37 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   // 分享时要把开平仓标注剔掉，`stripMarks` 定义在初始化闭包里，用 ref 传出来。
   const stripRef = useRef<((document: unknown) => unknown) | null>(null);
+  // 「时间轴同步」= 点击跳到同一时刻（像 TradingView），不是缩放同步。
+  // 存在本机，刷新后仍然生效。
+  const timeSyncRef = useRef<boolean>((() => {
+    try { return localStorage.getItem(TIME_SYNC_KEY) === '1'; } catch { return false; }
+  })());
+  const stateWithTimeSync = (ws: any): Partial<Record<SyncKind, boolean>> => ({
+    ...((ws?.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>),
+    viewport: timeSyncRef.current,
+  });
+  /** 把除 exceptId 之外的格子都居中到 at；每格保持自己的跨度。 */
+  const jumpAllTo = (at: number | null, exceptId?: string) => {
+    if (at == null) return;
+    for (const cell of wsRef.current?.cells?.() ?? []) {
+      if (exceptId && cell.id === exceptId) continue;
+      const range = cell.chart?.getVisibleRange?.();
+      if (!range || !(range.to > range.from)) continue;
+      const half = (range.to - range.from) / 2;
+      try {
+        cell.chart.setVisibleRange({ from: at - half, to: at + half });
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  const activeCenter = (): number | null => {
+    const ws = wsRef.current;
+    const cell = ws?.active ?? (ws?.cells?.() ?? [])[0];
+    const range = cell?.chart?.getVisibleRange?.();
+    if (!range || !(range.to > range.from)) return null;
+    return (range.from + range.to) / 2;
+  };
   const [ready, setReady] = useState(false);
   const { theme, timezone, chartLocale } = usePrefs();
   // 标注是在事件回调里画的，回调闭包拿不到最新的 props，用 ref 兜住当前主题。
@@ -212,11 +245,22 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     toggleSync(kind) {
       const ws = wsRef.current;
       if (!ws) return;
+      // 「时间轴」不再是 Vela 的缩放同步：本站只做"点击跳转到同一时刻"，
+      // 不同窗口的缩放/平移始终互不影响。开关状态自己记，存在本机。
+      if (kind === 'viewport') {
+        const next = !timeSyncRef.current;
+        timeSyncRef.current = next;
+        try { localStorage.setItem(TIME_SYNC_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+        if (next) jumpAllTo(activeCenter());
+        onSyncs?.(stateWithTimeSync(ws));
+        return;
+      }
       const state = ws.sync?.state?.() ?? {};
       ws.sync?.set?.(kind, !state[kind]);
+      onSyncs?.(stateWithTimeSync(ws));
     },
     getSyncs() {
-      return (wsRef.current?.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>;
+      return stateWithTimeSync(wsRef.current);
     },
     snapshot() {
       try {
@@ -324,8 +368,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         } catch {
           /* ignore */
         }
-        // 时间轴同步由用户在布局菜单里决定（默认只开十字线）；这里只把真实状态回填给工具栏。
-        onSyncs?.((ws.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>);
+        // Vela 自带的 viewport 同步会连缩放一起同步，不需要：关掉它，
+        // 「时间轴」只由本站的点击跳转实现（timeSyncRef）。
+        try { ws.sync?.set?.('viewport', false); } catch { /* ignore */ }
+        onSyncs?.(stateWithTimeSync(ws));
 
         const focusOne = (cell: any) => {
           const tf = cell?.chart?.market?.timeframe ?? '15';
@@ -429,24 +475,14 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           } catch {
             /* 旧版本没有 onViewportChange 时忽略 */
           }
-          // 开了「时间轴同步」时，点某一格的 K 线 → 其他格居中到同一时刻
-          // （各自保持自己的跨度，不改变缩放级别）。
+          // 「时间轴」勾选时：点任意一格（K 线或时间轴附近）→ 其他格居中到同一时刻。
+          // 只对齐时间，不动缩放；不勾选时完全不联动。
           try {
             cell.chart?.onClick?.((event: { time?: number | null }) => {
+              if (!timeSyncRef.current) return;
               const at = event?.time;
               if (typeof at !== 'number') return;
-              if (!(ws.sync?.state?.()?.viewport)) return;
-              for (const other of ws.cells?.() ?? []) {
-                if (other.id === cell.id) continue;
-                const range = other.chart?.getVisibleRange?.();
-                if (!range || !(range.to > range.from)) continue;
-                const half = (range.to - range.from) / 2;
-                try {
-                  other.chart.setVisibleRange({ from: at - half, to: at + half });
-                } catch {
-                  /* ignore */
-                }
-              }
+              jumpAllTo(at, cell.id);
             });
           } catch {
             /* 渲染器没有 onClick 时忽略 */
@@ -507,7 +543,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         setReady(true);
         onLayout?.(ws.getState?.()?.layout ?? '4');
         onTimeframe?.(ws.active?.chart?.market?.timeframe ?? '15');
-        onSyncs?.((ws.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>);
+        onSyncs?.(stateWithTimeSync(ws));
         // 首批 K 线落地前 setVisibleRange 会被边界夹住，这里补一次定位。
         // 再补几拍：静态复盘数据没有 load:end 事件，首帧宽度也可能是 0，
         // 早跳会被夹到最左边，看起来就像"没跳到开仓"。
