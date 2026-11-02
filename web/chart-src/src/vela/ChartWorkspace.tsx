@@ -324,14 +324,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         } catch {
           /* ignore */
         }
-        // 各窗口的缩放/平移互不跟随：只保留十字线联动。
-        // 存档里可能带着旧的 viewport 同步，这里强制关掉，避免"拖一格、别的格跟着缩放"。
-        try {
-          ws.sync?.set?.('viewport', false);
-          onSyncs?.((ws.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>);
-        } catch {
-          /* ignore */
-        }
+        // 时间轴同步由用户在布局菜单里决定（默认只开十字线）；这里只把真实状态回填给工具栏。
+        onSyncs?.((ws.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>);
 
         const focusOne = (cell: any) => {
           const tf = cell?.chart?.market?.timeframe ?? '15';
@@ -434,6 +428,28 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             });
           } catch {
             /* 旧版本没有 onViewportChange 时忽略 */
+          }
+          // 开了「时间轴同步」时，点某一格的 K 线 → 其他格居中到同一时刻
+          // （各自保持自己的跨度，不改变缩放级别）。
+          try {
+            cell.chart?.onClick?.((event: { time?: number | null }) => {
+              const at = event?.time;
+              if (typeof at !== 'number') return;
+              if (!(ws.sync?.state?.()?.viewport)) return;
+              for (const other of ws.cells?.() ?? []) {
+                if (other.id === cell.id) continue;
+                const range = other.chart?.getVisibleRange?.();
+                if (!range || !(range.to > range.from)) continue;
+                const half = (range.to - range.from) / 2;
+                try {
+                  other.chart.setVisibleRange({ from: at - half, to: at + half });
+                } catch {
+                  /* ignore */
+                }
+              }
+            });
+          } catch {
+            /* 渲染器没有 onClick 时忽略 */
           }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
