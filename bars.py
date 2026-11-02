@@ -56,6 +56,11 @@ def initialize(db):
     PRIMARY KEY(account_key, source, symbol, tf, from_t)
   );
   -- 每条券商轨的时区偏移：bars 里存的是券商墙钟，出库时统一减掉它换成 UTC。
+  CREATE TABLE IF NOT EXISTS source_catalog(
+    source TEXT NOT NULL, symbol TEXT NOT NULL, tf TEXT NOT NULL,
+    first_t INTEGER NOT NULL, last_t INTEGER NOT NULL, bars INTEGER NOT NULL,
+    updated REAL NOT NULL, PRIMARY KEY(source, symbol, tf)
+  );
   CREATE TABLE IF NOT EXISTS source_clock(
     source TEXT PRIMARY KEY,
     offset_sec INTEGER NOT NULL,
@@ -519,10 +524,11 @@ def catalog(db, now=None):
   cached = _catalog_cache.get('value')
   if cached is not None and now - _catalog_cache['at'] < _CATALOG_TTL:
     return cached
-  rows = db.execute(
-    'SELECT source, symbol, tf, min(t) AS first_t, max(t) AS last_t, count(*) AS bars'
-    ' FROM bars GROUP BY source, symbol, tf ORDER BY source, symbol, tf',
-  ).fetchall()
+  # 优先读物化表：全量 GROUP BY 在 300 万行上要 2.5 秒，不能放在请求路径里。
+  rows = db.execute('SELECT * FROM source_catalog').fetchall()
+  if not rows:
+    refresh_catalog(db, now)
+    rows = db.execute('SELECT * FROM source_catalog').fetchall()
   servers = {}
   for feed in db.execute('SELECT DISTINCT source, server FROM feeds').fetchall():
     servers.setdefault(feed['source'], feed['server'])
@@ -547,6 +553,24 @@ def catalog(db, now=None):
   _catalog_cache['value'] = value
   _catalog_cache['at'] = now
   return value
+
+
+def refresh_catalog(db, now=None):
+  """重算并落库 source_catalog。由后台线程定期调用，不放在请求里。"""
+  now = time.time() if now is None else now
+  rows = db.execute(
+    'SELECT source, symbol, tf, min(t) AS first_t, max(t) AS last_t, count(*) AS bars'
+    ' FROM bars GROUP BY source, symbol, tf',
+  ).fetchall()
+  db.execute('DELETE FROM source_catalog')
+  db.executemany(
+    'INSERT INTO source_catalog(source, symbol, tf, first_t, last_t, bars, updated) VALUES(?,?,?,?,?,?,?)',
+    [(row['source'], row['symbol'], row['tf'], int(row['first_t']), int(row['last_t']), int(row['bars']), now) for row in rows],
+  )
+  db.commit()
+  _catalog_cache['value'] = None
+  _catalog_cache['at'] = 0.0
+  return len(rows)
 
 
 def catalog_entry(db, source, symbol, now=None):

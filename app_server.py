@@ -783,5 +783,20 @@ class Handler(BaseHTTPRequestHandler):
             if urlparse(self.path).path=='/api/snapshot':print('Snapshot parse rejected:',type(e).__name__,flush=True)
             self.reply({'error':'请求数据不正确'},400)
         except Exception:self.reply({'error':'服务暂时不可用'},500)
+def catalog_loop():
+    """后台重建数据源目录：全量 GROUP BY 要 2.5 秒，不能放在请求线程里。"""
+    import threading
+    time.sleep(5)
+    while True:
+        try:
+            with connect() as fresh:
+                bars.refresh_catalog(fresh)
+        except Exception as e:
+            print('catalog refresh failed:',type(e).__name__,flush=True)
+        time.sleep(120)
+
 if __name__=='__main__':
-    host=os.environ.get('HOST','127.0.0.1');port=int(os.environ.get('PORT','18886'));print(f'SyncNote v2: http://{host}:{port}',flush=True);ThreadingHTTPServer((host,port),Handler).serve_forever()
+    host=os.environ.get('HOST','127.0.0.1');port=int(os.environ.get('PORT','18886'));print(f'SyncNote v2: http://{host}:{port}',flush=True)
+    import threading
+    threading.Thread(target=catalog_loop,daemon=True).start()
+    ThreadingHTTPServer((host,port),Handler).serve_forever()
