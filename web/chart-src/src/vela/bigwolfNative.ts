@@ -536,7 +536,7 @@ export async function registerBigwolf() {
   const register = registerNativeIndicator!;
   register({
     type: 'bigwolf',
-    title: '★ bigwolf（主图）',
+    title: '★ bigwolf',
     shortTitle: 'bigwolf',
     paneHint: 'price',
     overlay: true,
