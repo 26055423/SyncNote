@@ -156,13 +156,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // 拖动联动：记录每格上一次的可见范围，用「时间增量」平移别的格（不是按根数）。
   // 例如 1m 格拖了 60 根 = 60 分钟，15m 格就会平移 60 分钟 = 4 根。
   const lastRangeRef = useRef<Map<string, { from: number; to: number }>>(new Map());
-  // 我们自己 setVisibleRange 触发的回调要忽略，避免互相推着跑。
-  const suppressUntilRef = useRef(0);
-  // 十字线时间：点击兜底时用它换算目标时刻。
-  const lastCrosshairRef = useRef<Map<string, number>>(new Map());
+  // 我们自己 setVisibleRange 触发的回声要忽略，但只忽略被推的那几格：
+  // 按时间窗口一刀切会把源格子自己的连续拖动事件一起吞掉，表现为"拖了半天只跟一下"。
+  const programmaticUntilRef = useRef<Map<string, number>>(new Map());
   const panOthers = (exceptId: string, delta: number) => {
     if (!delta) return;
-    suppressUntilRef.current = Date.now() + 200;
+    const until = Date.now() + 250;
     for (const other of wsRef.current?.cells?.() ?? []) {
       if (other.id === exceptId) continue;
       const range = other.chart?.getVisibleRange?.();
@@ -172,6 +171,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       try {
         other.chart.setVisibleRange({ from, to });
         lastRangeRef.current.set(other.id, { from, to });
+        programmaticUntilRef.current.set(other.id, until);
       } catch {
         /* ignore */
       }
@@ -490,13 +490,16 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           // 拖动/缩放时把可见范围报上去，由上层决定补哪段、删哪段。
           let lastViewport = 0;
           try {
-            cell.chart?.onViewportChange?.((range: { from: number; to: number }) => {
+            // cell.chart 上没有 onViewportChange（那是渲染器接口），
+            // 公开事件是 on('viewport:changed')；之前用错 API，联动一直是死代码。
+            cell.chart?.on?.('viewport:changed', (range: { from: number; to: number }) => {
               // 拖动联动：先看这一格是「平移」还是「缩放」。
               // 跨度没变 = 平移，把时间增量同步给其他格；跨度变了 = 缩放，不动别人。
               const previous = lastRangeRef.current.get(cell.id);
               const span = range.to - range.from;
               lastRangeRef.current.set(cell.id, { from: range.from, to: range.to });
-              if (Date.now() > suppressUntilRef.current && previous && span > 0) {
+              const programmaticUntil = programmaticUntilRef.current.get(cell.id) ?? 0;
+              if (Date.now() > programmaticUntil && previous && span > 0) {
                 const previousSpan = previous.to - previous.from;
                 if (Math.abs(previousSpan - span) < 1) {
                   const delta = range.from - previous.from;
@@ -520,8 +523,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           };
           try {
             // 不同渲染器暴露点击的方式不一样：优先 onClick，其次通用 on('click')。
-            if (typeof cell.chart?.onClick === 'function') cell.chart.onClick(handleClick);
-            else cell.chart?.on?.('click', handleClick);
+            const renderer = cell.chart?.rendererControl ?? cell.chart?.rendererPort;
+            if (typeof renderer?.onClick === 'function') renderer.onClick(handleClick);
           } catch {
             /* 两个都没有时忽略 */
           }
@@ -531,30 +534,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             if (initial) lastRangeRef.current.set(cell.id, { from: initial.from, to: initial.to });
           } catch {
             /* ignore */
-          }
-          // 点击联动的兜底：Vela 的 onClick 在部分渲染器上不触发，
-          // 这里用「十字线时间 + 本格 DOM 的 pointerup」自己判断一次点击。
-          try {
-            cell.chart?.onCrosshairMove?.((event: { time?: number | null }) => {
-              if (typeof event?.time === 'number') lastCrosshairRef.current.set(cell.id, event.time);
-            });
-            const host = cell.chart?.screenshotCanvas?.()?.parentElement;
-            if (host && !host.__tpClickBound) {
-              host.__tpClickBound = true;
-              let downX = 0;
-              let downY = 0;
-              host.addEventListener('pointerdown', (event: PointerEvent) => {
-                downX = event.clientX;
-                downY = event.clientY;
-              });
-              host.addEventListener('pointerup', (event: PointerEvent) => {
-                if (Math.abs(event.clientX - downX) > 4 || Math.abs(event.clientY - downY) > 4) return;
-                const at = lastCrosshairRef.current.get(cell.id);
-                if (typeof at === 'number') jumpAllTo(at, cell.id);
-              });
-            }
-          } catch {
-            /* DOM 兜底失败不影响拖动联动 */
           }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
@@ -609,6 +588,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           }
         });
 
+        // 调试钩子：页面里可以直接拿到 workspace 检查各格范围（不影响功能）。
+        (window as any).__tpWs = ws;
         setReady(true);
         onLayout?.(ws.getState?.()?.layout ?? '4');
         onTimeframe?.(ws.active?.chart?.market?.timeframe ?? '15');
