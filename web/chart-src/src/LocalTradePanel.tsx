@@ -7,7 +7,7 @@ import { HistorySyncPanel } from './HistorySyncPanel';
 
 const phaseText = { disconnected: '尚未连接', connecting: '连接中…', pairing: '等待配对码', confirming: '请在 MT5 图表允许本次连接', connected: '本机已连接', error: '连接不可用' };
 const commandText: Record<string, string> = { sending: '正在发送', received: 'EA 已接收', submitted: '已提交，等待回报', completed: '执行完成', rejected: '已拒绝', uncertain: '结果待核实', not_found: 'EA 未找到记录，仍需核查' };
-const actionText: Record<string, string> = { market: '市价下单', close: '平仓', cancel: '撤单', modify: '修改止损止盈' };
+const actionText: Record<string, string> = { market: '市价下单', limit: '限价挂单', stop: '止损挂单', close: '平仓', cancel: '撤单', modify: '修改止损止盈' };
 
 export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   const [code, setCode] = useState('');
@@ -71,6 +71,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
         connected={enabled}
         lockedReason={lockedReason}
         real={realTrading}
+        allowPending={state.capabilities.includes('pending')}
         onSubmit={submitMarketOrder}
       />
       {realTrading ? (

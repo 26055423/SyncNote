@@ -1,12 +1,15 @@
 import { localTerminal, type LocalCommand } from '../localTerminal';
 import type { OrderAttempt, OrderRequest } from './risk';
 
-/** 把下单面板的请求转成 EA 的 `market` 命令，并等它回报结果。 */
+/** 把下单面板的请求转成 EA 命令（市价 / 限价 / 止损），并等它回报结果。 */
 export async function submitMarketOrder(request: OrderRequest, key: string): Promise<OrderAttempt> {
-  const id = localTerminal.command('market', {
+  // 挂单要走 limit / stop，市价走 market；价格只在挂单时有意义。
+  const action = request.action === 'limit' || request.action === 'stop' ? request.action : 'market';
+  const id = localTerminal.command(action, {
     symbol: request.symbol,
     side: request.side,
     volume: request.volume,
+    price: action === 'market' ? 0 : request.price,
     sl: request.sl,
     tp: request.tp,
     deviation: request.deviation,

@@ -27,6 +27,9 @@ input bool InpAllowNettingManage=false;               // Netting accounts: allow
 input bool InpAllowClose=true;
 input bool InpAllowCancel=true;
 input bool InpAllowModify=true;
+input bool InpAllowPending=true;                       // Allow limit/stop pending orders
+input double InpMaxDailyLoss=0.0;                      // Daily realized-loss cap in account currency (0 disables)
+input double InpMaxPendingDeviationPct=1.5;            // Pending price must stay within this % of the mid
 
 #define LOCAL_PORT 18765
 #define LOCAL_VERSION "1.101"
@@ -119,7 +122,35 @@ string CapabilitiesJson()
    if(InpAllowClose) capabilities+=",\"close\"";
    if(InpAllowCancel) capabilities+=",\"cancel\"";
    if(InpAllowModify) capabilities+=",\"modify\"";
+   if(InpAllowPending) capabilities+=",\"pending\"";
    return capabilities+"]";
+}
+
+// 当日已实现盈亏（含手续费与隔夜利息），只算本品种、只算平仓方向的 deal。
+double DailyRealized()
+{
+   datetime start=(datetime)((long)TimeCurrent()/86400*86400);
+   if(!HistorySelect(start,TimeCurrent()+60)) return 0.0;
+   double sum=0.0;
+   for(int i=0;i<HistoryDealsTotal();i++)
+   {
+      ulong deal=HistoryDealGetTicket(i);
+      if(deal==0) continue;
+      if(HistoryDealGetInteger(deal,DEAL_ENTRY)!=DEAL_ENTRY_OUT) continue;
+      if(HistoryDealGetString(deal,DEAL_SYMBOL)!=InpSymbol) continue;
+      sum+=HistoryDealGetDouble(deal,DEAL_PROFIT)+HistoryDealGetDouble(deal,DEAL_SWAP)+HistoryDealGetDouble(deal,DEAL_COMMISSION);
+   }
+   return sum;
+}
+bool DailyLossOk() { return InpMaxDailyLoss<=0.0 || DailyRealized()>-InpMaxDailyLoss; }
+
+// 挂单价格语义：方向和距离都要对，挡掉大部分手滑。
+bool PendingSideValid(const string action,const bool buy,const double price,const MqlTick &tick)
+{
+   if(price<=0 || tick.bid<=0 || tick.ask<=0) return false;
+   if(action=="limit") return buy ? price<tick.ask : price>tick.bid;
+   if(action=="stop") return buy ? price>tick.ask : price<tick.bid;
+   return false;
 }
 string IdentityFields()
 {
@@ -533,12 +564,12 @@ void HandleTradeCommand(const int peer,const string js)
    JsonGetString(js,"command_id",id);JsonGetString(js,"action",action);JsonGetString(js,"side",side);JsonGetString(js,"symbol",symbol);
    JsonGetString(js,"position_ticket",position);JsonGetString(js,"order_ticket",order);JsonGetString(js,"ticket",ticket);
    if(!SafeCommandId(id)) {LocalError(peer,"COMMAND_ID","command_id must be 8..64 ASCII letters/digits/-/_");return;}
-   if(!JsonKeysAllowed("type,token,account_id,server,epoch,command_id,action,side,symbol,volume,sl,tp,deviation,position_ticket,order_ticket,ticket,expires_at_ms"))
+   if(!JsonKeysAllowed("type,token,account_id,server,epoch,command_id,action,side,symbol,volume,price,sl,tp,deviation,position_ticket,order_ticket,ticket,expires_at_ms"))
    {WsText(peer,CommandResult(id,"rejected","Unknown command field"));return;}
-   double volume=0,sl=0,tp=0,deviation=InpMaxDeviationPoints,expires=0;
-   if(!JsonNumber(js,"volume",volume)||!JsonNumber(js,"sl",sl)||!JsonNumber(js,"tp",tp)||!JsonNumber(js,"deviation",deviation,InpMaxDeviationPoints)||!JsonNumber(js,"expires_at_ms",expires))
+   double volume=0,sl=0,tp=0,price=0,deviation=InpMaxDeviationPoints,expires=0;
+   if(!JsonNumber(js,"volume",volume)||!JsonNumber(js,"price",price)||!JsonNumber(js,"sl",sl)||!JsonNumber(js,"tp",tp)||!JsonNumber(js,"deviation",deviation,InpMaxDeviationPoints)||!JsonNumber(js,"expires_at_ms",expires))
    {WsText(peer,CommandResult(id,"rejected","Invalid numeric field"));return;}
-   string payload=action+"|"+side+"|"+symbol+"|"+DoubleToString(volume,8)+"|"+DoubleToString(sl,12)+"|"+DoubleToString(tp,12)+"|"+
+   string payload=action+"|"+side+"|"+symbol+"|"+DoubleToString(volume,8)+"|"+DoubleToString(price,12)+"|"+DoubleToString(sl,12)+"|"+DoubleToString(tp,12)+"|"+
       DoubleToString(deviation,0)+"|"+position+"|"+order+"|"+ticket+"|"+DoubleToString(expires,0);
    string fingerprint=HashHex(payload);
    int existing=CommandFind(id);
@@ -553,6 +584,7 @@ void HandleTradeCommand(const int peer,const string js)
    else if(!LocalCanTrade()) error="READ_ONLY: trading needs EA opt-in and healthy journal (real accounts also need InpAllowRealTrading and caps)";
    else if(!TerminalInfoInteger(TERMINAL_CONNECTED)||!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)||!MQLInfoInteger(MQL_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_EXPERT)) error="MT5 trading permissions or connection unavailable";
    else if(!LocalDeadlineValid(expires,received_utc)) error="Command expired or deadline is more than 30s ahead; check computer clock";
+   else if((action=="market"||action=="limit"||action=="stop") && !DailyLossOk()) error="Daily realized-loss cap reached; new orders blocked until tomorrow";
    else if(GetTickCount64()-g_last_command<500) error="Local command rate limit: wait 500ms";
    else if(symbol!="" && symbol!=InpSymbol) error="Symbol is not allowed by this EA";
    else if(deviation<0 || deviation>InpMaxDeviationPoints || deviation!=MathFloor(deviation)) error="Deviation exceeds local limit";
@@ -582,6 +614,42 @@ void HandleTradeCommand(const int peer,const string js)
       if(error=="" && !StopsValid(buy,sl,tp,tick)) error="SL/TP side or broker stop distance invalid";
       request.action=TRADE_ACTION_DEAL;request.type=buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
       request.price=buy ? tick.ask : tick.bid;request.volume=volume;request.sl=sl;request.tp=tp;request.magic=(ulong)InpMagic;
+   }
+   else if(error=="" && (action=="limit" || action=="stop"))
+   {
+      bool buy=side=="buy";
+      if(!InpAllowPending) error="Pending orders are disabled by this EA";
+      else if(symbol!=InpSymbol || (side!="buy" && side!="sell") || !VolumeValid(volume)) error="Pending order symbol/side/volume invalid";
+      else if(!PriceValid(price)) error="Pending price must be a positive price on the tick grid";
+      else if(!PendingSideValid(action,buy,price,tick)) error="Pending price is on the wrong side of the market (buy limit < ask, buy stop > ask)";
+      else if(!StopsValid(buy,sl,tp,tick)) error="SL/TP side or broker stop distance invalid";
+      else
+      {
+         // 偏离中间价太远就拒绝：防止输错一位数挂到天上去。
+         double mid=(tick.bid+tick.ask)/2.0;
+         if(InpMaxPendingDeviationPct>0 && mid>0 && MathAbs(price-mid)/mid*100.0>InpMaxPendingDeviationPct)
+            error="Pending price deviates too far from the mid price";
+         double exposure=0;
+         for(int i=0;i<PositionsTotal();i++) if(PositionGetTicket(i)>0 && PositionGetString(POSITION_SYMBOL)==InpSymbol) exposure+=PositionGetDouble(POSITION_VOLUME);
+         for(int i=0;i<OrdersTotal();i++) if(OrderGetTicket(i)>0 && OrderGetString(ORDER_SYMBOL)==InpSymbol) exposure+=OrderGetDouble(ORDER_VOLUME_CURRENT);
+         if(error=="" && exposure+volume>InpMaxSymbolLots+1e-9) error="Total symbol exposure exceeds local limit";
+         if(error=="" && LocalReal())
+         {
+            int today=(int)(TimeTradeServer()/86400);
+            if(g_real_orders_day!=today) {g_real_orders_day=today;g_real_orders=0;}
+            if(InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9) error="Real account lot cap exceeded";
+            else if(g_real_orders>=InpRealMaxOrdersPerDay) error="Real account daily order limit reached";
+            else g_real_orders++;
+         }
+         if(error=="")
+         {
+            request.action=TRADE_ACTION_PENDING;
+            if(action=="limit") request.type=buy ? ORDER_TYPE_BUY_LIMIT : ORDER_TYPE_SELL_LIMIT;
+            else request.type=buy ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP;
+            request.price=price;request.volume=volume;request.sl=sl;request.tp=tp;request.magic=(ulong)InpMagic;
+            request.type_time=ORDER_TIME_GTC;request.expiration=0;
+         }
+      }
    }
    else if(error=="" && action=="close")
    {

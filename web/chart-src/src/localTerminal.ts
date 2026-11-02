@@ -326,7 +326,8 @@ export class LocalTerminal {
     this.deadlines.set(id, timer);
   }
   command(action: string, payload: Record<string, unknown>) {
-    if (this.state.phase !== 'connected' || this.state.read_only || !this.state.demo || !this.state.capabilities.includes(action)) throw new Error('本机 EA 当前未授权此模拟账户交易操作。');
+    const allowed = this.state.demo || this.state.real_trading;
+    if (this.state.phase !== 'connected' || this.state.read_only || !allowed || !this.state.capabilities.includes(action)) throw new Error('本机 EA 当前未授权此账户交易操作。');
     if (this.state.commands.some((command) => command.account_id === this.state.account_id && command.server === this.state.server && unresolvedStates.has(command.state))) throw new Error('当前账户有指令的结果尚未确认，请先查询或在 MT5 中核实。');
     const id = crypto.randomUUID();
     const command: LocalCommand = { command_id: id, action, state: 'sending', created: Date.now(), account_id: this.state.account_id, server: this.state.server };
