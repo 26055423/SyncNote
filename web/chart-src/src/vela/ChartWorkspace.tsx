@@ -65,7 +65,7 @@ export interface ChartHandle {
   /** 把收藏的工具同步给所有格子的原生工具栏。 */
   setFavorites(types: string[]): void;
   /** 用新的一段 K 线替换某个基础周期，并按各格子的周期重绘（保持视窗）。 */
-  applySeries(base: BaseTimeframe, bars: number[][]): void;
+  applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string): void;
 }
 
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
@@ -84,7 +84,7 @@ interface Props {
   /** 当前激活的画图工具变化时回调。 */
   onTool?: (type: string | null) => void;
   /** 某个格子的可见范围变了（已节流）：上层据此补段/删段。 */
-  onViewport?: (info: { timeframe: string; from: number; to: number }) => void;
+  onViewport?: (info: { cellId: string; timeframe: string; from: number; to: number }) => void;
   /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
@@ -189,9 +189,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         }
       }
     },
-    applySeries(base, bars) {
+    applySeries(base, bars, onlyCellId) {
       dataRef.current = { ...dataRef.current, [base]: bars };
       for (const cell of wsRef.current?.cells?.() ?? []) {
+        // 只重画触发这次补段的那一格：把整屏同周期的格子一起 setBars，
+        // 会让没在拖动的窗口被重新缩放/跳一下。
+        if (onlyCellId && cell.id !== onlyCellId) continue;
         const tfId: string = cell.chart?.market?.timeframe ?? '15';
         const recipe = TIMEFRAMES[tfId];
         if (!recipe || recipe.base !== base) continue;
@@ -419,7 +422,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               const tick = Date.now();
               if (tick - lastViewport < 320) return;
               lastViewport = tick;
-              viewportRef.current?.({ timeframe: cell.chart?.market?.timeframe ?? "15", from: range.from, to: range.to });
+              viewportRef.current?.({ cellId: cell.id, timeframe: cell.chart?.market?.timeframe ?? "15", from: range.from, to: range.to });
             });
           } catch {
             /* 旧版本没有 onViewportChange 时忽略 */

@@ -805,7 +805,7 @@ export default function App() {
     for (const tf of REVIEW_BASE_TFS) hydrateWindow(tf, marketSeries[tf] ?? []);
   }, [marketSeries]);
 
-  const loadWindow = useCallback(async (base: string, from: number, to: number, span: number) => {
+  const loadWindow = useCallback(async (base: string, from: number, to: number, span: number, cellId?: string) => {
     // 只有整屏都在用 bars 表（券商墙钟）时才允许按需补段：
     // 交易快照那一屏是固定窗口，补进来的 bars 是另一种时间基，混进去会错位。
     if (fetchingRef.current.has(base)) return;
@@ -845,7 +845,7 @@ export default function App() {
       }
       seriesRef.current[base] = merged;
       windowRef.current[base] = { from: merged[0][0] * 1000, to: merged[merged.length - 1][0] * 1000 };
-      chartRef.current?.applySeries(base as BaseTimeframe, merged);
+      chartRef.current?.applySeries(base as BaseTimeframe, merged, cellId);
     } catch {
       /* 补不到就留白，不拿别的来源顶 */
     } finally {
@@ -853,7 +853,7 @@ export default function App() {
     }
   }, []);
 
-  const handleViewport = useCallback((info: { timeframe: string; from: number; to: number }) => {
+  const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
     const recipe = TIMEFRAMES[info.timeframe];
     if (!recipe) return;
     const base = recipe.base;
@@ -867,7 +867,7 @@ export default function App() {
     const needLeft = info.from - loaded.from < nearEdge && !blocked('left');
     const needRight = loaded.to - info.to < nearEdge && !blocked('right');
     if (needLeft || needRight) {
-      void loadWindow(base, info.from, info.to, span);
+      void loadWindow(base, info.from, info.to, span, info.cellId);
     }
     const bars = seriesRef.current[base] ?? [];
     if (bars.length > 12_000) {
@@ -875,7 +875,7 @@ export default function App() {
       if (trimmed.length > 200 && trimmed.length < bars.length) {
         seriesRef.current[base] = trimmed;
         windowRef.current[base] = { from: trimmed[0][0] * 1000, to: trimmed[trimmed.length - 1][0] * 1000 };
-        chartRef.current?.applySeries(base as BaseTimeframe, trimmed);
+        chartRef.current?.applySeries(base as BaseTimeframe, trimmed, info.cellId);
       }
     }
   }, [loadWindow]);
