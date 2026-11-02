@@ -385,6 +385,8 @@ table.mini tr:last-child td { border-bottom: 0; }
   box-shadow: var(--shadow); padding: 12px; display: grid; gap: 14px;
 }
 .settings-group { display: grid; gap: 6px; }
+.settings-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line); background: var(--well); color: var(--text); font-size: 12px; text-decoration: none; }
+.settings-link:hover { border-color: var(--accent-line); color: var(--accent-ink); background: var(--accent-soft); }
 .settings-title {
   display: flex; align-items: baseline; gap: 6px;
   font-size: 10.5px; color: var(--dim); letter-spacing: .04em;

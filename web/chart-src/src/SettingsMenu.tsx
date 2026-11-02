@@ -4,12 +4,13 @@ import { ZONES } from './lib/zones';
 import { resolveZone, systemZone, zoneOffsetLabel } from './lib/time';
 
 /**
- * 顶栏「设置」：主题 / 显示时区 / 图表语言。
+ * 顶栏「账户」菜单：个人中心 + 图表设置（主题 / 显示时区 / 图表语言）。
  *
- * 全部存在浏览器本地（`sn-ui.v1`），即时生效：主题靠 `:root[data-theme]` 的 CSS 令牌，
+ * 以前「用户名」和「设置」是两个按钮、两套界面；现在合成一个入口。
+ * 设置全部存在浏览器本地（`sn-ui.v1`），即时生效：主题靠 `:root[data-theme]` 的 CSS 令牌，
  * 时区和语言由 `ChartWorkspace` 转给 Vela 的 `setTimezone` / `setLocale`。
  */
-export function SettingsMenu() {
+export function SettingsMenu({ name = '账户' }: { name?: string }) {
   const { theme, timezone, chartLocale } = usePrefs();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -42,11 +43,16 @@ export function SettingsMenu() {
         aria-label="设置"
         aria-expanded={open}
       >
-        ⚙ 设置
+        {name} ▾
       </button>
 
       {open ? (
-        <div className="settings-panel" role="dialog" aria-label="设置">
+        <div className="settings-panel" role="dialog" aria-label="账户与设置">
+          <div className="settings-group">
+            <span className="settings-title">账户</span>
+            <a className="settings-link" href="/profile" target="_blank" rel="noopener noreferrer">个人中心 ↗</a>
+            <a className="settings-link" href="/history" target="_blank" rel="noopener noreferrer">交易日历 ↗</a>
+          </div>
           <div className="settings-group">
             <span className="settings-title">主题</span>
             <div className="settings-row">
