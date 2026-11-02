@@ -6,7 +6,7 @@ import { money, quotePrice, stamp } from './api';
  * 连上本机 EA 时持仓和挂单来自 EA；历史成交来自云端（可点「复盘」）。
  */
 
-type Tab = 'positions' | 'orders' | 'history';
+type Tab = 'positions' | 'orders' | 'history' | 'tracks';
 
 export interface BottomDockProps {
   connected: boolean;
@@ -16,11 +16,13 @@ export interface BottomDockProps {
   history: any[];
   reviewed?: string[];
   onReview: (ticket: string) => void;
+  /** 「轨道」页签的内容：复盘时是数据轨道条，没开复盘时给一句提示。 */
+  tracksSlot?: React.ReactNode;
 }
 
 const sideText = (side: string) => (side === 'sell' ? '卖出' : '买入');
 
-export function BottomDock({ connected, localPositions, localOrders, cloudPositions, history, reviewed, onReview }: BottomDockProps) {
+export function BottomDock({ connected, localPositions, localOrders, cloudPositions, history, reviewed, onReview, tracksSlot }: BottomDockProps) {
   const [tab, setTab] = useState<Tab>('positions');
   const [open, setOpen] = useState(true);
   const [sortDesc, setSortDesc] = useState(true);
@@ -28,7 +30,7 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
   const positions = connected ? localPositions : cloudPositions;
   const orders = localOrders;
   const rows = sortDesc ? history : [...history].reverse();
-  const count = (id: Tab) => (id === 'positions' ? positions.length : id === 'orders' ? orders.length : history.length);
+  const count = (id: Tab) => (id === 'positions' ? positions.length : id === 'orders' ? orders.length : id === 'history' ? history.length : null);
 
   return (
     <section className={`dock ${open ? 'is-open' : ''}`}>
@@ -38,9 +40,11 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
             ['positions', '持仓'],
             ['orders', '挂单'],
             ['history', '历史'],
+            ['tracks', '数据轨道'],
           ] as Array<[Tab, string]>).map(([id, label]) => (
             <button key={id} type="button" className={tab === id ? 'is-active' : ''} onClick={() => { setTab(id); setOpen(true); }}>
-              {label} <small>{count(id)}</small>
+              {label}
+              {count(id) !== null ? <small>{count(id)}</small> : null}
             </button>
           ))}
         </nav>
@@ -130,6 +134,12 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
                 </tbody>
               </table>
             ) : <p className="dim dock-empty">还没有已同步的成交</p>
+          ) : null}
+
+          {tab === 'tracks' ? (
+            <div className="dock-tracks">
+              {tracksSlot ?? <p className="dim dock-empty">打开一笔复盘后，这里显示它的券商数据轨道</p>}
+            </div>
           ) : null}
         </div>
       ) : null}

@@ -27,13 +27,15 @@ interface TracksPayload {
   tracks: Track[];
 }
 
-export function TrackStrip({ person, ticket, shareId, from, to, refreshKey }: {
+export function TrackStrip({ person, ticket, shareId, from, to, refreshKey, headless }: {
   person?: string;
   ticket?: string;
   shareId?: number | null;
   from: number;
   to: number;
   refreshKey?: number;
+  /** 放进底部页签时用：不画自己的标题栏（页签已经是标题了）。 */
+  headless?: boolean;
 }) {
   const [data, setData] = useState<TracksPayload | null>(null);
   const [error, setError] = useState('');
@@ -73,15 +75,18 @@ export function TrackStrip({ person, ticket, shareId, from, to, refreshKey }: {
   }
 
   const span = Math.max(1, data.to - data.from);
-  return <section className={`tracks ${open ? '' : 'is-collapsed'}`}>
-    <header className="tracks-head">
-      <b>数据轨道</b>
-      <span className="dim">{data.tracks.length} 个券商来源 · 高亮的这条是本笔交易在用的</span>
-      <button type="button" className="tool-btn tracks-toggle" onClick={() => setOpen((value) => !value)}>
-        {open ? '收起' : '展开'}
-      </button>
-    </header>
-    {open ? data.tracks.map((track) => (
+  // headless：放进底部「数据轨道」页签时不再重复画标题和收起按钮。
+  return <section className={`tracks ${headless ? 'tracks-in-dock' : ''} ${open ? '' : 'is-collapsed'}`}>
+    {headless ? null : (
+      <header className="tracks-head">
+        <b>数据轨道</b>
+        <span className="dim">{data.tracks.length} 个券商来源 · 高亮的这条是本笔交易在用的</span>
+        <button type="button" className="tool-btn tracks-toggle" onClick={() => setOpen((value) => !value)}>
+          {open ? '收起' : '展开'}
+        </button>
+      </header>
+    )}
+    {(headless || open) ? data.tracks.map((track) => (
       <div key={track.source} className={`track ${track.active ? 'is-active' : ''}`}>
         <span className="track-name" title={`${track.source} · 账户 ${track.account}`}>
           {track.server || track.source}

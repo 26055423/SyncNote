@@ -567,6 +567,10 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .track-block { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; background: var(--line-strong); }
 .track-pct { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
 .track-badge { font-size: 10.5px; color: var(--accent-ink); background: var(--accent-bg); border: 1px solid var(--accent-line); border-radius: 999px; padding: 1px 7px; text-align: center; }
+
+/* 放进底部「数据轨道」页签时：去掉自己的边框和背景，交给 dock 体内边距 */
+.tracks-in-dock { border-bottom: 0; background: none; padding: 6px 2px 2px; }
+.dock-tracks { padding: 2px 4px; overflow: auto; }
 .track.is-active .track-name { color: var(--text); }
 .track.is-active .track-lane { border-color: var(--accent-line); background: var(--accent-soft); }
 .track.is-active .track-block { background: var(--accent); }

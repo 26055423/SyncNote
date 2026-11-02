@@ -783,17 +783,6 @@ export default function App() {
             </span>
           </div>
 
-          {mode === 'review' && (target || shareId != null) ? (
-            <TrackStrip
-              person={target?.person}
-              ticket={target?.ticket}
-              shareId={shareId}
-              from={anchorMs - 3 * 86400000}
-              to={anchorMs + 86400000}
-              refreshKey={entry?.chart?.updated ?? 0}
-            />
-          ) : null}
-
           <div className="chart-body">
             {mode === 'live' && liveSeries ? (
               <ChartWorkspace
@@ -1072,6 +1061,17 @@ export default function App() {
         history={myHistory}
         reviewed={board?.reviewed}
         onReview={(ticket) => openTicket(me!.id, ticket)}
+        tracksSlot={mode === 'review' && (target || shareId != null) ? (
+          <TrackStrip
+            person={target?.person}
+            ticket={target?.ticket}
+            shareId={shareId}
+            from={anchorMs - 3 * 86400000}
+            to={anchorMs + 86400000}
+            refreshKey={entry?.chart?.updated ?? 0}
+            headless
+          />
+        ) : null}
       />
 
       <footer className="ticker">
