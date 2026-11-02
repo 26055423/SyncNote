@@ -21,6 +21,8 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   // 实盘账户：EA 只有在 InpAllowRealTrading + 单笔/日上限都打开时才报 real_trading=true。
   const realTrading = state.real_trading && !state.demo;
   const enabled = connected && !state.read_only && (state.demo || realTrading) && !unresolved;
+  // 净额账户：持仓是所有来源合并的，平仓/改单无法证明归属，默认禁用。
+  const canManage = state.hedging || state.netting_manage;
   // 连上了却下不了单时，说清楚是哪一条拦住的：非模拟账户 / 只读 / 还有待核实指令。
   const lockedReason = !connected
     ? ''
@@ -80,8 +82,9 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
       {state.positions.map((position) => <div className="local-position" key={String(position.ticket)}>
         <div><b>{position.symbol} · {position.side === 'sell' ? '卖出' : '买入'} {position.volume}</b><span className={(position.profit || 0) >= 0 ? 'up' : 'down'}>{money(position.profit)}</span></div>
         <p className="dim">#{String(position.ticket)} · 开仓 {quotePrice(position.price_open ?? position.open)} · SL {quotePrice(position.sl)} / TP {quotePrice(position.tp)}</p>
-        <div className="local-buttons"><button type="button" className="tool-btn" disabled={!enabled} onClick={() => prepare('close', { position_ticket: String(position.ticket), volume: 0 }, `全部平仓 #${position.ticket} · ${position.symbol} · ${position.volume} 手`)}>平仓</button><button type="button" className="link" disabled={!enabled} onClick={() => { setModifyTicket(String(position.ticket)); setSl(String(position.sl || '')); setTp(String(position.tp || '')); }}>修改止损止盈</button></div>
+        <div className="local-buttons"><button type="button" className="tool-btn" disabled={!enabled || !canManage} onClick={() => prepare('close', { position_ticket: String(position.ticket), volume: 0 }, `全部平仓 #${position.ticket} · ${position.symbol} · ${position.volume} 手`)}>平仓</button><button type="button" className="link" disabled={!enabled || !canManage} onClick={() => { setModifyTicket(String(position.ticket)); setSl(String(position.sl || '')); setTp(String(position.tp || '')); }}>修改止损止盈</button></div>
       </div>)}
+      {!canManage ? <p className="dim">净额账户：持仓是合并的，平仓/改单已禁用（EA 参数 InpAllowNettingManage=true 可打开）。</p> : null}
       {!state.positions.length ? <p className="dim">本机账户没有持仓</p> : null}
       <h3>本机挂单 <small>{state.orders.length}</small></h3>
       {state.orders.map((order) => <div className="local-position" key={String(order.ticket)}><div><b>{order.symbol} · {order.type} · {order.volume} 手</b><button type="button" className="link" disabled={!enabled || !state.capabilities.includes('cancel')} onClick={() => prepare('cancel', { order_ticket: String(order.ticket) }, `撤销挂单 #${order.ticket} · ${order.symbol}`)}>撤单</button></div><p className="dim">#{String(order.ticket)} · {quotePrice(order.price)}</p></div>)}

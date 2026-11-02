@@ -14,7 +14,7 @@
 input string InpAllowedOrigin="https://sync-trade.top"; // Exact HTTPS website origin, no trailing slash
 input string InpSymbol="XAUUSD";                      // Exact broker symbol, suffix included
 input bool InpAllowTrading=false;                    // Explicit local opt-in; demo accounts only
-input bool InpAllowRealTrading=false;                 // Allow a REAL account (rare; needs hedging + caps below)
+input bool InpAllowRealTrading=false;                 // Allow a REAL account (needs the two caps below)
 input double InpRealMaxLots=0.05;                     // Real account: max lots per order (0 = block real trading)
 input int InpRealMaxOrdersPerDay=5;                   // Real account: max new market orders per day (0 = block)
 input double InpMaxOrderLots=0.10;                   // Maximum market order / partial close lots
@@ -23,6 +23,7 @@ input int InpMaxDeviationPoints=20;                  // Maximum requested deviat
 input int InpMaxSpreadPoints=100;                    // 0 disables this additional local spread gate
 input long InpMagic=26055423;                        // Magic assigned to new website orders
 input bool InpManageOwnMagicOnly=true;               // Close/cancel/modify only this EA's magic
+input bool InpAllowNettingManage=false;               // Netting accounts: allow close/modify (ownership cannot be proven)
 input bool InpAllowClose=true;
 input bool InpAllowCancel=true;
 input bool InpAllowModify=true;
@@ -99,14 +100,16 @@ ulong g_history_defer_until=0;
 
 bool LocalDemo() { return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_DEMO; }
 bool LocalReal() { return !LocalDemo(); }
+bool LocalHedging() { return AccountInfoInteger(ACCOUNT_MARGIN_MODE)==ACCOUNT_MARGIN_MODE_RETAIL_HEDGING; }
+// 净额账户上，持仓是所有来源合并的，magic 归属无法证明：默认只允许开新仓。
+bool LocalManageAllowed() { return LocalHedging() || InpAllowNettingManage; }
 bool LocalCanTrade()
 {
-   // Netting can merge with manual/other-EA exposure, defeating magic ownership checks.
    if(!InpAllowTrading || !g_journal_ok || !g_account_stable) return false;
-   bool hedging=AccountInfoInteger(ACCOUNT_MARGIN_MODE)==ACCOUNT_MARGIN_MODE_RETAIL_HEDGING;
-   if(LocalDemo()) return hedging;
+   // 对冲、净额都允许开新仓；净额下 close/modify 的归属无法证明，另由 LocalManageAllowed 把关。
+   if(LocalDemo()) return true;
    // 实盘：必须单独开关 + 单笔/每日上限都有效，否则一律只读。
-   return InpAllowRealTrading && hedging && InpRealMaxLots>0 && InpRealMaxOrdersPerDay>0;
+   return InpAllowRealTrading && InpRealMaxLots>0 && InpRealMaxOrdersPerDay>0;
 }
 string JsonBool(const bool value) { return value ? "true" : "false"; }
 string CapabilitiesJson()
@@ -121,7 +124,7 @@ string CapabilitiesJson()
 string IdentityFields()
 {
    return "\"product\":\"SyncTrade\",\"features\":[\"history\"],\"instance_id\":"+JStr(g_instance)+",\"account_id\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+",\"epoch\":"+JStr(g_epoch)+
-      ",\"demo\":"+JsonBool(LocalDemo())+",\"real_trading\":"+JsonBool(LocalReal() && InpAllowRealTrading && LocalCanTrade())+
+      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging())+",\"netting_manage\":"+JsonBool(InpAllowNettingManage)+",\"real_trading\":"+JsonBool(LocalReal() && InpAllowRealTrading && LocalCanTrade())+
       ",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
 }
 void LocalError(const int peer,const string code,const string message,const string request_id="")
@@ -547,7 +550,7 @@ void HandleTradeCommand(const int peer,const string js)
    }
    string error="";
    if(fingerprint=="") error="Cryptographic hash failed";
-   else if(!LocalCanTrade()) error="READ_ONLY: trading needs EA opt-in, hedging account and healthy journal (real accounts also need InpAllowRealTrading and caps)";
+   else if(!LocalCanTrade()) error="READ_ONLY: trading needs EA opt-in and healthy journal (real accounts also need InpAllowRealTrading and caps)";
    else if(!TerminalInfoInteger(TERMINAL_CONNECTED)||!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)||!MQLInfoInteger(MQL_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_EXPERT)) error="MT5 trading permissions or connection unavailable";
    else if(!LocalDeadlineValid(expires,received_utc)) error="Command expired or deadline is more than 30s ahead; check computer clock";
    else if(GetTickCount64()-g_last_command<500) error="Local command rate limit: wait 500ms";
@@ -582,7 +585,7 @@ void HandleTradeCommand(const int peer,const string js)
    }
    else if(error=="" && action=="close")
    {
-      if(!InpAllowClose || !JsonId(js,"position_ticket",position) || !PositionSelectByTicket((ulong)StringToInteger(position))) error="Close disabled or position not found";
+      if(!InpAllowClose || !JsonId(js,"position_ticket",position) || !PositionSelectByTicket((ulong)StringToInteger(position))) error="Close disabled or position not found";`r`n      else if(!LocalManageAllowed()) error="Netting account: close is disabled (ownership cannot be proven). Set InpAllowNettingManage=true to override";
       else if(PositionGetString(POSITION_SYMBOL)!=InpSymbol || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)) error="Position is outside local ownership policy";
       else
       {
@@ -602,7 +605,7 @@ void HandleTradeCommand(const int peer,const string js)
    }
    else if(error=="" && action=="modify")
    {
-      if(!InpAllowModify || !JsonId(js,"ticket",ticket) || !PositionSelectByTicket((ulong)StringToInteger(ticket))) error="Modify disabled or position not found; pending-order modification is not supported in v1";
+      if(!InpAllowModify || !JsonId(js,"ticket",ticket) || !PositionSelectByTicket((ulong)StringToInteger(ticket))) error="Modify disabled or position not found; pending-order modification is not supported in v1";`r`n      else if(!LocalManageAllowed()) error="Netting account: modify is disabled (ownership cannot be proven). Set InpAllowNettingManage=true to override";
       else if(PositionGetString(POSITION_SYMBOL)!=InpSymbol || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)) error="Position is outside local ownership policy";
       else if(JsonValuePos(js,"sl")<0 || JsonValuePos(js,"tp")<0 || !StopsValid(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY,sl,tp,tick)) error="Modify requires explicit valid sl and tp (0 clears)";
       else {request.action=TRADE_ACTION_SLTP;request.position=(ulong)StringToInteger(ticket);request.sl=sl;request.tp=tp;}

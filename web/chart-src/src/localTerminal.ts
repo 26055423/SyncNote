@@ -25,6 +25,10 @@ export interface LocalTerminalState {
   symbol: string;
   read_only: boolean;
   demo: boolean;
+  /** 对冲账户：false = 净额账户（持仓合并，归属无法证明）。 */
+  hedging: boolean;
+  /** 净额账户下 EA 是否允许平仓/改单。 */
+  netting_manage: boolean;
   /** EA 明确允许在实盘账户上下单（InpAllowRealTrading + 上限都打开时才会是 true）。 */
   real_trading: boolean;
   capabilities: string[];
@@ -69,7 +73,7 @@ export interface NoteReviewBars {
 
 const freshState = (): LocalTerminalState => ({
   phase: 'disconnected', error: '', instance_id: '', account_id: '', server: '', epoch: '',
-  symbol: 'XAUUSD', read_only: true, demo: false, real_trading: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
+  symbol: 'XAUUSD', read_only: true, demo: false, hedging: true, netting_manage: false, real_trading: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
   latency: null, account: {}, tick: null,
   positions: [], orders: [], bars: {}, history_ready: false, commands: [], revision: 0,
 });
@@ -202,6 +206,8 @@ export class LocalTerminal {
       server: String(message.server ?? this.state.server), epoch: String(message.epoch ?? this.state.epoch),
       symbol: String(message.symbol ?? this.state.symbol), read_only: message.read_only !== false,
       demo: message.demo === true,
+      hedging: message.hedging !== false,
+      netting_manage: message.netting_manage === true,
       real_trading: message.real_trading === true,
       capabilities: Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : this.state.capabilities,
       product: typeof message.product === 'string' ? message.product : this.state.product,
