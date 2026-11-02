@@ -9,7 +9,6 @@ import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
-import { BIGWOLF_DEFAULTS, type BigwolfConfig } from './vela/bigwolf';
 import { FriendsIcon, MailIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
@@ -140,14 +139,6 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(() => (params.get('ticket') || params.get('share') ? 'review' : 'trade'));
   const [error, setError] = useState('');
   const [railOpen, setRailOpen] = useState(() => window.innerWidth > 900);
-  // bigwolf 叠加层：null = 关闭。开关记在本机，刷新后保持。
-  const [bigwolf, setBigwolf] = useState<BigwolfConfig | null>(() => {
-    try {
-      return localStorage.getItem('sn-bigwolf') === '1' ? BIGWOLF_DEFAULTS : null;
-    } catch {
-      return null;
-    }
-  });
   const [feedFilter, setFeedFilter] = useState<'all' | 'share' | 'chat' | 'unread'>('all');
   const [feedLimit, setFeedLimit] = useState(80);
   const [chatReadAt, setChatReadAt] = useState<number>(() => {
@@ -975,21 +966,8 @@ export default function App() {
           <div className="chart-toolbar">
             <LayoutMenu current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
             <TfMenu current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
-            <button
-              type="button"
-              className={`tool-btn bigwolf-toggle ${bigwolf ? 'is-active' : ''}`.trim()}
-              title="bigwolf：Vegas 通道 / 时段箱体 / 时段高低点 / FVG / 内包 K 线 / MACD 穿零轴标记"
-              aria-pressed={Boolean(bigwolf)}
-              onClick={() => {
-                const next = bigwolf ? null : BIGWOLF_DEFAULTS;
-                setBigwolf(next);
-                try { localStorage.setItem('sn-bigwolf', next ? '1' : '0'); } catch { /* ignore */ }
-              }}
-            >
-              bigwolf
-            </button>
             <DrawingFavs
-              favorites={favs}
+                favorites={favs}
               active={activeTool}
               onUse={(key) => {
                 chartRef.current?.useTool(key);
@@ -1033,7 +1011,7 @@ export default function App() {
                 savedState={null}
                 readOnly={false}
                 timeframes={TIMEFRAME_OPTIONS.map((o) => o.id)}
-                favorites={favs}
+              favorites={favs}
                 onFavorites={saveFavorites}
                 onTool={setActiveTool}
                 onTimeframe={setTf}
@@ -1041,7 +1019,6 @@ export default function App() {
                 onSyncs={setSyncs}
                 onError={setError}
                 onViewport={handleViewport}
-                bigwolf={bigwolf}
               />
             ) : mode === 'review' && ready && series ? (
               <ChartWorkspace
@@ -1073,7 +1050,6 @@ export default function App() {
                 onSyncs={setSyncs}
                 onError={setError}
                 onViewport={handleViewport}
-                bigwolf={bigwolf}
               />
             ) : (
               <div className="chart-empty">

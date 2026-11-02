@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type BaseTimeframe, type ReviewCharts } from './provider';
-import { computeBigwolf, type BigwolfConfig } from './bigwolf';
+import { PineEngine } from '@luxalgo/vela-pinets';
+import { BIGWOLF_PINE } from './bigwolf.pine';
 import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
 
@@ -67,8 +68,6 @@ export interface ChartHandle {
   setFavorites(types: string[]): void;
   /** 用新的一段 K 线替换某个基础周期，并按各格子的周期重绘（保持视窗）。 */
   applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string): void;
-  /** 重画 bigwolf 叠加层（开关切换、数据更新后调用）。 */
-  repaintBigwolf(): void;
 }
 
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
@@ -90,8 +89,6 @@ interface Props {
   onTool?: (type: string | null) => void;
   /** 某个格子的可见范围变了（已节流）：上层据此补段/删段。 */
   onViewport?: (info: { cellId: string; timeframe: string; from: number; to: number }) => void;
-  /** bigwolf 叠加层开关（Vegas / 时段 / FVG / 内包 / 穿零轴标记）。 */
-  bigwolf?: BigwolfConfig | null;
   /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
@@ -196,11 +193,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       setRangeKeepingSpan(other, range.from + delta, range.to - range.from);
     }
   };
-  // bigwolf 叠加层：开关放 ref 里，绘图函数在事件回调里也要读到最新值。
-  const bigwolfRef = useRef<BigwolfConfig | null>(props.bigwolf ?? null);
-  bigwolfRef.current = props.bigwolf ?? null;
-  // 每格自己画过的图元 id，重画前先清掉。
-  const bigwolfIdsRef = useRef<Map<string, Set<string>>>(new Map());
   const [ready, setReady] = useState(false);
   const { theme, timezone, chartLocale } = usePrefs();
   // 标注是在事件回调里画的，回调闭包拿不到最新的 props，用 ref 兜住当前主题。
@@ -208,61 +200,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   themeRef.current = theme;
 
   anchorRef.current = anchorMs;
-
-  /** 这一格当前周期的 K 线（秒），用于算叠加层。 */
-  const rowsForCell = (cell: any): number[][] => {
-    const tfId: string = cell?.chart?.market?.timeframe ?? '15';
-    const recipe = TIMEFRAMES[tfId];
-    if (!recipe) return [];
-    const source = dataRef.current[recipe.base] ?? [];
-    if (!source.length) return [];
-    const baseSeconds = TIMEFRAMES[basePeriodKey(recipe.base)]?.seconds ?? 60;
-    return recipe.seconds === baseSeconds ? source : aggregate(source, recipe.seconds);
-  };
-
-  /** 重画一格的 bigwolf 叠加层：先清上一轮，再按当前配置重画。 */
-  const paintBigwolf = (cell: any) => {
-    const api = cell?.chart?.drawings;
-    if (!api) return;
-    const previous = bigwolfIdsRef.current.get(cell.id);
-    const ids = new Set<string>();
-    bigwolfIdsRef.current.set(cell.id, ids);
-    for (const id of previous ?? []) {
-      try { api.remove?.(id); } catch { /* ignore */ }
-      markIdsRef.current.delete(id);
-    }
-    const config = bigwolfRef.current;
-    if (!config) return;
-    const rows = rowsForCell(cell);
-    if (!rows.length) return;
-    const overlay = computeBigwolf(rows, config);
-    const keep = (drawing: any) => {
-      const id = drawing?.id;
-      if (!id) return;
-      ids.add(id);
-      markIdsRef.current.add(id);
-    };
-    for (const line of overlay.polylines) {
-      try {
-        keep(api.add('polyline', { anchors: line.points, style: { lineColor: line.color, lineWidth: line.width, lineStyle: 'solid' }, zIndex: 2000 }));
-      } catch { /* 渲染器不支持 polyline 时跳过 */ }
-    }
-    for (const box of overlay.boxes) {
-      try {
-        keep(api.add('box', { anchors: [{ time: box.from, price: box.top }, { time: box.to, price: box.bottom }], style: { fillColor: box.color, lineColor: box.color, lineWidth: 1 }, zIndex: 1 }));
-      } catch { /* 渲染器不支持 box 时跳过 */ }
-    }
-    for (const level of overlay.levels) {
-      try {
-        keep(api.add('trendline', { anchors: [{ time: level.from, price: level.price }, { time: level.to, price: level.price }], style: { lineColor: level.color, lineWidth: 1, lineStyle: 'dashed' }, zIndex: 1900 }));
-      } catch { /* ignore */ }
-    }
-    for (const label of overlay.labels) {
-      try {
-        keep(api.add('text', { anchors: [{ time: label.time, price: label.price }], text: { value: label.text, size: 'small', hAlign: 'center', vAlign: label.above ? 'top' : 'bottom', color: label.color }, zIndex: 2000 }));
-      } catch { /* ignore */ }
-    }
-  };
 
   useImperativeHandle(ref, () => ({
     setLayout(id) {
@@ -326,8 +263,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       }
     },
     applySeries(base, bars, onlyCellId) {
-      // 数据变了：叠加层跟着重算（同一格周期可能换了）。
-      window.setTimeout(() => { for (const cell of wsRef.current?.cells?.() ?? []) { try { paintBigwolf(cell); } catch { /* ignore */ } } }, 0);
       dataRef.current = { ...dataRef.current, [base]: bars };
       for (const cell of wsRef.current?.cells?.() ?? []) {
         // 只重画触发这次补段的那一格：把整屏同周期的格子一起 setBars，
@@ -366,11 +301,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     },
     getSyncs() {
       return stateWithTimeSync(wsRef.current);
-    },
-    repaintBigwolf() {
-      for (const cell of wsRef.current?.cells?.() ?? []) {
-        try { paintBigwolf(cell); } catch { /* ignore */ }
-      }
     },
     snapshot() {
       try {
@@ -451,6 +381,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           // 表格和 K 线时间轴必须用同一个显示时区，否则「复盘跳到这根 K 线」会对不上。
           timezone: resolveZone(initial.timezone),
           providers: { [providerName]: () => provider },
+          // Pine 指标引擎 + bigwolf：指标面板里就能添加，不再自己画叠加层。
+          engines: { pine: () => new PineEngine() },
+          indicators: [{ name: 'bigwolf', script: BIGWOLF_PINE, language: 'pine' }],
           sync: { crosshair: true },
           persist: false,
           drawingToolbar: !readOnly,
@@ -626,7 +559,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           cell.__tpBound = true;
           cell.chart?.on?.('load:end', () => {
             focusOne(cell);
-            try { paintBigwolf(cell); } catch { /* ignore */ }
             lockDrawings(cell);
             annotate(cell);
             try {
@@ -709,14 +641,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     };
     // charts 的一次性数据：换交易时整个组件重挂载（key 由上层控制）。
   }, [charts, symbol]);
-
-  // bigwolf 开关或数据变化时重画（关闭时把上一轮图元清掉）。
-  useEffect(() => {
-    if (!ready) return;
-    for (const cell of wsRef.current?.cells?.() ?? []) {
-      try { paintBigwolf(cell); } catch { /* ignore */ }
-    }
-  }, [props.bigwolf, ready]);
 
   // 外观三项跟着「设置」实时切换：主题、显示时区、图表语言。
   // `ready` 之前 ws 还没建好，等就绪后这套 effect 会再跑一次把初始值补上。
