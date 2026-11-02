@@ -645,6 +645,19 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     } catch {
       /* 旧版本没有 setTheme 时忽略 */
     }
+    // 十字线单独调亮：主题自带的太淡，压在 K 线上几乎看不见。
+    // applyConfig 挂在渲染器上（chart.rendererControl.renderer），不在 chart 上。
+    for (const cell of wsRef.current?.cells?.() ?? []) {
+      try {
+        cell.chart?.rendererControl?.renderer?.applyConfig?.({
+          crosshair: theme === 'light'
+            ? { color: '#3f4c5c', width: 1, style: 'dashed', opacity: 0.9 }
+            : { color: '#e2e8f0', width: 1, style: 'dashed', opacity: 0.9 },
+        });
+      } catch {
+        /* 渲染器没有 applyConfig 时忽略 */
+      }
+    }
   }, [theme, ready]);
 
   useEffect(() => {
