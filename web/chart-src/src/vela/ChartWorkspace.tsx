@@ -153,6 +153,28 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     if (!range || !(range.to > range.from)) return null;
     return (range.from + range.to) / 2;
   };
+  // 拖动联动：记录每格上一次的可见范围，用「时间增量」平移别的格（不是按根数）。
+  // 例如 1m 格拖了 60 根 = 60 分钟，15m 格就会平移 60 分钟 = 4 根。
+  const lastRangeRef = useRef<Map<string, { from: number; to: number }>>(new Map());
+  // 我们自己 setVisibleRange 触发的回调要忽略，避免互相推着跑。
+  const suppressUntilRef = useRef(0);
+  const panOthers = (exceptId: string, delta: number) => {
+    if (!delta) return;
+    suppressUntilRef.current = Date.now() + 200;
+    for (const other of wsRef.current?.cells?.() ?? []) {
+      if (other.id === exceptId) continue;
+      const range = other.chart?.getVisibleRange?.();
+      if (!range || !(range.to > range.from)) continue;
+      const from = range.from + delta;
+      const to = range.to + delta;
+      try {
+        other.chart.setVisibleRange({ from, to });
+        lastRangeRef.current.set(other.id, { from, to });
+      } catch {
+        /* ignore */
+      }
+    }
+  };
   const [ready, setReady] = useState(false);
   const { theme, timezone, chartLocale } = usePrefs();
   // 标注是在事件回调里画的，回调闭包拿不到最新的 props，用 ref 兜住当前主题。
@@ -467,6 +489,18 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           let lastViewport = 0;
           try {
             cell.chart?.onViewportChange?.((range: { from: number; to: number }) => {
+              // 拖动联动：先看这一格是「平移」还是「缩放」。
+              // 跨度没变 = 平移，把时间增量同步给其他格；跨度变了 = 缩放，不动别人。
+              const previous = lastRangeRef.current.get(cell.id);
+              const span = range.to - range.from;
+              lastRangeRef.current.set(cell.id, { from: range.from, to: range.to });
+              if (Date.now() > suppressUntilRef.current && timeSyncRef.current && previous && span > 0) {
+                const previousSpan = previous.to - previous.from;
+                if (Math.abs(previousSpan - span) < 1) {
+                  const delta = range.from - previous.from;
+                  if (Math.abs(delta) > 500) panOthers(cell.id, delta);
+                }
+              }
               const tick = Date.now();
               if (tick - lastViewport < 320) return;
               lastViewport = tick;
@@ -477,15 +511,25 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           }
           // 「时间轴」勾选时：点任意一格（K 线或时间轴附近）→ 其他格居中到同一时刻。
           // 只对齐时间，不动缩放；不勾选时完全不联动。
+          const handleClick = (event: { time?: number | null }) => {
+            if (!timeSyncRef.current) return;
+            const at = event?.time;
+            if (typeof at !== 'number') return;
+            jumpAllTo(at, cell.id);
+          };
           try {
-            cell.chart?.onClick?.((event: { time?: number | null }) => {
-              if (!timeSyncRef.current) return;
-              const at = event?.time;
-              if (typeof at !== 'number') return;
-              jumpAllTo(at, cell.id);
-            });
+            // 不同渲染器暴露点击的方式不一样：优先 onClick，其次通用 on('click')。
+            if (typeof cell.chart?.onClick === 'function') cell.chart.onClick(handleClick);
+            else cell.chart?.on?.('click', handleClick);
           } catch {
-            /* 渲染器没有 onClick 时忽略 */
+            /* 两个都没有时忽略 */
+          }
+          // 记下初始范围：第一次拖动就能算出时间增量。
+          try {
+            const initial = cell.chart?.getVisibleRange?.();
+            if (initial) lastRangeRef.current.set(cell.id, { from: initial.from, to: initial.to });
+          } catch {
+            /* ignore */
           }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
