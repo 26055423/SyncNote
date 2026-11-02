@@ -125,7 +125,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // 「时间轴同步」= 点击跳到同一时刻（像 TradingView），不是缩放同步。
   // 存在本机，刷新后仍然生效。
   const timeSyncRef = useRef<boolean>((() => {
-    try { return localStorage.getItem(TIME_SYNC_KEY) === '1'; } catch { return false; }
+    // 默认开启：勾掉才完全不联动。
+    try { return localStorage.getItem(TIME_SYNC_KEY) !== '0'; } catch { return true; }
   })());
   const stateWithTimeSync = (ws: any): Partial<Record<SyncKind, boolean>> => ({
     ...((ws?.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>),
@@ -512,7 +513,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               const span = range.to - range.from;
               lastRangeRef.current.set(cell.id, { from: range.from, to: range.to });
               const programmaticUntil = programmaticUntilRef.current.get(cell.id) ?? 0;
-              if (Date.now() > programmaticUntil && previous && span > 0) {
+              if (timeSyncRef.current && Date.now() > programmaticUntil && previous && span > 0) {
                 const previousSpan = previous.to - previous.from;
                 if (Math.abs(previousSpan - span) < 1) {
                   const delta = range.from - previous.from;
@@ -530,6 +531,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           // 「时间轴」勾选时：点任意一格（K 线或时间轴附近）→ 其他格居中到同一时刻。
           // 只对齐时间，不动缩放；不勾选时完全不联动。
           const handleClick = (event: { time?: number | null }) => {
+            if (!timeSyncRef.current) return;
             const at = event?.time;
             if (typeof at !== 'number') return;
             jumpAllTo(at, cell.id);
