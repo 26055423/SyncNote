@@ -642,7 +642,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 /* 右栏改成带文字的图标栏：4 个无标签图标是之前最难发现的功能。 */
 .rail { width: 390px; flex-basis: 390px; }
 .rail-icons { width: 64px; flex-basis: 64px; gap: 2px; }
-.rail-icons button { width: 58px; height: 50px; display: flex; flex-direction: column; gap: 2px; font-size: 15px; }
+.rail-icons button { width: 58px; height: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 15px; }
 .rail-label { font-size: 10px; line-height: 1; color: inherit; }
 .rail-icons .dot { top: 2px; right: 4px; }
 
@@ -726,5 +726,5 @@ table.grid-table tr:hover td { background: var(--row-hover); }
    放在文件末尾，确保覆盖前面的宽屏规则。 */
 .rail.is-collapsed { width: 52px; flex-basis: 52px; }
 .rail.is-collapsed .rail-icons { width: 52px; flex-basis: 52px; }
-.rail.is-collapsed .rail-icons button { width: 44px; height: 46px; font-size: 14px; }
+.rail.is-collapsed .rail-icons button { width: 44px; height: 48px; font-size: 14px; align-items: center; justify-content: center; }
 .rail.is-collapsed .rail-label { font-size: 9.5px; }
