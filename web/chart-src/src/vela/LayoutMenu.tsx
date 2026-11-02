@@ -41,7 +41,7 @@ export type SyncKindId = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'dr
 const SYNC_ROWS: { kind: SyncKindId; label: string }[] = [
   { kind: 'timeframe', label: '周期' },
   { kind: 'crosshair', label: '十字线' },
-  { kind: 'viewport', label: '时间轴' },
+  // 时间轴跟随已改为始终生效（点击/拖动都按时间对齐），不再作为开关。
   { kind: 'drawings', label: '绘图' },
 ];
 

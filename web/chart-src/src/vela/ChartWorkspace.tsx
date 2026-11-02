@@ -158,6 +158,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const lastRangeRef = useRef<Map<string, { from: number; to: number }>>(new Map());
   // 我们自己 setVisibleRange 触发的回调要忽略，避免互相推着跑。
   const suppressUntilRef = useRef(0);
+  // 十字线时间：点击兜底时用它换算目标时刻。
+  const lastCrosshairRef = useRef<Map<string, number>>(new Map());
   const panOthers = (exceptId: string, delta: number) => {
     if (!delta) return;
     suppressUntilRef.current = Date.now() + 200;
@@ -494,7 +496,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               const previous = lastRangeRef.current.get(cell.id);
               const span = range.to - range.from;
               lastRangeRef.current.set(cell.id, { from: range.from, to: range.to });
-              if (Date.now() > suppressUntilRef.current && timeSyncRef.current && previous && span > 0) {
+              if (Date.now() > suppressUntilRef.current && previous && span > 0) {
                 const previousSpan = previous.to - previous.from;
                 if (Math.abs(previousSpan - span) < 1) {
                   const delta = range.from - previous.from;
@@ -512,7 +514,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           // 「时间轴」勾选时：点任意一格（K 线或时间轴附近）→ 其他格居中到同一时刻。
           // 只对齐时间，不动缩放；不勾选时完全不联动。
           const handleClick = (event: { time?: number | null }) => {
-            if (!timeSyncRef.current) return;
             const at = event?.time;
             if (typeof at !== 'number') return;
             jumpAllTo(at, cell.id);
@@ -530,6 +531,30 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             if (initial) lastRangeRef.current.set(cell.id, { from: initial.from, to: initial.to });
           } catch {
             /* ignore */
+          }
+          // 点击联动的兜底：Vela 的 onClick 在部分渲染器上不触发，
+          // 这里用「十字线时间 + 本格 DOM 的 pointerup」自己判断一次点击。
+          try {
+            cell.chart?.onCrosshairMove?.((event: { time?: number | null }) => {
+              if (typeof event?.time === 'number') lastCrosshairRef.current.set(cell.id, event.time);
+            });
+            const host = cell.chart?.screenshotCanvas?.()?.parentElement;
+            if (host && !host.__tpClickBound) {
+              host.__tpClickBound = true;
+              let downX = 0;
+              let downY = 0;
+              host.addEventListener('pointerdown', (event: PointerEvent) => {
+                downX = event.clientX;
+                downY = event.clientY;
+              });
+              host.addEventListener('pointerup', (event: PointerEvent) => {
+                if (Math.abs(event.clientX - downX) > 4 || Math.abs(event.clientY - downY) > 4) return;
+                const at = lastCrosshairRef.current.get(cell.id);
+                if (typeof at === 'number') jumpAllTo(at, cell.id);
+              });
+            }
+          } catch {
+            /* DOM 兜底失败不影响拖动联动 */
           }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
