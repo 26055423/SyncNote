@@ -937,16 +937,21 @@ export default function App() {
         <a className="brand" href="/">
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
-        <div className="symbol">
-          <b>{mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'}</b>
-          <span className="price-label">{priceLabel}</span>
-          <span className={price != null ? 'price' : 'price dim'}>{price != null ? quotePrice(price) : '—'}</span>
-          <span className={mt5Online ? 'link-dot on' : 'link-dot off'}>{localConnected ? '本机直连' : mt5Online ? '云端同步 · 只读' : 'MT5 未连接'}</span>
-        </div>
-        <div className="metrics" title={reviewingOther ? '我的账户；正在复盘的是别人的交易' : '我的账户'}>
-          <span>{reviewingOther ? '我的' : ''}净值 <b>{money(displayedAccount?.equity)}</b></span>
-          <span>{reviewingOther ? '我的' : ''}余额 <b>{money(displayedAccount?.balance)}</b></span>
-          <span>{reviewingOther ? '我的' : ''}浮盈 <b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b></span>
+        <div className="status-row" title={reviewingOther ? '我的账户；正在复盘的是别人的交易' : '我的账户'}>
+          <span className="stat"><b className="stat-v">{mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'}</b></span>
+          <span className="sep" aria-hidden="true" />
+          <span className="stat">
+            <span className="stat-k">{priceLabel}</span>
+            <b className={price != null ? 'stat-v' : 'stat-v dim'}>{price != null ? quotePrice(price) : '—'}</b>
+          </span>
+          <span className={`status-chip ${localConnected ? 'on' : mt5Online ? 'sync' : 'off'}`}>
+            <i aria-hidden="true" />
+            {localConnected ? '本机直连' : mt5Online ? '云端同步 · 只读' : 'MT5 未连接'}
+          </span>
+          <span className="sep" aria-hidden="true" />
+          <span className="stat"><span className="stat-k">{reviewingOther ? '我的净值' : '净值'}</span><b className="stat-v">{money(displayedAccount?.equity)}</b></span>
+          <span className="stat"><span className="stat-k">{reviewingOther ? '我的余额' : '余额'}</span><b className="stat-v">{money(displayedAccount?.balance)}</b></span>
+          <span className="stat"><span className="stat-k">{reviewingOther ? '我的浮盈' : '浮盈'}</span><b className={floating >= 0 ? 'stat-v up' : 'stat-v down'}>{money(floating)}</b></span>
         </div>
         <nav className="top-actions">
           <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>

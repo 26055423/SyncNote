@@ -728,3 +728,26 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .rail.is-collapsed .rail-icons { width: 52px; flex-basis: 52px; }
 .rail.is-collapsed .rail-icons button { width: 44px; height: 48px; font-size: 14px; align-items: center; justify-content: center; }
 .rail.is-collapsed .rail-label { font-size: 9.5px; }
+
+/* ---------------------------------------------------------------- 顶栏状态行
+   品牌 / 品种 / 价格 / 连接状态 / 账户三项，统一成同一套字号、间距与基线：
+   标签 11.5px 灰、数值 13px 白、组间用 1px 竖线分隔。 */
+.topbar { gap: 16px; }
+.brand { font-size: 14px; }
+.brand small { font-size: 10.5px; }
+.status-row { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--dim); }
+.status-row .sep { width: 1px; height: 14px; flex: 0 0 1px; background: var(--line); }
+.stat { display: inline-flex; align-items: baseline; gap: 5px; font-size: 11.5px; white-space: nowrap; }
+.stat-k { color: var(--dim); }
+.stat-v { font-size: 13px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1; }
+.stat-v.dim { color: var(--dim); font-weight: 400; }
+.stat-v.up { color: var(--good); }
+.stat-v.down { color: var(--bad); }
+.status-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2);
+  color: var(--dim); font-size: 11px; white-space: nowrap;
+}
+.status-chip i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .8; }
+.status-chip.on { color: var(--good-ink); border-color: var(--good-line); background: var(--good-bg); }
+.status-chip.sync { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-soft); }
