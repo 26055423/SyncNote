@@ -125,6 +125,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const stripRef = useRef<((document: unknown) => unknown) | null>(null);
   // 自动配对 bigwolf 主图 + MACD 副图时防止自我递归。
   const pairingRef = useRef(false);
+  /** 每格自动配对的 MACD 副图 handle：删主图时用它连带删除。 */
+  const companionRef = useRef<Map<string, { remove?: () => void }>>(new Map());
   // 「时间轴同步」= 点击跳到同一时刻（像 TradingView），不是缩放同步。
   // 存在本机，刷新后仍然生效。
   const timeSyncRef = useRef<boolean>((() => {
@@ -558,18 +560,42 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
-          // 添加「★ bigwolf（主图）」时自动补一个 MACD 副图：一个功能、两块窗格。
+          // bigwolf 主图 + MACD 副图 = 一个功能两块窗格：
+          //   · 选择列表里只出现「主图」，副图由代码配对，用户看不到第二个选项；
+          //   · 加主图 → 自动加副图；手动删副图 → 不会再被加回来；
+          //   · 删主图 → 连带删副图。
           try {
+            // 选择列表过滤：把 MACD 副图从可添加清单里摘掉。
+            const original = cell.chart?.availableNativeIndicators?.bind(cell.chart);
+            if (original && !cell.__tpFiltered) {
+              cell.__tpFiltered = true;
+              cell.chart.availableNativeIndicators = async () => {
+                const rows = await original();
+                return rows.filter((row: { type: string }) => row.type !== 'bigwolf-macd');
+              };
+            }
             cell.chart?.on?.('indicator:added', () => {
               if (pairingRef.current) return;
               const present = new Set<string>(cell.chart?.presentNativeIndicators?.() ?? []);
-              if (present.has('bigwolf') && !present.has('bigwolf-macd')) {
-                pairingRef.current = true;
-                try {
-                  cell.chart?.addNativeIndicator?.('bigwolf-macd');
-                } finally {
-                  pairingRef.current = false;
-                }
+              if (!present.has('bigwolf') || present.has('bigwolf-macd')) return;
+              pairingRef.current = true;
+              try {
+                const handle = cell.chart?.addNativeIndicator?.('bigwolf-macd');
+                companionRef.current.set(cell.id, handle);
+              } finally {
+                pairingRef.current = false;
+              }
+            });
+            cell.chart?.on?.('indicator:removed', () => {
+              const present = new Set<string>(cell.chart?.presentNativeIndicators?.() ?? []);
+              if (present.has('bigwolf')) return;
+              const handle = companionRef.current.get(cell.id);
+              companionRef.current.delete(cell.id);
+              if (!handle || !present.has('bigwolf-macd')) return;
+              try {
+                handle.remove?.();
+              } catch {
+                /* ignore */
               }
             });
           } catch {
