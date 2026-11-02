@@ -502,3 +502,65 @@ def latest(db, source, symbol, tf, limit=4000, now=None):
     'to_server': bars[-1][0] if bars else None,
     'now': now,
   }
+
+# ---------------------------------------------------------------- 数据源目录
+
+_CATALOG_TTL = 60.0
+_catalog_cache = {'at': 0.0, 'value': None}
+
+
+def catalog(db, now=None):
+  """全局数据源目录：每个 (source, symbol, tf) 的覆盖范围、根数与缺口。
+
+  这是「第三类用户」的入口：不绑 MT5 也能从公共轨取数、自己复盘。
+  结果缓存 60 秒——bars 是只增不改的，没必要每个请求都扫一遍。
+  """
+  now = time.time() if now is None else now
+  cached = _catalog_cache.get('value')
+  if cached is not None and now - _catalog_cache['at'] < _CATALOG_TTL:
+    return cached
+  rows = db.execute(
+    'SELECT source, symbol, tf, min(t) AS first_t, max(t) AS last_t, count(*) AS bars'
+    ' FROM bars GROUP BY source, symbol, tf ORDER BY source, symbol, tf',
+  ).fetchall()
+  servers = {}
+  for feed in db.execute('SELECT DISTINCT source, server FROM feeds').fetchall():
+    servers.setdefault(feed['source'], feed['server'])
+  grouped = {}
+  for row in rows:
+    entry = grouped.setdefault((row['source'], row['symbol']), {
+      'source': row['source'],
+      'server': servers.get(row['source'], row['source'][4:] if row['source'].startswith('srv:') else row['source']),
+      'symbol': row['symbol'],
+      'last_bar': 0,
+      'bars': 0,
+      'tfs': {},
+    })
+    entry['tfs'][row['tf']] = {
+      'from': int(row['first_t']),
+      'to': int(row['last_t']),
+      'bars': int(row['bars']),
+    }
+    entry['bars'] += int(row['bars'])
+    entry['last_bar'] = max(entry['last_bar'], int(row['last_t']))
+  value = sorted(grouped.values(), key=lambda item: (-item['bars'], item['source']))
+  _catalog_cache['value'] = value
+  _catalog_cache['at'] = now
+  return value
+
+
+def catalog_entry(db, source, symbol, now=None):
+  """单个数据源的目录项；找不到返回 None。"""
+  for entry in catalog(db, now):
+    if entry['source'] == source and entry['symbol'] == symbol:
+      return entry
+  return None
+
+
+def public_source(db, symbol=None, now=None):
+  """给没有绑定 feed 的登录用户用的公共轨：取数据量最大的那条。"""
+  for entry in catalog(db, now):
+    if symbol and entry['symbol'] != symbol:
+      continue
+    return entry['source']
+  return None

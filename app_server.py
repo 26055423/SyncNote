@@ -350,26 +350,52 @@ class Handler(BaseHTTPRequestHandler):
                                     block['from']=int(block['from'])-shift;block['to']=int(block['to'])-shift
                         return self.reply(payload)
                     if path=='/api/market/bars':
-                        # 「行情」页没有具体交易时，用当前用户自己那条券商轨；
-                        # 没有本机实时推送就靠它兜底，避免整个页面空白。
+                        # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
                         # `limit=N`：直接给最新 N 根（有多少显示多少），不按“前后几天”切。
-                        feed=bars.feed_of(db,uid)
-                        if not feed:raise Error('还没有绑定 MT5 账户，先连接一次 EA',404)
                         symbol=str(q.get('symbol',['XAUUSD'])[0] or 'XAUUSD')[:64]
                         tf=str(q.get('tf',['M15'])[0])
+                        requested=str(q.get('source',[''])[0])
+                        feed=bars.feed_of(db,uid)
+                        source=requested or (feed['source'] if feed else '')
+                        if not source:source=bars.public_source(db,symbol) or ''
+                        if not source:raise Error('服务器上还没有这个品种的 K 线数据',404)
+                        is_public=not feed or source!=feed['source']
                         if q.get('limit'):
-                            payload=bars.latest(db,feed['source'],symbol,tf,int(q['limit'][0]),time.time())
+                            payload=bars.latest(db,source,symbol,tf,int(q['limit'][0]),time.time())
                         else:
                             try:
                                 start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
                             except ValueError:raise Error('时间范围不正确')
                             if end<=start:raise Error('时间范围不正确')
-                            payload=bars.read(db,feed['source'],symbol,tf,start,end,time.time())
-                        last=db.execute('SELECT max(t) FROM bars WHERE source=? AND symbol=? AND tf=?',(feed['source'],symbol,payload['tf'])).fetchone()[0]
-                        payload['feed']={'source':feed['source'],'server':feed['server'],'account':feed['account']}
-                        shift=bars.source_offset(db,feed['source'])
+                            payload=bars.read(db,source,symbol,tf,start,end,time.time())
+                        last=db.execute('SELECT max(t) FROM bars WHERE source=? AND symbol=? AND tf=?',(source,symbol,payload['tf'])).fetchone()[0]
+                        entry=bars.catalog_entry(db,source,symbol) or {}
+                        payload['feed']={'source':source,'server':entry.get('server',''),'account':'' if is_public else feed['account']}
+                        payload['public']=is_public
+                        shift=bars.source_offset(db,source)
                         payload['last_bar']=(int(last)-shift) if last else last
                         return self.reply(bars.to_utc(payload,shift))
+                    if path=='/api/data/sources':
+                        # 数据源目录：公共轨 + 自己那条轨，附带每个周期的覆盖/根数。
+                        # 第三类用户（没有 MT5）靠它选数据、自己复盘。
+                        feed=bars.feed_of(db,uid)
+                        mine=feed['source'] if feed else None
+                        rows=[]
+                        for entry in bars.catalog(db):
+                            rows.append({
+                                'id':entry['source'],
+                                'kind':'personal' if entry['source']==mine else 'public',
+                                'server':entry['server'],
+                                'symbol':entry['symbol'],
+                                'bars':entry['bars'],
+                                'last_bar':entry['last_bar']-bars.source_offset(db,entry['source']),
+                                'tfs':{tf:{'from':info['from']-bars.source_offset(db,entry['source']),
+                                           'to':info['to']-bars.source_offset(db,entry['source']),
+                                           'bars':info['bars']} for tf,info in entry['tfs'].items()},
+                                'can_draw':True,
+                                'can_review':True,
+                            })
+                        return self.reply({'sources':rows,'personal':mine})
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
