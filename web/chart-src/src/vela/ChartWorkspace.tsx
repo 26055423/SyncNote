@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type BaseTimeframe, type ReviewCharts } from './provider';
-import { PineEngine } from '@luxalgo/vela-pinets';
+import { PineWorkerEngine } from '@luxalgo/vela-pinets';
 import { BIGWOLF_PINE } from './bigwolf.pine';
 import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
@@ -382,7 +382,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           timezone: resolveZone(initial.timezone),
           providers: { [providerName]: () => provider },
           // Pine 指标引擎 + bigwolf：指标面板里就能添加，不再自己画叠加层。
-          engines: { pine: () => new PineEngine() },
+          // 官方推荐：workspace 里用 Worker 版，脚本再重也不卡 UI。
+          engines: { pine: () => new PineWorkerEngine() },
           indicators: [{ name: 'bigwolf', script: BIGWOLF_PINE, language: 'pine' }],
           sync: { crosshair: true },
           persist: false,
