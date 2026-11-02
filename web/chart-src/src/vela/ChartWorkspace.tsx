@@ -1,7 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type BaseTimeframe, type ReviewCharts } from './provider';
-import { PineWorkerEngine } from '@luxalgo/vela-pinets';
-import { BIGWOLF_PINE } from './bigwolf.pine';
+import { registerBigwolf } from './bigwolfNative';
 import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
 
@@ -370,6 +369,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         const provider = (props.provider as never) ?? new ReviewProvider(charts, symbol, props.providerName || 'review');
         const providerName = props.provider ? (props.providerName || 'live') : (props.providerName || 'review');
         const initial = prefs.getState();
+        await registerBigwolf();
         const ws = new VelaWorkspace(hostRef.current, {
           layout: '4',
           symbol,
@@ -383,8 +383,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           providers: { [providerName]: () => provider },
           // Pine 指标引擎 + bigwolf：指标面板里就能添加，不再自己画叠加层。
           // 官方推荐：workspace 里用 Worker 版，脚本再重也不卡 UI。
-          engines: { pine: () => new PineWorkerEngine() },
-          indicators: [{ name: 'bigwolf', script: BIGWOLF_PINE, language: 'pine' }],
           sync: { crosshair: true },
           persist: false,
           drawingToolbar: !readOnly,

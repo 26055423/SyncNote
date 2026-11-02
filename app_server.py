@@ -480,13 +480,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 # Vela 会在页面里注入 <style> 元素，这张页面单独放开内联样式；
                 # 静态资源从 jsDelivr 取（国内到新加坡直连太慢），脚本仍只允许同源 + 这个 CDN。
-                # Pine 指标引擎（bigwolf）用 new Function 跑脚本，需要 'unsafe-eval'；
-                # 只在这张交易台页面放开，其它页面保持严格 CSP。
                 self.send_header('Content-Type','text/html; charset=utf-8')
                 self.send_header('Cache-Control','no-store')
                 self.send_header('Content-Length',str(len(body)))
                 self.send_header('X-Content-Type-Options','nosniff')
-                self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' ws://127.0.0.1:18765; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+                self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' ws://127.0.0.1:18765; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
                 self.end_headers();self.wfile.write(body);return
             if path.startswith('/chart/assets/'):
                 base=(ROOT/'web'/'chart').resolve();file=(base/path[len('/chart/'):]).resolve()
