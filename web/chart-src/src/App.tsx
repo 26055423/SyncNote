@@ -172,6 +172,7 @@ export default function App() {
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
   /** 图上画的是哪套数据：server = bars 表（券商墙钟），utc = 交易快照（journal.review 已转 UTC）。 */
   const [seriesBasis, setSeriesBasis] = useState<'server' | 'utc'>('utc');
+  const basisRef = useRef<'server' | 'utc'>('utc');
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
   const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
   const [marketInfo, setMarketInfo] = useState<{ server: string; last: number | null } | null>(null);
@@ -567,8 +568,11 @@ export default function App() {
     const anchor = anchorSeconds ?? Math.round(Date.now() / 1000);
     let alive = true;
     void (async () => {
-      const merged: ReviewCharts = { ...payload };
-      let sawServer = false;
+      // 一屏只能有一条时间基：要么四个周期都用 bars（券商墙钟），要么全用交易快照（UTC）。
+      // 之前是"谁有就用谁"，结果老交易（数据截止 10-27、交易在 10-30）只有 H1 命中 bars，
+      // 变成三格 UTC + 一格墙钟，anchor 也跟着按墙钟算，整屏偏到没数据的地方。
+      const fromServer: ReviewCharts = {};
+      let resolved = 0;
       try {
         await Promise.all(REVIEW_BASE_TFS.map(async (tf) => {
           const [before, after] = REVIEW_WINDOW[tf];
@@ -584,17 +588,16 @@ export default function App() {
           } else return;
           const data = await api<{ bars: number[][] }>('/api/chart/bars?' + params.toString());
           if (!data?.bars?.length) return;
-          // 两条时间基不能混：`bars` 存的是券商服务器墙钟，交易快照 payload 是 UTC。
-          // 有服务端数据就整段用它（同一券商 source、完整），标注时间再由 offset 对齐。
-          merged[tf] = data.bars;
-          sawServer = true;
+          fromServer[tf] = data.bars;
+          resolved += 1;
         }));
       } catch {
         /* 拿不到就退回交易快照，不阻塞看图 */
       }
+      const useServer = resolved === REVIEW_BASE_TFS.length;
       if (alive) {
-        setSeries(merged);
-        setSeriesBasis(sawServer ? 'server' : 'utc');
+        setSeries(useServer ? fromServer : payload);
+        setSeriesBasis(useServer ? 'server' : 'utc');
       }
     })();
     return () => {
@@ -604,6 +607,7 @@ export default function App() {
 
   /* ------------------------------------------------- 拖动补段 / 远处删段 */
 
+  basisRef.current = seriesBasis;
   ctxRef.current = {
     shareId,
     person: target?.person,
@@ -628,6 +632,9 @@ export default function App() {
   }, [marketSeries]);
 
   const loadWindow = useCallback(async (base: string, from: number, to: number, span: number) => {
+    // 只有整屏都在用 bars 表（券商墙钟）时才允许按需补段：
+    // 交易快照那一屏是固定窗口，补进来的 bars 是另一种时间基，混进去会错位。
+    if (basisRef.current !== 'server') return;
     if (fetchingRef.current.has(base)) return;
     fetchingRef.current.add(base);
     try {
