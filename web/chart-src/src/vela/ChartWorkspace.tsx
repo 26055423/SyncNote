@@ -131,6 +131,29 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     ...((ws?.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>),
     viewport: timeSyncRef.current,
   });
+  /**
+   * 设置可见范围，但**保持跨度不变**。
+   *
+   * setVisibleRange 撞到数据边界时会把 from 夹住而 to 不变，跨度就被压缩了，
+   * 看起来像"跟着缩放"。这里写完读回来自检一次，被夹住就把整段窗口平移回去。
+   */
+  const setRangeKeepingSpan = (cell: any, from: number, span: number) => {
+    if (!(span > 0)) return;
+    try {
+      cell.chart?.setVisibleRange?.({ from, to: from + span });
+      const applied = cell.chart?.getVisibleRange?.();
+      if (!applied) return;
+      const appliedSpan = applied.to - applied.from;
+      if (Math.abs(appliedSpan - span) > 1) {
+        // 被边界夹住了：以夹住后的起点为准，把跨度撑回去（再夹一次就接受）。
+        cell.chart.setVisibleRange({ from: applied.from, to: applied.from + span });
+      }
+      const settled = cell.chart?.getVisibleRange?.();
+      if (settled) lastRangeRef.current.set(cell.id, { from: settled.from, to: settled.to });
+    } catch {
+      /* ignore */
+    }
+  };
   /** 把除 exceptId 之外的格子都居中到 at；每格保持自己的跨度。 */
   const jumpAllTo = (at: number | null, exceptId?: string) => {
     if (at == null) return;
@@ -138,12 +161,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       if (exceptId && cell.id === exceptId) continue;
       const range = cell.chart?.getVisibleRange?.();
       if (!range || !(range.to > range.from)) continue;
-      const half = (range.to - range.from) / 2;
-      try {
-        cell.chart.setVisibleRange({ from: at - half, to: at + half });
-      } catch {
-        /* ignore */
-      }
+      const span = range.to - range.from;
+      setRangeKeepingSpan(cell, at - span / 2, span);
     }
   };
   const activeCenter = (): number | null => {
@@ -166,15 +185,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       if (other.id === exceptId) continue;
       const range = other.chart?.getVisibleRange?.();
       if (!range || !(range.to > range.from)) continue;
-      const from = range.from + delta;
-      const to = range.to + delta;
-      try {
-        other.chart.setVisibleRange({ from, to });
-        lastRangeRef.current.set(other.id, { from, to });
-        programmaticUntilRef.current.set(other.id, until);
-      } catch {
-        /* ignore */
-      }
+      programmaticUntilRef.current.set(other.id, until);
+      // 保持这一格自己的跨度，只平移时间；被数据边界夹住时会把跨度撑回去。
+      setRangeKeepingSpan(other, range.from + delta, range.to - range.from);
     }
   };
   const [ready, setReady] = useState(false);
