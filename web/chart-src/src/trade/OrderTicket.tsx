@@ -41,6 +41,8 @@ export interface OrderTicketProps {
   bid: number;
   ask: number;
   connected: boolean;
+  /** 连上了但不能下单时，把原因写在这里（比笼统的"未连接"准确）。 */
+  lockedReason?: string;
   /** EA 是否声明支持挂单（limit/stop）。首版协议没有，默认关闭。 */
   allowPending?: boolean;
   submitting?: boolean;
@@ -48,7 +50,7 @@ export interface OrderTicketProps {
   onConnect?: () => void;
 }
 
-export function OrderTicket({ account, symbol, bid, ask, connected, allowPending = false, submitting = false, onSubmit, onConnect }: OrderTicketProps) {
+export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason, allowPending = false, submitting = false, onSubmit, onConnect }: OrderTicketProps) {
   const [action, setAction] = useState<OrderAction>('market');
   const [side, setSide] = useState<OrderSide>('buy');
   const [volume, setVolume] = useState('0.01');
@@ -173,7 +175,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, allowPending
 
       {!connected ? (
         <div className="lock-banner">
-          本机 EA 未连接
+          {lockedReason || '本机 EA 未连接'}
           {onConnect ? <button type="button" className="link" onClick={onConnect}>如何连接</button> : null}
         </div>
       ) : null}

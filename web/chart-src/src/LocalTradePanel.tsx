@@ -19,6 +19,16 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   const connected = state.phase === 'connected';
   const unresolved = state.commands.some((command) => command.account_id === state.account_id && command.server === state.server && !['completed', 'rejected'].includes(command.state));
   const enabled = connected && !state.read_only && state.demo && !unresolved;
+  // 连上了却下不了单时，说清楚是哪一条拦住的：非模拟账户 / 只读 / 还有待核实指令。
+  const lockedReason = !connected
+    ? ''
+    : !state.demo
+      ? '已连接，但当前账户不是模拟账户：首版只允许模拟对冲账户下单'
+      : state.read_only
+        ? '已连接，但 EA 处于只读模式：请在 EA 参数里开启交易权限'
+        : unresolved
+          ? '已连接，但还有未确认的指令，先核对结果再下单'
+          : '';
 
   const perform = (callback: () => unknown) => {
     try { setError(''); callback(); } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
@@ -55,6 +65,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
         bid={state.tick?.bid ?? 0}
         ask={state.tick?.ask ?? 0}
         connected={enabled}
+        lockedReason={lockedReason}
         onSubmit={submitMarketOrder}
       />
     {connected ? <>
