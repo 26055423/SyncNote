@@ -55,6 +55,12 @@ def initialize(db):
     attempts INTEGER NOT NULL DEFAULT 1, updated REAL NOT NULL,
     PRIMARY KEY(account_key, source, symbol, tf, from_t)
   );
+  -- 每条券商轨的时区偏移：bars 里存的是券商墙钟，出库时统一减掉它换成 UTC。
+  CREATE TABLE IF NOT EXISTS source_clock(
+    source TEXT PRIMARY KEY,
+    offset_sec INTEGER NOT NULL,
+    updated REAL NOT NULL
+  );
   ''')
 
 
@@ -92,7 +98,52 @@ def bind_feed(db, person, account, server, now=None):
   if row and row['account_key'] and row['account_key'] != feed['account_key']:
     raise BarsError('此网站账号已绑定其他 MT5 账户，请先在个人中心解除连接', 409)
   db.execute('UPDATE mt5_links SET account_key=?,updated=? WHERE user_id=?', (feed['account_key'], now, person))
+  # 顺手记下这条轨的时区偏移，出库时用它把墙钟换成 UTC。
+  clock = db.execute('SELECT offset FROM broker_clocks WHERE person=?', (person,)).fetchone()
+  if clock and isinstance(clock['offset'], (int, float)):
+    set_source_offset(db, feed['source'], int(clock['offset']), now)
   return feed
+
+
+def set_source_offset(db, source, offset_sec, now=None):
+  """记住某条券商轨的墙钟偏移（秒）。0 表示该源本来就是 UTC。"""
+  now = time.time() if now is None else now
+  db.execute(
+    'INSERT INTO source_clock(source,offset_sec,updated) VALUES(?,?,?)'
+    ' ON CONFLICT(source) DO UPDATE SET offset_sec=excluded.offset_sec,updated=excluded.updated',
+    (source, int(offset_sec), now),
+  )
+  return int(offset_sec)
+
+
+def source_offset(db, source):
+  """这条轨的墙钟偏移；没记录时返回 0（按 UTC 处理）。"""
+  try:
+    row = db.execute('SELECT offset_sec FROM source_clock WHERE source=?', (source,)).fetchone()
+  except TypeError:
+    return 0
+  return int(row['offset_sec']) if row and isinstance(row['offset_sec'], (int, float)) else 0
+
+
+def to_utc(bars_payload, offset_sec):
+  """把按墙钟出的 K 线整段减掉偏移，统一成 UTC（缺省不改）。"""
+  if not offset_sec:
+    return bars_payload
+  rows = bars_payload.get('bars') or []
+  for row in rows:
+    if row and isinstance(row[0], (int, float)):
+      row[0] = int(row[0]) - int(offset_sec)
+  if isinstance(bars_payload.get('from_server'), (int, float)):
+    bars_payload['from_server'] = int(bars_payload['from_server']) - int(offset_sec)
+  if isinstance(bars_payload.get('to_server'), (int, float)):
+    bars_payload['to_server'] = int(bars_payload['to_server']) - int(offset_sec)
+  missing = bars_payload.get('missing') or []
+  bars_payload['missing'] = [
+    {'from': int(item['from']) - int(offset_sec), 'to': int(item['to']) - int(offset_sec)}
+    for item in missing if isinstance(item, dict) and 'from' in item and 'to' in item
+  ]
+  bars_payload['offset_sec'] = int(offset_sec)
+  return bars_payload
 
 
 def ensure_feed(db, server, account, now=None):

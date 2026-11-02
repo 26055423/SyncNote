@@ -171,8 +171,7 @@ export default function App() {
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
   /** 图上画的是哪套数据：server = bars 表（券商墙钟），utc = 交易快照（journal.review 已转 UTC）。 */
-  const [seriesBasis, setSeriesBasis] = useState<'server' | 'utc'>('utc');
-  const basisRef = useRef<'server' | 'utc'>('utc');
+
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
   const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
   const [marketInfo, setMarketInfo] = useState<{ server: string; last: number | null } | null>(null);
@@ -527,9 +526,7 @@ export default function App() {
   const serverOffsetSec = typeof entry?.bar_offset === 'number'
     ? entry.bar_offset
     : (Math.round(Number(entry?.review?.trade?.closed_server ?? NaN) - Number(entry?.review?.trade?.closed ?? NaN)) || 0);
-  // bars 表存的是券商墙钟；journal.review 返回的 opened 与 charts 已经换算成 UTC。
-  // 所以只有用 bars 表的数据时才加偏移，走交易快照时保持原值。
-  const barOffsetSec = seriesBasis === 'server' ? serverOffsetSec : 0;
+  // 服务端出库时已把 bars 的券商墙钟换成 UTC，前端不再需要偏移。
   // 快照通道的旧交易没有 `review.opened`，只有 `opened_server`：用墙钟减去偏移折算成 UTC，
   // 否则整笔复盘会定位到平仓时间上去（实测 #43442851 就是这样）。
   const openedSeconds = entry?.review?.opened
@@ -568,11 +565,9 @@ export default function App() {
     const anchor = anchorSeconds ?? Math.round(Date.now() / 1000);
     let alive = true;
     void (async () => {
-      // 一屏只能有一条时间基：要么四个周期都用 bars（券商墙钟），要么全用交易快照（UTC）。
-      // 之前是"谁有就用谁"，结果老交易（数据截止 10-27、交易在 10-30）只有 H1 命中 bars，
-      // 变成三格 UTC + 一格墙钟，anchor 也跟着按墙钟算，整屏偏到没数据的地方。
-      const fromServer: ReviewCharts = {};
-      let resolved = 0;
+      // 服务端已经把库里的券商墙钟换成 UTC（bars.to_utc），所以两套数据现在可以直接按
+      // 时间戳合并：同一周期有 bars 就用 bars（更全），没有就留交易快照那一段。
+      const merged: ReviewCharts = { ...payload };
       try {
         await Promise.all(REVIEW_BASE_TFS.map(async (tf) => {
           const [before, after] = REVIEW_WINDOW[tf];
@@ -588,17 +583,19 @@ export default function App() {
           } else return;
           const data = await api<{ bars: number[][] }>('/api/chart/bars?' + params.toString());
           if (!data?.bars?.length) return;
-          fromServer[tf] = data.bars;
-          resolved += 1;
+          if (!payload[tf]?.length) {
+            merged[tf] = data.bars;
+            return;
+          }
+          const byTime = new Map<number, number[]>();
+          for (const bar of payload[tf]) byTime.set(bar[0], bar);
+          for (const bar of data.bars) byTime.set(bar[0], bar);
+          merged[tf] = [...byTime.values()].sort((a, b) => a[0] - b[0]);
         }));
       } catch {
         /* 拿不到就退回交易快照，不阻塞看图 */
       }
-      const useServer = resolved === REVIEW_BASE_TFS.length;
-      if (alive) {
-        setSeries(useServer ? fromServer : payload);
-        setSeriesBasis(useServer ? 'server' : 'utc');
-      }
+      if (alive) setSeries(merged);
     })();
     return () => {
       alive = false;
@@ -607,7 +604,6 @@ export default function App() {
 
   /* ------------------------------------------------- 拖动补段 / 远处删段 */
 
-  basisRef.current = seriesBasis;
   ctxRef.current = {
     shareId,
     person: target?.person,
@@ -634,7 +630,6 @@ export default function App() {
   const loadWindow = useCallback(async (base: string, from: number, to: number, span: number) => {
     // 只有整屏都在用 bars 表（券商墙钟）时才允许按需补段：
     // 交易快照那一屏是固定窗口，补进来的 bars 是另一种时间基，混进去会错位。
-    if (basisRef.current !== 'server') return;
     if (fetchingRef.current.has(base)) return;
     fetchingRef.current.add(base);
     try {
@@ -723,8 +718,8 @@ export default function App() {
     const closed = trade?.closed ?? null;
     const seconds = target?.t ?? opened ?? closed ?? 0;
     // 图上是券商墙钟的 K 线，定位点也要跟着偏移，否则"居中"会偏到另一根上去。
-    return seconds > 0 ? (seconds + barOffsetSec) * 1000 : 0;
-  }, [entry, trade?.closed, target?.t, barOffsetSec, openedSeconds]);
+    return seconds > 0 ? seconds * 1000 : 0;
+  }, [entry, trade?.closed, target?.t, openedSeconds]);
 
   if (!board) {
     return (
@@ -832,8 +827,8 @@ export default function App() {
                 tradeMarks={
                   entry!.review.opened != null && trade?.closed != null
                     ? {
-                        openedAt: Number(openedSeconds ?? 0) + barOffsetSec,
-                        closedAt: Number(trade.closed) + barOffsetSec,
+                        openedAt: Number(openedSeconds ?? 0),
+                        closedAt: Number(trade.closed),
                         open: Number(trade.open) || 0,
                         close: Number(trade.close) || 0,
                         side: trade.side === 'sell' ? 'sell' : 'buy',

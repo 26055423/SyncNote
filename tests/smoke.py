@@ -208,6 +208,13 @@ def main():
    ensure(legacy['source']=='srv:'+server_name,'trades without a server fall back to their owner feed')
    market=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&from='+str(window_from)+'&to='+str(window_to))
    ensure(market['source']=='srv:'+server_name and market['feed']['account']==mt5_account,'market bars use the owner feed')
+   # 出库统一按 UTC：没记过偏移的源当作 0，记过的话每根 bar 都要被平移。
+   probe=sqlite3.connect(':memory:');probe.row_factory=sqlite3.Row;_bars.initialize(probe)
+   _bars.set_source_offset(probe,'srv:probe',3600,0)
+   ensure(_bars.source_offset(probe,'srv:probe')==3600,'source offset round-trips')
+   shifted=_bars.to_utc({'bars':[[1000,1,1,1,1,0]],'missing':[{'from':1000,'to':2000}]},3600)
+   ensure(shifted['bars'][0][0]==-2600 and shifted['missing'][0]['from']==-2600,'to_utc shifts bars and gaps')
+   ensure(_bars.source_offset(probe,'srv:unknown')==0,'unknown source defaults to a zero offset')
    limited=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&limit=100')
    ensure(limited.get('count') is not None and len(limited['bars'])<=100,'market bars honours the latest-N limit')
    anon.request('/api/market/bars?tf=M1&from=1&to=2',status=401)

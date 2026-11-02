@@ -262,7 +262,16 @@ class Handler(BaseHTTPRequestHandler):
                     if path=='/api/live':
                         try:limit=int(q.get('limit',['500'])[0])
                         except ValueError:limit=500
-                        return self.reply(LIVE.read(uid,max(50,min(3000,limit))) or {'bars':{},'tick':None,'updated':None,'age':None})
+                        live_payload=LIVE.read(uid,max(50,min(3000,limit))) or {'bars':{},'tick':None,'updated':None,'age':None}
+                        # 实时 K 线也是券商墙钟，同样换成 UTC，和复盘/历史的坐标一致。
+                        feed=bars.feed_of(db,uid)
+                        shift=bars.source_offset(db,feed['source']) if feed else int(live_payload.get('offset') or 0)
+                        if shift:
+                            for rows in (live_payload.get('bars') or {}).values():
+                                for row in rows:
+                                    if row and isinstance(row[0],(int,float)):row[0]=int(row[0])-shift
+                            live_payload['offset_sec']=shift
+                        return self.reply(live_payload)
                     if path=='/api/chart/entry':
                         ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
                         row=None
@@ -311,7 +320,8 @@ class Handler(BaseHTTPRequestHandler):
                         feed=db.execute('SELECT server,account FROM feeds WHERE source=? LIMIT 1',(source,)).fetchone()
                         payload['feed']={'source':source,'server':(feed['server'] if feed else ''),'account':(feed['account'] if feed else '')}
                         payload['symbol_label']=str(trade.get('symbol') or '')
-                        return self.reply(payload)
+                        # 库里是券商墙钟，出库统一换成 UTC，前端就能和交易快照直接混用。
+                        return self.reply(bars.to_utc(payload,bars.source_offset(db,source)))
                     if path=='/api/chart/tracks':
                         # 视频编辑软件式的“轨道”：一个券商服务器一条轨。
                         ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
@@ -333,6 +343,11 @@ class Handler(BaseHTTPRequestHandler):
                         if end<=start:raise Error('时间范围不正确')
                         payload=bars.tracks(db,str(trade.get('symbol') or ''),source,start,end)
                         payload['active_source']=source
+                        shift=bars.source_offset(db,source)
+                        if shift:
+                            for track in payload.get('tracks') or []:
+                                for block in track.get('blocks') or []:
+                                    block['from']=int(block['from'])-shift;block['to']=int(block['to'])-shift
                         return self.reply(payload)
                     if path=='/api/market/bars':
                         # 「行情」页没有具体交易时，用当前用户自己那条券商轨；
@@ -352,8 +367,9 @@ class Handler(BaseHTTPRequestHandler):
                             payload=bars.read(db,feed['source'],symbol,tf,start,end,time.time())
                         last=db.execute('SELECT max(t) FROM bars WHERE source=? AND symbol=? AND tf=?',(feed['source'],symbol,payload['tf'])).fetchone()[0]
                         payload['feed']={'source':feed['source'],'server':feed['server'],'account':feed['account']}
-                        payload['last_bar']=last
-                        return self.reply(payload)
+                        shift=bars.source_offset(db,feed['source'])
+                        payload['last_bar']=(int(last)-shift) if last else last
+                        return self.reply(bars.to_utc(payload,shift))
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
