@@ -21,7 +21,8 @@ export async function api<T = any>(path: string, data?: unknown, init?: { keepal
       throw new Error('网络连接中断，请稍后重试');
     }
     if (response.status === 401) {
-      location.replace('/login');
+      const next = encodeURIComponent(location.pathname + location.search);
+      location.replace('/login?next=' + next);
       throw new Error('登录已过期，请重新登录');
     }
     const isJSON = (response.headers.get('Content-Type') || '').includes('application/json');

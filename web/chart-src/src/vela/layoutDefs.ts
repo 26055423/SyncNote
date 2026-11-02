@@ -92,7 +92,7 @@ export const LAYOUT_GROUPS: Array<{ title: string; ids: string[] }> = [
   { title: '3 格', ids: ['3-main-left', '3-main-right', '3-main-top'] },
   { title: '4 格', ids: ['4-main-left', '4-main-right', '4-main-top', '4-main-bottom'] },
   { title: '5 格', ids: ['5-main-left', '5-main-top', '5-mixed'] },
-  { title: '更多', ids: ['10', '14'] },
+  { title: '更多', ids: ['10'] },
 ];
 
 /** Slot rectangles in 0..1 space — drives the SVG previews. */

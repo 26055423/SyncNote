@@ -44,6 +44,10 @@ interface Member {
   username: string;
   avatar: string;
   can_view: boolean;
+  /** 对方是否开放复盘（交易数据开放不等于复盘开放）。 */
+  can_review?: boolean;
+  /** 这位成员真正复盘过的成交，和看板里的 reviewed 不同。 */
+  reviewed?: string[];
 }
 
 interface Board {
@@ -132,9 +136,14 @@ export default function App() {
     const raw = params.get('share');
     return raw && /^\d+$/.test(raw) ? Number(raw) : null;
   });
-  const [tab, setTab] = useState<Tab>('trade');
+  const [tab, setTab] = useState<Tab>(() => (params.get('ticket') || params.get('share') ? 'review' : 'trade'));
   const [error, setError] = useState('');
-  const [railOpen, setRailOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(() => window.innerWidth > 900);
+  const [feedFilter, setFeedFilter] = useState<'all' | 'share' | 'chat' | 'unread'>('all');
+  const [feedLimit, setFeedLimit] = useState(80);
+  const [chatReadAt, setChatReadAt] = useState<number>(() => {
+    try { return Number(localStorage.getItem('sn-chat-read') || 0) || 0; } catch { return 0; }
+  });
 
   const [note, setNote] = useState({ body: '', tags: [] as string[] });
   const [categories, setCategories] = useState<string[]>([]);
@@ -211,6 +220,7 @@ export default function App() {
           return;
         }
         setBoard(data);
+        setError('');
       } catch (err) {
         if (alive) setError(err instanceof Error ? err.message : String(err));
       }
@@ -227,15 +237,26 @@ export default function App() {
 
   useEffect(() => {
     if (!board || target || shareId) return;
+    // 用户明确选了「行情」时不要把他拽回复盘。
+    if (params.get('view') === 'live') return;
     const ticketParam = params.get('ticket');
     const personParam = params.get('person') || board.user.id;
     const tParam = Number(params.get('t') || 0) || undefined;
+    const open = (person: string, ticket: string, t?: number) => {
+      setTarget({ person, ticket, t });
+      setMode('review');
+      setTab('review');
+    };
     if (ticketParam) {
-      setTarget({ person: personParam, ticket: ticketParam, t: tParam });
+      open(personParam, ticketParam, tParam);
       return;
     }
+    // 默认落到最近一笔复盘：交易台的第一屏应该是内容，而不是空行情。
     const mine = latestTradeOf(board.snapshots[board.user.id]);
-    if (mine) setTarget({ person: board.user.id, ticket: String(mine.ticket), t: undefined });
+    if (mine) {
+      open(board.user.id, String(mine.ticket), undefined);
+      history.replaceState(null, '', `/chart?view=review&person=${encodeURIComponent(board.user.id)}&ticket=${encodeURIComponent(String(mine.ticket))}`);
+    }
   }, [board, target, params, shareId]);
 
   /* --------------------------------------------------------- 复盘数据加载 */
@@ -287,6 +308,44 @@ export default function App() {
   }, [localConnected, local.tick, local.bars, local.history_ready]);
 
   useEffect(() => () => localTerminal.disconnect(), []);
+
+  /* 本机已连接时离开页面会丢配对令牌：先给一次浏览器级确认。 */
+  useEffect(() => {
+    if (!localConnected) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [localConnected]);
+
+  /* 刷新/后退/forward 时从 URL 还原视图，而不是只认第一次的 location.search。 */
+  useEffect(() => {
+    const onPop = () => {
+      const next = new URLSearchParams(location.search);
+      const share = next.get('share');
+      if (share && /^\d+$/.test(share)) {
+        setShareId(Number(share));
+        setTarget(null);
+        setMode('review');
+        setTab('review');
+        return;
+      }
+      setShareId(null);
+      const ticket = next.get('ticket');
+      if (ticket) {
+        setTarget({ person: next.get('person') || board?.user.id || '', ticket, t: Number(next.get('t') || 0) || undefined });
+        setMode('review');
+        setTab('review');
+        return;
+      }
+      setTarget(null);
+      setMode(next.get('view') === 'live' ? 'live' : 'review');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [board?.user.id]);
 
   useEffect(() => {
     localHistorySync.bindUser(board?.user.id || '');
@@ -382,9 +441,29 @@ export default function App() {
   /* ------------------------------------------------- 会话：消息 / 关注 */
 
   useEffect(() => {
-    if (!board) return;
-    void api<{ items: ShareRow[] }>('/api/reviews/inbox').then((r) => setInbox(r.items)).catch(() => undefined);
-    void api<{ following: Array<{ id: string; name: string }> }>('/api/profile').then((r) => setFollowing(r.following)).catch(() => undefined);
+    if (!board?.user.id) return;
+    let alive = true;
+    const loadInbox = async () => {
+      try {
+        const r = await api<{ items: ShareRow[] }>('/api/reviews/inbox');
+        if (alive) setInbox(r.items);
+      } catch {
+        /* 下一轮再试 */
+      }
+    };
+    void loadInbox();
+    void api<{ following: Array<{ id: string; name: string }> }>('/api/profile')
+      .then((r) => { if (alive) setFollowing(r.following); })
+      .catch(() => undefined);
+    // 分享是社交入口：交易台开着时也要能看到新消息，不能只在刷新页面时更新。
+    const timer = window.setInterval(loadInbox, 15000);
+    const onVisible = () => { if (document.visibilityState === 'visible') void loadInbox(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [board?.user.id]);
 
   /** 打开「消息」就把未读标成已读：角标和小铃不再闪，下次刷新也不会再算未读。 */
@@ -400,6 +479,22 @@ export default function App() {
       alive = false;
     };
   }, [tab, inbox]);
+
+  /* 聊天没有服务端 seen：用本机「最后阅读时间」算未读，至少别让信封只统计分享。 */
+  useEffect(() => {
+    if (!board) return;
+    const latest = (board.messages || []).reduce((n, row) => Math.max(n, row.created || 0), 0);
+    if (!latest) return;
+    if (!chatReadAt) {
+      setChatReadAt(latest);
+      try { localStorage.setItem('sn-chat-read', String(latest)); } catch { /* 忽略 */ }
+      return;
+    }
+    if (tab === 'inbox' && latest > chatReadAt) {
+      setChatReadAt(latest);
+      try { localStorage.setItem('sn-chat-read', String(latest)); } catch { /* 忽略 */ }
+    }
+  }, [board, tab, chatReadAt]);
 
   useEffect(() => {
     const person = target?.person;
@@ -431,26 +526,102 @@ export default function App() {
 
   /* --------------------------------------------------------------- 动作 */
 
+  /** 笔记是否改过还没保存：切换交易/离开前用它拦一下。 */
+  const noteDirty = () => Boolean(
+    entry
+    && !entry.read_only
+    && (note.body !== (entry.note?.body || '')
+      || JSON.stringify(note.tags) !== JSON.stringify(entry.note?.tags || [])),
+  );
+
+  const confirmLeaveNote = () => !noteDirty() || window.confirm('这笔交易的笔记还没保存，确定要离开吗？');
+
+  const writeUrl = (nextMode: 'review' | 'live', nextTarget = target, nextShare = shareId) => {
+    const qs = new URLSearchParams(location.search);
+    qs.set('view', nextMode);
+    if (nextMode === 'live') {
+      qs.delete('share');
+      qs.delete('person');
+      qs.delete('ticket');
+      qs.delete('t');
+    } else if (nextShare != null) {
+      qs.delete('person');
+      qs.delete('ticket');
+      qs.delete('t');
+      qs.set('share', String(nextShare));
+    } else if (nextTarget) {
+      qs.delete('share');
+      qs.set('person', nextTarget.person);
+      qs.set('ticket', nextTarget.ticket);
+      if (nextTarget.t) qs.set('t', String(nextTarget.t));
+      else qs.delete('t');
+    } else {
+      qs.delete('share');
+      qs.delete('person');
+      qs.delete('ticket');
+      qs.delete('t');
+    }
+    history.replaceState(null, '', '/chart?' + qs.toString());
+  };
+
+  const switchMode = (next: 'review' | 'live') => {
+    if (next === 'review' && !target && shareId == null) {
+      const mine = board ? latestTradeOf(board.snapshots[board.user.id]) : null;
+      if (board && mine) {
+        openTicket(board.user.id, String(mine.ticket));
+        return;
+      }
+      setTab('review');
+      setRailOpen(true);
+      return;
+    }
+    if (next === 'review' && !confirmLeaveNote()) return;
+    setMode(next);
+    if (next === 'review') setTab('review');
+    writeUrl(next);
+  };
+
   const openTicket = (person: string, ticket: string, t?: number) => {
+    if (!confirmLeaveNote()) return;
+    if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+    chartRef.current?.flush();
+    setEntry(null);
     setShareId(null);
     setTarget({ person, ticket, t });
     setMode('review');
     // 打开复盘时右栏直接切到「复盘」，不要停在「下单」。
     setTab('review');
     setRailOpen(true);
-    const qs = new URLSearchParams({ person, ticket });
+    setNote({ body: '', tags: [] });
+    setNoteState('idle');
+    setSaveState('idle');
+    setShareState('');
+    setMessage('');
+    setRecipients(new Set());
+    setFeedFilter('all');
+    const qs = new URLSearchParams({ view: 'review', person, ticket });
     if (t) qs.set('t', String(t));
     history.replaceState(null, '', '/chart?' + qs.toString());
   };
 
   /** 打开一条消息里的复盘切片：还原分享人当时那个窗口（服务端按 share 存档回放）。 */
   const openShare = (row: ShareRow) => {
+    if (!confirmLeaveNote()) return;
+    if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+    chartRef.current?.flush();
+    setEntry(null);
     setShareId(row.id);
     setTarget({ person: row.owner.id, ticket: row.ticket });
     setMode('review');
     setTab('review');
     setRailOpen(true);
-    history.replaceState(null, '', '/chart?share=' + row.id);
+    setNote({ body: '', tags: [] });
+    setNoteState('idle');
+    setSaveState('idle');
+    setShareState('');
+    setMessage('');
+    setRecipients(new Set());
+    history.replaceState(null, '', '/chart?view=review&share=' + row.id);
   };
 
   const saveNote = async () => {
@@ -458,11 +629,12 @@ export default function App() {
     setNoteState('saving');
     try {
       await api('/api/journal', { ticket: target.ticket, body: note.body, tags: note.tags });
+      setEntry((prev) => prev ? { ...prev, note: { body: note.body, tags: [...note.tags], updated: Date.now() / 1000 } } : prev);
       setNoteState('saved');
       window.setTimeout(() => setNoteState('idle'), 1600);
     } catch (err) {
       setNoteState('error');
-      setShareState(err instanceof Error ? err.message : '');
+      setError(err instanceof Error ? err.message : '笔记保存失败');
     }
   };
 
@@ -513,9 +685,15 @@ export default function App() {
   const myPositions: any[] = localConnected ? local.positions : mySnap?.data?.positions ?? [];
   const floating = myPositions.reduce((n: number, p: any) => n + (p.profit || 0), 0);
   const mt5Online = localConnected || Boolean(mySnap && board && board.now - (mySnap.updated || 0) <= 45 && mySnap.data.online !== false);
-  const price = localConnected
+  const livePrice = localConnected
     ? (local.tick?.bid ? (local.tick.bid + local.tick.ask) / 2 : null)
-    : (liveTick && liveTick.bid ? (liveTick.bid + liveTick.ask) / 2 : null) ?? barsClose(entry) ?? null;
+    : (liveTick && liveTick.bid ? (liveTick.bid + liveTick.ask) / 2 : null);
+  const reviewTrade = entry?.review.trade ?? {};
+  const reviewPrice = Number(reviewTrade.close) || Number(reviewTrade.open) || barsClose(entry);
+  // 复盘看的是这笔交易的平仓价；行情才看现价。两者不能混在一个裸数字里。
+  const price = mode === 'review' ? reviewPrice : (livePrice ?? barsClose(entry));
+  const priceLabel = mode === 'review' ? '平仓价' : '现价';
+  const reviewingOther = mode === 'review' && Boolean(target?.person && target.person !== me?.id);
   const liveAnchor = (() => {
     const rows = liveBars?.M1 ?? [];
     const last = rows[rows.length - 1];
@@ -702,13 +880,35 @@ export default function App() {
     }
   }, [loadWindow]);
 
-  const unseen = inbox.filter((row) => !row.seen).length;
+  const myChats = useMemo(
+    () => (board?.messages ?? []).filter((row) => row.person !== me?.id),
+    [board?.messages, me?.id],
+  );
+  const unseenShares = inbox.filter((row) => !row.seen).length;
+  const unseenChat = myChats.filter((row) => (row.created || 0) > chatReadAt).length;
+  const unseen = unseenShares + unseenChat;
   /** 消息页把「留言」和「复盘分享」合成一条时间线：分享就是一条带切片的消息。 */
   const feed = useMemo<Array<{ kind: 'share'; row: ShareRow } | { kind: 'chat'; row: Board['messages'][number] }>>(() => {
     const shares = inbox.map((row) => ({ kind: 'share' as const, row }));
     const chats = (board?.messages ?? []).map((row) => ({ kind: 'chat' as const, row }));
-    return [...shares, ...chats].sort((a, b) => b.row.created - a.row.created).slice(0, 80);
-  }, [inbox, board?.messages]);
+    let all: Array<{ kind: 'share'; row: ShareRow } | { kind: 'chat'; row: Board['messages'][number] }> =
+      [...shares, ...chats].sort((a, b) => b.row.created - a.row.created);
+    if (feedFilter === 'share') all = all.filter((item) => item.kind === 'share');
+    if (feedFilter === 'chat') all = all.filter((item) => item.kind === 'chat');
+    if (feedFilter === 'unread') {
+      all = all.filter((item) => item.kind === 'share' ? !item.row.seen : (item.row.created || 0) > chatReadAt);
+    }
+    return all.slice(0, feedLimit);
+  }, [inbox, board?.messages, feedFilter, feedLimit, chatReadAt]);
+  const feedHasMore = useMemo(() => {
+    if (feedFilter === 'share') return inbox.length > feedLimit;
+    if (feedFilter === 'chat') return (board?.messages?.length ?? 0) > feedLimit;
+    if (feedFilter === 'unread') {
+      const total = unseenShares + unseenChat;
+      return total > feedLimit;
+    }
+    return (inbox.length + (board?.messages?.length ?? 0)) > feedLimit;
+  }, [inbox.length, board?.messages?.length, feedFilter, feedLimit, unseenShares, unseenChat]);
   const trade = entry?.review.trade ?? {};
   const anchorMs = useMemo(() => {
     // 消息里的切片：分享人当时可见窗口中点，优先于开仓时间。
@@ -739,20 +939,21 @@ export default function App() {
         </a>
         <div className="symbol">
           <b>{mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'}</b>
+          <span className="price-label">{priceLabel}</span>
           <span className={price != null ? 'price' : 'price dim'}>{price != null ? quotePrice(price) : '—'}</span>
           <span className={mt5Online ? 'link-dot on' : 'link-dot off'}>{localConnected ? '本机直连' : mt5Online ? '云端同步 · 只读' : 'MT5 未连接'}</span>
         </div>
-        <div className="metrics">
-          <span>净值 <b>{money(displayedAccount?.equity)}</b></span>
-          <span>余额 <b>{money(displayedAccount?.balance)}</b></span>
-          <span>浮盈 <b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b></span>
+        <div className="metrics" title={reviewingOther ? '我的账户；正在复盘的是别人的交易' : '我的账户'}>
+          <span>{reviewingOther ? '我的' : ''}净值 <b>{money(displayedAccount?.equity)}</b></span>
+          <span>{reviewingOther ? '我的' : ''}余额 <b>{money(displayedAccount?.balance)}</b></span>
+          <span>{reviewingOther ? '我的' : ''}浮盈 <b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b></span>
         </div>
         <nav className="top-actions">
           <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>
-          <a href="/history">交易记录</a>
-          <a href="/profile">{me?.nickname || '个人中心'}</a>
+          <a href="/history" target="_blank" rel="noopener noreferrer" title="新标签页打开，保留本机 EA 连接">交易记录 ↗</a>
+          <a href="/profile" target="_blank" rel="noopener noreferrer" title="新标签页打开，保留本机 EA 连接">{me?.nickname || '个人中心'} ↗</a>
           <SettingsMenu />
-          <button type="button" className="icon" title="显示/隐藏右侧栏" onClick={() => setRailOpen((v) => !v)}>▤</button>
+          <button type="button" className="icon" title="显示/隐藏右侧栏" aria-label={railOpen ? '收起右侧栏' : '展开右侧栏'} aria-expanded={railOpen} onClick={() => setRailOpen((v) => !v)}>▤</button>
         </nav>
       </header>
 
@@ -761,7 +962,7 @@ export default function App() {
         <section className="chart-pane">
           <div className="chart-toolbar">
             <LayoutMenu current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
-            <TfMenu current={tf} options={availableTfs} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
+            <TfMenu current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
             <DrawingFavs
               favorites={favs}
               active={activeTool}
@@ -770,18 +971,29 @@ export default function App() {
                 setActiveTool((prev) => (prev === key ? null : key));
               }}
             />
-            <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} onClick={() => setMode('live')}>行情</button>
-            <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} disabled={!target} onClick={() => setMode('review')}>复盘</button>
-            <button type="button" className="tool-btn" onClick={() => chartRef.current?.focus()}>回到开仓</button>
+            <span className="mode-switch" role="group" aria-label="图表视图">
+              <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} onClick={() => switchMode('live')}>行情</button>
+              <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} aria-pressed={mode === 'review'} disabled={!target && shareId == null && !myHistory.length} onClick={() => switchMode('review')}>复盘</button>
+            </span>
+            {mode === 'review' && (target || shareId != null) ? (
+              <button type="button" className="tool-btn" onClick={() => chartRef.current?.focus()}>定位开仓</button>
+            ) : null}
             {mode === 'live' && !liveBars && marketSeries ? (
               <span className="badge">历史行情{marketInfo?.last ? ' · 最新 ' + stamp(marketInfo.last) : ''}</span>
             ) : null}
             <span className="spacer" />
-            {entry?.read_only ? <span className="badge">只读 · {entry.owner.name} 的复盘</span> : null}
-            <span className="save-hint">
+            <span className="save-hint" role="status" aria-live="polite">
               {saveState === 'saving' ? '保存画线…' : saveState === 'saved' ? '画线已保存' : saveState === 'error' ? '画线保存失败' : ''}
             </span>
           </div>
+
+          {entry?.read_only ? (
+            <div className="context-banner" role="status">
+              <b>只读回放</b>
+              <span>{entry.owner.name} 的复盘 · 画线与笔记不可修改</span>
+              {myHistory.length ? <button type="button" className="link" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>回到我的最近一笔</button> : null}
+            </div>
+          ) : null}
 
           <div className="chart-body">
             {mode === 'live' && liveSeries ? (
@@ -838,8 +1050,33 @@ export default function App() {
               />
             ) : (
               <div className="chart-empty">
-                <p>{mode === 'live' ? (localConnected ? local.history_ready ? '本机历史暂不可用，请在 MT5 加载历史后重新连接' : '正在加载本机四周期 K 线…' : '等待行情数据…') : target ? (entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…') : '还没有可复盘的交易'}</p>
-                <p className="dim">{mode === 'live' ? '在右侧连接本机 EA，或使用已有云端同步行情' : target ? '同步完成后图表会自动出现' : '先在 MT5 上同步一笔成交'}</p>
+                <p>
+                  {mode === 'live'
+                    ? (localConnected
+                      ? (local.history_ready ? '本机历史暂不可用，请在 MT5 加载历史后重新连接' : '正在加载本机四周期 K 线…')
+                      : '等待行情数据…')
+                    : target
+                      ? (entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…')
+                      : '还没有可复盘的交易'}
+                </p>
+                <p className="dim">
+                  {mode === 'live'
+                    ? '连接本机 EA 看实时行情，或打开一笔历史复盘。'
+                    : target
+                      ? '同步完成后图表会自动出现。'
+                      : '在 MT5 同步一笔成交，或从底部「历史」打开已有交易。'}
+                </p>
+                <div className="empty-actions">
+                  {mode === 'review' && !target && myHistory[0] ? (
+                    <button type="button" className="primary" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>
+                      打开最近一笔 #{String(myHistory[0].ticket)}
+                    </button>
+                  ) : null}
+                  {!localConnected ? (
+                    <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>连接本机 MT5</button>
+                  ) : null}
+                  <a className="tool-btn" href="/local-ea" target="_blank" rel="noopener noreferrer">安装与同步说明 ↗</a>
+                </div>
               </div>
             )}
           </div>
@@ -850,10 +1087,10 @@ export default function App() {
           <aside className="rail">
             <div className="rail-icons">
               {([
+                { key: 'review', label: '复盘', Icon: ReviewIcon },
                 { key: 'trade', label: '交易', Icon: TradeIcon },
                 { key: 'inbox', label: '消息', Icon: MailIcon },
                 { key: 'friends', label: '好友', Icon: FriendsIcon },
-                { key: 'review', label: '复盘', Icon: ReviewIcon },
               ] as Array<{ key: Tab; label: string; Icon: typeof TradeIcon }>).map(({ key, label, Icon }) => {
                 const fresh = key === 'inbox' && unseen > 0;
                 return (
@@ -863,9 +1100,14 @@ export default function App() {
                     className={`${tab === key ? 'is-active' : ''} ${fresh ? 'has-new' : ''}`.trim()}
                     title={fresh ? `${label}（${unseen} 条未读）` : label}
                     aria-label={fresh ? `${label}，${unseen} 条未读` : label}
-                    onClick={() => setTab(key)}
+                    aria-current={tab === key ? 'page' : undefined}
+                    onClick={() => {
+                      if (key === 'review') { switchMode('review'); return; }
+                      setTab(key);
+                    }}
                   >
                     <Icon />
+                    <span className="rail-label">{label}</span>
                     {fresh ? <i className="dot">{unseen}</i> : null}
                   </button>
                 );
@@ -876,30 +1118,35 @@ export default function App() {
               {tab === 'trade' ? (
                 <div className="pane">
                   <LocalTradePanel state={local} />
-                  <h3>账户</h3>
-                  <div className="kv">
-                    <span>净值</span><b>{money(displayedAccount?.equity)}</b>
-                    <span>余额</span><b>{money(displayedAccount?.balance)}</b>
-                    <span>浮盈</span><b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b>
-                  </div>
-
-                  <h3>持仓 <small>{myPositions.length}</small></h3>
-                  {myPositions.length ? (
-                    <table className="mini">
-                      <thead><tr><th>品种</th><th>方向</th><th>手数</th><th>开仓</th><th>浮盈</th></tr></thead>
-                      <tbody>
-                        {myPositions.map((p) => (
-                          <tr key={p.ticket}>
-                            <td>{p.symbol}</td>
-                            <td className={sideClass(p.side)}>{sideText(p.side)}</td>
-                            <td>{p.volume}</td>
-                            <td>{money(p.price_open ?? p.open)}</td>
-                            <td className={(p.profit || 0) >= 0 ? 'up' : 'down'}>{money(p.profit)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : <p className="dim">没有持仓</p>}
+                  {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
+                  {!localConnected ? (
+                    <>
+                      <h3>云端账户 <small>快照</small></h3>
+                      <div className="kv">
+                        <span>净值</span><b>{money(displayedAccount?.equity)}</b>
+                        <span>余额</span><b>{money(displayedAccount?.balance)}</b>
+                        <span>浮盈</span><b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b>
+                      </div>
+                      <h3>云端持仓 <small>{myPositions.length}</small></h3>
+                      {myPositions.length ? (
+                        <table className="mini">
+                          <thead><tr><th>品种</th><th>方向</th><th>手数</th><th>开仓</th><th>浮盈</th></tr></thead>
+                          <tbody>
+                            {myPositions.map((p) => (
+                              <tr key={p.ticket}>
+                                <td>{p.symbol}</td>
+                                <td className={sideClass(p.side)}>{sideText(p.side)}</td>
+                                <td>{p.volume}</td>
+                                <td>{money(p.price_open ?? p.open)}</td>
+                                <td className={(p.profit || 0) >= 0 ? 'up' : 'down'}>{money(p.profit)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : <p className="dim">没有持仓</p>}
+                      <p className="dim">连接本机 EA 后，这里换成实时账户、持仓和下单。</p>
+                    </>
+                  ) : null}
 
                   {/* 成交历史统一放在底部「历史」页签里，右栏不再重复列一遍。 */}
                   <p className="dim">成交历史在底部「历史」页签，点「复盘 / 未复盘」直接打开对应 K 线。</p>
@@ -910,43 +1157,81 @@ export default function App() {
                 <div className="pane chat-pane">
                   <h3>
                     消息
-                    <small>{inbox.length ? `${inbox.length} 条复盘分享${unseen ? ` · ${unseen} 未读` : ''}` : '留言与复盘分享'}</small>
+                    <small>{inbox.length} 条分享 · {myChats.length} 条留言{unseen ? ` · ${unseen} 未读` : ''}</small>
                   </h3>
-                  <div className="chat-log">
-                    {feed.length ? feed.map((item) => (item.kind === 'share' ? (
+                  <div className="chat-filters" role="group" aria-label="消息筛选">
+                    {([
+                      ['all', '全部'],
+                      ['share', '复盘'],
+                      ['chat', '留言'],
+                      ['unread', '未读'],
+                    ] as Array<['all' | 'share' | 'chat' | 'unread', string]>).map(([id, label]) => (
                       <button
-                        key={'s' + item.row.id}
+                        key={id}
                         type="button"
-                        className={`msg share-msg ${item.row.seen ? '' : 'is-new'}`}
-                        onClick={() => openShare(item.row)}
+                        className={`chip ${feedFilter === id ? 'is-on' : ''}`}
+                        aria-pressed={feedFilter === id}
+                        onClick={() => setFeedFilter(id)}
                       >
-                        <div className="meta">
-                          {item.row.owner.name} · {stamp(item.row.created)}
-                          {item.row.seen ? null : <b className="share-unread">未读</b>}
-                        </div>
-                        <p className="share-title">
-                          {item.row.trade?.symbol || 'XAUUSD'} {sideText(item.row.trade?.side || 'buy')}
-                          {item.row.trade ? <span className={(item.row.trade.profit || 0) >= 0 ? 'up' : 'down'}> · 净盈亏 {money(item.row.trade.profit)}</span> : null}
-                        </p>
-                        {item.row.message ? <p>{item.row.message}</p> : null}
-                        <span className="share-slice">
-                          打开复盘切片
-                          {item.row.timeframe ? ` · ${item.row.timeframe} 分钟图` : ''}
-                          {item.row.anchor_ms ? ` · ${stamp(item.row.anchor_ms / 1000)}` : ''}
-                        </span>
+                        {label}{id === 'unread' && unseen ? ` ${unseen}` : ''}
                       </button>
-                    ) : (
-                      <div key={'c' + item.row.id} className={`msg ${item.row.person === me?.id ? 'mine' : ''}`}>
-                        <div className="meta">{item.row.name || item.row.person} · {stamp(item.row.created)}</div>
-                        <p>{item.row.text}</p>
-                      </div>
-                    ))) : (
-                      <p className="dim">还没有消息。在复盘里点「发给好友」，好友会在这里收到一条带复盘切片的消息。</p>
+                    ))}
+                  </div>
+                  <div className="chat-log">
+                    {feed.length ? feed.map((item, index) => {
+                      const day = stamp(item.row.created).slice(0, 10);
+                      const prevDay = index > 0 ? stamp(feed[index - 1]!.row.created).slice(0, 10) : '';
+                      return (
+                        <div className="feed-group" key={(item.kind === 'share' ? 's' : 'c') + item.row.id}>
+                          {day !== prevDay ? <div className="feed-day">{day}</div> : null}
+                          {item.kind === 'share' ? (
+                            <button
+                              type="button"
+                              className={`msg share-msg ${item.row.seen ? '' : 'is-new'}`}
+                              onClick={() => openShare(item.row)}
+                            >
+                              <div className="meta">
+                                {item.row.owner.name} · {stamp(item.row.created)}
+                                {item.row.seen ? null : <b className="share-unread">未读</b>}
+                              </div>
+                              <p className="share-title">
+                                {item.row.trade?.symbol || 'XAUUSD'} {sideText(item.row.trade?.side || 'buy')}
+                                {item.row.trade ? <span className={(item.row.trade.profit || 0) >= 0 ? 'up' : 'down'}> · 净盈亏 {money(item.row.trade.profit)}</span> : null}
+                              </p>
+                              {item.row.message ? <p>{item.row.message}</p> : null}
+                              <span className="share-slice">
+                                打开复盘切片
+                                {item.row.timeframe ? ` · ${item.row.timeframe} 分钟图` : ''}
+                                {item.row.anchor_ms ? ` · ${stamp(item.row.anchor_ms / 1000)}` : ''}
+                              </span>
+                            </button>
+                          ) : (
+                            <div className={`msg ${item.row.person === me?.id ? 'mine' : ''}`}>
+                              <div className="meta">{item.row.name || item.row.person} · {stamp(item.row.created)}</div>
+                              <p>{item.row.text}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }) : (
+                      <p className="dim">
+                        {feedFilter === 'unread'
+                          ? '没有未读消息。'
+                          : feedFilter === 'share'
+                            ? '还没有复盘分享。在复盘里点「发给好友」，这里会出现带切片的卡片。'
+                            : feedFilter === 'chat'
+                              ? '还没有留言。'
+                              : '还没有消息。'}
+                      </p>
                     )}
+                    {feedHasMore ? (
+                      <button type="button" className="tool-btn feed-more" onClick={() => setFeedLimit((n) => n + 80)}>加载更早的消息</button>
+                    ) : null}
                     <div ref={chatEnd} />
                   </div>
+                  <p className="chat-hint">留言只在你和互相关注的人之间可见；复盘分享发给被你关注的人。</p>
                   <div className="chat-form">
-                    <textarea value={chat} maxLength={1000} rows={2} placeholder="说点什么…" onChange={(e) => setChat(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendChat(); } }} />
+                    <textarea value={chat} maxLength={1000} rows={2} placeholder="说点什么…（Enter 发送，Shift+Enter 换行）" onChange={(e) => setChat(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendChat(); } }} />
                     <button type="button" className="primary" onClick={() => void sendChat()} disabled={!chat.trim()}>发送</button>
                   </div>
                 </div>
@@ -968,8 +1253,21 @@ export default function App() {
                           {snap ? <span className="dim">浮盈 {money(profit)}</span> : null}
                         </div>
                         {member.can_view ? (
-                          rows.length ? <TradeList rows={rows.slice(0, 5)} reviewed={board?.reviewed} onPick={(row) => openTicket(member.id, String(row.ticket))} /> : <p className="dim">暂无可查看的成交</p>
+                          rows.length ? (
+                            <>
+                              <TradeList
+                                rows={rows.slice(0, 5)}
+                                reviewed={member.reviewed}
+                                canReview={member.can_review !== false}
+                                onPick={(row) => openTicket(member.id, String(row.ticket))}
+                              />
+                              <a className="link friend-all" href={`/history?person=${encodeURIComponent(member.id)}`} target="_blank" rel="noopener noreferrer">
+                                查看全部 {rows.length} 笔交易 ↗
+                              </a>
+                            </>
+                          ) : <p className="dim">暂无可查看的成交</p>
                         ) : <p className="dim">对方未开放交易数据</p>}
+                        {member.can_view && member.can_review === false ? <p className="dim">对方只开放成交，没有开放复盘。</p> : null}
                       </div>
                     );
                   })}
@@ -1010,9 +1308,12 @@ export default function App() {
                         ))}
                       </div>
                       {!entry.read_only ? (
-                        <button type="button" className="primary" onClick={() => void saveNote()} disabled={noteState === 'saving'}>
-                          {noteState === 'saving' ? '保存中…' : noteState === 'saved' ? '已保存' : '保存笔记'}
-                        </button>
+                        <>
+                          {noteDirty() ? <p className="note-dirty" role="status">笔记有未保存的修改</p> : null}
+                          <button type="button" className="primary" onClick={() => void saveNote()} disabled={noteState === 'saving'}>
+                            {noteState === 'saving' ? '保存中…' : noteState === 'saved' ? '已保存' : '保存笔记'}
+                          </button>
+                        </>
                       ) : <p className="dim">这是好友的复盘，笔记与画线只读。</p>}
 
                       {!entry.read_only ? (
@@ -1043,7 +1344,17 @@ export default function App() {
                         </details>
                       ) : null}
                     </>
-                  ) : <p className="dim">先在左侧选一笔交易。</p>}
+                  ) : target ? <p className="dim">正在加载这笔复盘…</p> : (
+                    <div className="rail-empty">
+                      <p className="dim">还没有打开复盘。可以从底部「历史」选一笔成交，或直接打开最近一笔。</p>
+                      {myHistory[0] ? (
+                        <button type="button" className="primary" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>
+                          打开最近一笔 #{String(myHistory[0].ticket)}
+                        </button>
+                      ) : null}
+                      <a className="link" href="/local-ea" target="_blank" rel="noopener noreferrer">如何把 MT5 成交同步进来 ↗</a>
+                    </div>
+                  )}
                 </div>
               ) : null}
 
@@ -1086,7 +1397,12 @@ export default function App() {
         </div>
       </footer>
 
-      {error ? <div className="toast">{error}</div> : null}
+      {error ? (
+        <div className="toast" role="alert" aria-live="assertive">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError('')} aria-label="关闭错误提示">×</button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1097,7 +1413,7 @@ function nameOf(board: Board, person: string): string {
   return board.members.find((m) => m.id === person)?.name || person;
 }
 
-function TradeList({ rows, reviewed, onPick }: { rows: any[]; reviewed?: string[]; onPick: (row: any) => void }) {
+function TradeList({ rows, reviewed, canReview = true, onPick }: { rows: any[]; reviewed?: string[]; canReview?: boolean; onPick: (row: any) => void }) {
   if (!rows.length) return <p className="dim">暂无成交</p>;
   return (
     <table className="mini">
@@ -1110,7 +1426,9 @@ function TradeList({ rows, reviewed, onPick }: { rows: any[]; reviewed?: string[
             <td>{money(row.open)} / {money(row.close)}</td>
             <td className={(row.profit || 0) >= 0 ? 'up' : 'down'}>{money(row.profit)}</td>
             <td>
-              {reviewed?.includes(String(row.ticket)) ? (
+              {!canReview ? (
+                <span className="dim">未分享复盘</span>
+              ) : reviewed?.includes(String(row.ticket)) ? (
                 <button type="button" className="link done" onClick={() => onPick(row)}>已复盘</button>
               ) : (
                 <button type="button" className="link todo" onClick={() => onPick(row)}>未复盘</button>

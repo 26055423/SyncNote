@@ -66,9 +66,7 @@ async function copyText(text) {
 
 function fmtTime(seconds) {
   if (!seconds) return '—';
-  const date = new Date(seconds * 1000);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return window.syncnoteStamp ? window.syncnoteStamp(seconds) : new Date(seconds * 1000).toISOString().slice(0, 16).replace('T', ' ');
 }
 
 const stateText = { unused: '未使用', used: '已使用', expired: '已过期', revoked: '已作废' };
@@ -231,12 +229,14 @@ async function load() {
 }
 
 function lock() {
+  show('tabs', false);
   show('lock', true);
   show('panel', false);
   $('sudo-password').focus();
 }
 
 function unlock() {
+  show('tabs', true);
   show('lock', false);
   show('panel', true);
 }

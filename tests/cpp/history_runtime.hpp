@@ -11,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 using string=std::string;
 using uchar=unsigned char;
@@ -32,7 +33,7 @@ template<class... T> string StringFormat(const char* pattern,T... args){char out
 int StringSplit(const string& text,ushort separator,std::vector<string>& parts){parts.clear();std::size_t start=0;for(;;){auto next=text.find(static_cast<char>(separator),start);parts.push_back(text.substr(start,next==string::npos?next:next-start));if(next==string::npos)break;start=next+1;}return ArraySize(parts);}
 constexpr int CP_UTF8=65001,CRYPT_HASH_SHA256=1;
 int StringToCharArray(const string& s,std::vector<uchar>& out,int,int,int){out.assign(s.begin(),s.end());out.push_back(0);return ArraySize(out);}
-int CryptEncode(int,const std::vector<uchar>&,const std::vector<uchar>&,std::vector<uchar>& out){out.resize(32);return 32;} // Hashing is outside this harness.
+int CryptEncode(int,const std::vector<uchar>&,const std::vector<uchar>&,std::vector<uchar>&){throw std::logic_error("Cryptographic hashing is outside this history harness");}
 
 enum IntegerProperty{DEAL_TIME_MSC,DEAL_TIME,DEAL_ORDER,DEAL_POSITION_ID,DEAL_TYPE,DEAL_ENTRY,DEAL_MAGIC,DEAL_REASON};
 enum DoubleProperty{DEAL_VOLUME,DEAL_PRICE,DEAL_PROFIT,DEAL_COMMISSION,DEAL_SWAP,DEAL_FEE};

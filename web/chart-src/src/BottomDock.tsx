@@ -24,13 +24,25 @@ const sideText = (side: string) => (side === 'sell' ? '卖出' : '买入');
 
 export function BottomDock({ connected, localPositions, localOrders, cloudPositions, history, reviewed, onReview, tracksSlot }: BottomDockProps) {
   const [tab, setTab] = useState<Tab>('positions');
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(() => {
+    try {
+      const saved = localStorage.getItem('sn-dock-open');
+      if (saved === '0') return false;
+      if (saved === '1') return true;
+    } catch { /* 忽略 */ }
+    return window.innerHeight >= 760;
+  });
   const [sortDesc, setSortDesc] = useState(true);
+  const [limit, setLimit] = useState(200);
 
   const positions = connected ? localPositions : cloudPositions;
   const orders = localOrders;
   const rows = sortDesc ? history : [...history].reverse();
   const count = (id: Tab) => (id === 'positions' ? positions.length : id === 'orders' ? orders.length : id === 'history' ? history.length : null);
+  const setOpenPersist = (next: boolean) => {
+    setOpen(next);
+    try { localStorage.setItem('sn-dock-open', next ? '1' : '0'); } catch { /* 忽略 */ }
+  };
 
   return (
     <section className={`dock ${open ? 'is-open' : ''}`}>
@@ -49,10 +61,10 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
           ))}
         </nav>
         <span className="dim">
-          {connected ? '本机 EA · 实时' : '云端 · 5 秒刷新'}
+          {tab === 'history' ? '云端成交 · 5 秒刷新' : connected ? '本机 EA · 实时' : '云端 · 5 秒刷新'}
           {tab === 'positions' && !connected ? '（本机 EA 未连接，持仓来自云端快照）' : ''}
         </span>
-        <button type="button" className="icon" onClick={() => setOpen((v) => !v)} title={open ? '收起' : '展开'}>
+        <button type="button" className="icon" onClick={() => setOpenPersist(!open)} title={open ? '收起' : '展开'} aria-label={open ? '收起底部面板' : '展开底部面板'} aria-expanded={open}>
           {open ? '▾' : '▴'}
         </button>
       </header>
@@ -108,31 +120,37 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
 
           {tab === 'history' ? (
             rows.length ? (
-              <table className="grid-table">
-                <thead>
-                  <tr>
-                    <th>平仓时间</th><th>品种</th><th>方向</th><th>手数</th><th>开仓价</th><th>平仓价</th><th>净盈亏</th><th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.slice(0, 200).map((t: any) => (
-                    <tr key={String(t.ticket)}>
-                      <td className="dim">{stamp(t.closed)}</td>
-                      <td>{t.symbol}</td>
-                      <td className={t.side === 'sell' ? 'down' : 'up'}>{sideText(t.side)}</td>
-                      <td>{t.volume}</td>
-                      <td>{money(t.open)}</td>
-                      <td>{money(t.close)}</td>
-                      <td className={(t.profit || 0) >= 0 ? 'up' : 'down'}>{money(t.profit)}</td>
-                      <td>
-                        {reviewed?.includes(String(t.ticket))
-                          ? <button type="button" className="link done" onClick={() => onReview(String(t.ticket))}>已复盘</button>
-                          : <button type="button" className="link todo" onClick={() => onReview(String(t.ticket))}>未复盘</button>}
-                      </td>
+              <>
+                <table className="grid-table">
+                  <thead>
+                    <tr>
+                      <th>平仓时间</th><th>品种</th><th>方向</th><th>手数</th><th>开仓价</th><th>平仓价</th><th>净盈亏</th><th />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.slice(0, limit).map((t: any) => (
+                      <tr key={String(t.ticket)}>
+                        <td className="dim">{stamp(t.closed)}</td>
+                        <td>{t.symbol}</td>
+                        <td className={t.side === 'sell' ? 'down' : 'up'}>{sideText(t.side)}</td>
+                        <td>{t.volume}</td>
+                        <td>{money(t.open)}</td>
+                        <td>{money(t.close)}</td>
+                        <td className={(t.profit || 0) >= 0 ? 'up' : 'down'}>{money(t.profit)}</td>
+                        <td>
+                          {reviewed?.includes(String(t.ticket))
+                            ? <button type="button" className="link done" onClick={() => onReview(String(t.ticket))}>已复盘</button>
+                            : <button type="button" className="link todo" onClick={() => onReview(String(t.ticket))}>未复盘</button>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="dock-more">
+                  <span className="dim">显示 {Math.min(limit, rows.length)} / {rows.length} 笔</span>
+                  {limit < rows.length ? <button type="button" className="tool-btn" onClick={() => setLimit((n) => n + 200)}>加载更多</button> : null}
+                </div>
+              </>
             ) : <p className="dim dock-empty">还没有已同步的成交</p>
           ) : null}
 
@@ -145,8 +163,8 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
       ) : null}
 
       {open && tab === 'history' && history.length ? (
-        <button type="button" className="dock-sort" onClick={() => setSortDesc((v) => !v)}>
-          {sortDesc ? '最新的在上面' : '最早的在上面的'}
+        <button type="button" className="dock-sort" aria-pressed={sortDesc} onClick={() => setSortDesc((v) => !v)}>
+          {sortDesc ? '最新在前 ↓' : '最早在前 ↑'}
         </button>
       ) : null}
     </section>

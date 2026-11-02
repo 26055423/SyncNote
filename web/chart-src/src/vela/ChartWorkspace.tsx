@@ -25,7 +25,7 @@ function markColors(theme: string): { line: string; buy: string; sell: string; l
  * （背景、网格、边框、文字、涨跌色）。回放它会让「面板已换成浅色、K 线还是黑的」，
  * 所以套用前先剥掉：配色只认本站「设置 → 主题」。
  */
-function stripTheme(document: unknown): unknown {
+function stripTheme(document: unknown, provider?: string, symbol?: string): unknown {
   if (!document || typeof document !== 'object') return document;
   let copy: any;
   try {
@@ -35,7 +35,12 @@ function stripTheme(document: unknown): unknown {
   }
   if (Array.isArray(copy.charts)) {
     for (const chart of copy.charts) {
-      if (chart && typeof chart === 'object') delete chart.rendererConfig;
+      if (chart && typeof chart === 'object') {
+        delete chart.rendererConfig;
+        // 存档只存画线/布局，不存“当时的数据源”。provider 改名或换源时，
+        // 旧 symbol 会让 Vela 找不到 provider，整张图会空白。
+        if (provider && symbol) chart.symbol = symbol;
+      }
     }
   }
   return copy;
@@ -139,16 +144,24 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       }
     },
     setTimeframe(tf) {
-      wsRef.current?.cells?.().forEach((cell: any) => {
-        void cell.chart?.setMarket?.({ timeframe: tf });
-      });
+      const ws = wsRef.current;
+      if (!ws) return;
+      // 默认只改当前格子；只有布局菜单里打开「周期同步」才应用到全部。
+      const all = Boolean(ws.sync?.state?.().timeframe);
+      if (all) {
+        ws.cells?.().forEach((cell: any) => {
+          void cell.chart?.setMarket?.({ timeframe: tf });
+        });
+      } else {
+        void ws.active?.chart?.setMarket?.({ timeframe: tf });
+      }
       onTimeframe?.(tf);
     },
     getTimeframe() {
       return wsRef.current?.active?.chart?.market?.timeframe ?? '15';
     },
     focus(timestampMs) {
-      focusAll(wsRef.current, timestampMs ?? anchorRef.current);
+      focusAll(wsRef.current, timestampMs ?? anchorRef.current, timestampMs ? null : props.tradeMarks);
     },
     useTool(type) {
       const api = wsRef.current?.active?.chart?.drawings;
@@ -272,7 +285,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         const initial = prefs.getState();
         const ws = new VelaWorkspace(hostRef.current, {
           layout: '4',
-          symbol: `${providerName}:${symbol}`,
+          symbol,
           timeframe: '15',
           cells: seedCells(timeframes),
           live: Boolean(props.provider),
@@ -297,7 +310,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             // 存档里带着当时那台机器的配色（rendererConfig 里有背景/网格/文字色）：
             // 直接套用会让"面板已经换成浅色、K 线还是黑的"。主题由本站设置统一决定，
             // 所以回放前把渲染器配置剥掉。
-            ws.applyState(stripTheme(savedState));
+            ws.applyState(stripTheme(savedState, providerName, symbol));
           } catch {
             /* 存档不兼容时退回默认布局，不阻塞看图 */
           }
@@ -314,10 +327,19 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           const minutes = timeframeMinutes(tf) ?? 15;
           const width = minutes * 60_000;
           const anchor = anchorRef.current;
-          if (!Number.isFinite(anchor) || anchor <= 0) return;
+          const marks = props.tradeMarks;
+          if (!marks && (!Number.isFinite(anchor) || anchor <= 0)) return;
           try {
-            // 开仓那根 K 线落在正中（左右各 22 根），点开复盘第一眼就对着开仓。
-          cell.chart.setVisibleRange({ from: anchor - width * 22, to: anchor + width * 22 });
+            if (marks && marks.openedAt > 0 && marks.closedAt > 0) {
+              // 开平仓都要进视野：只按开仓 ±22 根会把持仓超过 22 根的交易平仓点挤出屏幕。
+              const start = Math.min(marks.openedAt, marks.closedAt) * 1000;
+              const end = Math.max(marks.openedAt, marks.closedAt) * 1000;
+              const pad = Math.max(width * 12, (end - start) * 0.25);
+              cell.chart.setVisibleRange({ from: start - pad, to: end + pad });
+            } else {
+              // 开仓那根 K 线落在正中（左右各 22 根），点开复盘第一眼就对着开仓。
+              cell.chart.setVisibleRange({ from: anchor - width * 22, to: anchor + width * 22 });
+            }
           } catch {
             /* ignore */
           }
@@ -462,10 +484,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         // 首批 K 线落地前 setVisibleRange 会被边界夹住，这里补一次定位。
         // 再补几拍：静态复盘数据没有 load:end 事件，首帧宽度也可能是 0，
         // 早跳会被夹到最左边，看起来就像"没跳到开仓"。
-        focusAll(ws, anchorRef.current);
+        focusAll(ws, anchorRef.current, props.tradeMarks);
         for (const delay of [80, 240, 600, 1200]) {
           window.setTimeout(() => {
-            if (!disposed) focusAll(ws, anchorRef.current);
+            if (!disposed) focusAll(ws, anchorRef.current, props.tradeMarks);
           }, delay);
         }
       } catch (error) {
@@ -518,7 +540,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   useEffect(() => {
     if (!ready || !(anchorMs > 0)) return;
     try {
-      focusAll(wsRef.current, anchorMs);
+      focusAll(wsRef.current, anchorMs, props.tradeMarks);
     } catch {
       /* ignore */
     }
@@ -540,15 +562,23 @@ function toOhlcv(bar: number[]) {
   return { time: bar[0] * 1000, open: bar[1], high: bar[2], low: bar[3], close: bar[4], volume: bar[5] ?? 0 };
 }
 
-function focusAll(ws: any, anchorMs: number): void {
-  if (!ws || !Number.isFinite(anchorMs) || anchorMs <= 0) return;
+function focusAll(ws: any, anchorMs: number, marks?: { openedAt: number; closedAt: number } | null): void {
+  if (!ws) return;
   ws.cells?.().forEach((cell: any) => {
     const tf = cell?.chart?.market?.timeframe ?? '15';
     const minutes = timeframeMinutes(tf) ?? 15;
     const width = minutes * 60_000;
     try {
+      if (marks && marks.openedAt > 0 && marks.closedAt > 0) {
+        const start = Math.min(marks.openedAt, marks.closedAt) * 1000;
+        const end = Math.max(marks.openedAt, marks.closedAt) * 1000;
+        const pad = Math.max(width * 12, (end - start) * 0.25);
+        cell.chart.setVisibleRange({ from: start - pad, to: end + pad });
+        return;
+      }
+      if (!Number.isFinite(anchorMs) || anchorMs <= 0) return;
       // 开仓那根 K 线落在正中（左右各 22 根）。
-    cell.chart.setVisibleRange({ from: anchorMs - width * 22, to: anchorMs + width * 22 });
+      cell.chart.setVisibleRange({ from: anchorMs - width * 22, to: anchorMs + width * 22 });
     } catch {
       /* ignore */
     }

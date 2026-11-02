@@ -7,10 +7,23 @@ async function load(fill=true){profile=await api('/api/profile');const u=profile
 const mt=profile.mt5;$('#assistant-status').textContent=mt.online?'✓ MT5 已连接，正在盯盘':mt.configured?'已绑定，等待 MT5 同步':'尚未连接';$('#unlink').disabled=!mt.configured;
 const followers=new Set(profile.followers.map(v=>v.id)),following=new Set(profile.following.map(v=>v.id));$('#following-count').textContent=profile.following.length+' 人';$('#followers-count').textContent=profile.followers.length+' 人';$('#following').innerHTML=profile.following.map(v=>memberRow(v,true,followers.has(v.id))).join('')||'<p class="profile-hint">还没有关注的人，先在上方查找伙伴。</p>';$('#followers').innerHTML=profile.followers.map(v=>memberRow(v,following.has(v.id),following.has(v.id))).join('')||'<p class="profile-hint">还没有关注者。</p>';bind($('#following'));bind($('#followers'));}
 function save(form,path,getData,after){form.onsubmit=async e=>{e.preventDefault();const b=form.querySelector('button:not([type=button])');b.disabled=true;try{const data=getData();await api(path,data);feedback(form,'已保存');if(after)after();await load(false);}catch(err){feedback(form,err.message,true);}finally{b.disabled=false;}};}
-save($('#details-form'),'/api/profile',()=>({nickname:$('#nickname').value,avatar:$('#avatar').value,bio:$('#bio').value}));save($('#settings-form'),'/api/settings',()=>({allow_follow:$('#allow-follow').checked,share_data:$('#share-data').checked,share_reviews:$('#share-reviews').checked}));save($('#password-form'),'/api/password',()=>{if($('#new-password').value!==$('#confirm-password').value)throw Error('两次新密码不一致');return {current_password:$('#current-password').value,new_password:$('#new-password').value};},()=>$('#password-form').reset());
+save($('#details-form'),'/api/profile',()=>({nickname:$('#nickname').value,avatar:$('#avatar').value,bio:$('#bio').value}));save($('#settings-form'),'/api/settings',()=>({allow_follow:$('#allow-follow').checked,share_data:$('#share-data').checked,share_reviews:$('#share-reviews').checked}));
+// 隐私开关不适合“改完忘了点保存”：变更后自动落库，按钮只作为显式确认。
+let settingsTimer=null;
+$('#settings-form').addEventListener('change',()=>{
+ const form=$('#settings-form');
+ if(settingsTimer)clearTimeout(settingsTimer);
+ settingsTimer=setTimeout(async()=>{
+  try{
+   await api('/api/settings',{allow_follow:$('#allow-follow').checked,share_data:$('#share-data').checked,share_reviews:$('#share-reviews').checked});
+   feedback(form,'已自动保存');
+   await load(false);
+  }catch(err){feedback(form,err.message,true);}
+ },500);
+});save($('#password-form'),'/api/password',()=>{if($('#new-password').value!==$('#confirm-password').value)throw Error('两次新密码不一致');return {current_password:$('#current-password').value,new_password:$('#new-password').value};},()=>$('#password-form').reset());
 async function search(){const r=await api('/api/users?q='+encodeURIComponent($('#search').value.trim()));$('#search-results').innerHTML=r.users.map(u=>memberRow(u,u.followed,profile.followers.some(f=>f.id===u.id)&&u.followed)).join('')||'<p class="profile-hint">没有找到匹配用户。</p>';bind($('#search-results'));}
 $('#search-form').onsubmit=async e=>{e.preventDefault();try{await search();feedback(e.target,'');}catch(err){feedback(e.target,err.message,true);}};
-$('#unlink').onclick=async()=>{try{await api('/api/mt5/unlink',{});await load(false);}catch(e){$('#page-feedback').textContent=e.message;}};
+$('#unlink').onclick=async()=>{if(!confirm('解除后本机 EA / bridge_push 会立即断开，需要重新生成连接码才能同步。确定解除？'))return;try{await api('/api/mt5/unlink',{});await load(false);}catch(e){$('#page-feedback').textContent=e.message;}};
 $('#logout').onclick=async()=>{try{await api('/api/logout',{});location.replace('/login');}catch(e){$('#page-feedback').textContent=e.message;}};
 $('#assistant-panel').innerHTML=assistantPanel();if(typeof bindAssistant==='function')bindAssistant();
 load().catch(e=>$('#page-feedback').textContent=e.message);setInterval(()=>load(false).catch(()=>{}),10000);
@@ -21,4 +34,4 @@ api('/api/notifications/read',{}).catch(()=>{});
 
 async function loadInvite(){const r=await api('/api/invite');$('#current-invite').value=r.code;}
 $('#copy-invite').onclick=async()=>{try{await loadInvite();await navigator.clipboard.writeText($('#current-invite').value);$('#invite-feedback').textContent='已复制最新邀请码';}catch(e){$('#invite-feedback').textContent='请选中邀请码手动复制';}};
-$('#rotate-invite').onclick=async()=>{const b=$('#rotate-invite');b.disabled=true;try{const r=await api('/api/invite/rotate',{});$('#current-invite').value=r.code;$('#invite-feedback').textContent='已更换，旧邀请码已失效';}catch(e){$('#invite-feedback').textContent=e.message;}finally{b.disabled=false;}};
+$('#rotate-invite').onclick=async()=>{if(!confirm('更换后旧邀请码立即失效，已发出的邀请链接将无法注册。确定更换？'))return;const b=$('#rotate-invite');b.disabled=true;try{const r=await api('/api/invite/rotate',{});$('#current-invite').value=r.code;$('#invite-feedback').textContent='已更换，旧邀请码已失效';}catch(e){$('#invite-feedback').textContent=e.message;}finally{b.disabled=false;}};

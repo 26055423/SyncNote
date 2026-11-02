@@ -423,7 +423,8 @@ class Handler(BaseHTTPRequestHandler):
                         following=list(db.execute('SELECT users.* FROM follows JOIN users ON users.id=follows.target WHERE follower=? ORDER BY follows.created',(uid,)))
                         members=[];snapshots={};allowed=[]
                         for r in [u]+following:
-                            can=r['id']==uid or bool(r['share_data']);members.append({'id':r['id'],'name':r['nickname'],'username':r['username'],'avatar':r['avatar'],'can_view':can})
+                            can=r['id']==uid or bool(r['share_data']);can_review=can and (r['id']==uid or bool(r['share_reviews']))
+                            members.append({'id':r['id'],'name':r['nickname'],'username':r['username'],'avatar':r['avatar'],'can_view':can,'can_review':can_review,'reviewed':journal.reviewed(db,r['id']) if can else []})
                             if not can:continue
                             allowed.append(r['id']);snap=db.execute('SELECT * FROM snapshots WHERE person=?',(r['id'],)).fetchone()
                             live=HUB.live(r['id'])

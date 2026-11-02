@@ -1,6 +1,6 @@
 # SyncNote Local WebSocket Protocol v1
 
-状态：首版本机 EA 与网页的实现协议；**离线编译通过不等于真实 MT5 交易验收通过**。首版交易仅限模拟对冲账户，实盘与净额账户在 EA 内硬性只读。
+状态：以下正文记录旧 `SyncNoteLocal.mq5` 首版协议与模拟对冲账户限制；**离线编译通过不等于真实 MT5 交易验收通过**。当前 `SyncTrade.mq5` 1.102 在兼容消息结构上增加了逐动作 `limit/stop`、明确实盘授权、净额管理同意及持久每日风控，权限和安装以该产品的 `SyncTrade_README.md` 为准。旧 EA 仍保持正文的模拟账户边界。
 
 本协议与 `PROTOCOL.md` 中的 EA→Python gateway NDJSON v1 是两个独立协议。它不改变旧 WebBridge、云端 Hub 或其端口。
 

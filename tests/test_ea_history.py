@@ -11,7 +11,7 @@ import sync_history
 
 def cpp_source(text):
  text=re.sub(r'^\s*#include "[^"\n]+"\s*$', '',text,flags=re.M)
- text=re.sub(r'\b([A-Za-z_]\w*)\s+(\w+)\[\]',r'std::vector<\1> \2',text)
+ text=re.sub(r'\b([A-Za-z_]\w*)\s+((?:\w+\[\]\s*,\s*)*\w+\[\])(?=\s*[;=])',lambda m:'std::vector<'+m[1]+'> '+m[2].replace('[]',''),text)
  # MQL long is 64-bit even on Windows, where native C++ long is 32-bit.
  text=re.sub(r'\bulong\b','std::uint64_t',text)
  text=re.sub(r'\blong\b','std::int64_t',text)
@@ -26,7 +26,7 @@ def compiler_environment():
   patterns=[Path(os.environ.get('ProgramFiles','C:/Program Files'))/'Microsoft Visual Studio',Path(os.environ.get('ProgramFiles(x86)','C:/Program Files (x86)'))/'Microsoft Visual Studio']
   vcvars=next((p for base in patterns if base.exists() for p in base.glob('*/**/VC/Auxiliary/Build/vcvars64.bat')),None)
   if vcvars:
-   result=subprocess.run(['cmd.exe','/d','/s','/c',f'call "{vcvars}" >nul && set'],capture_output=True,text=True,check=True)
+   result=subprocess.run(f'cmd.exe /d /c call "{vcvars}" >nul && set',capture_output=True,text=True,check=True)
    environment=os.environ.copy()
    for line in result.stdout.splitlines():
     if '=' in line and not line.startswith('='):

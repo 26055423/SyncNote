@@ -73,7 +73,7 @@ export interface NoteReviewBars {
 
 const freshState = (): LocalTerminalState => ({
   phase: 'disconnected', error: '', instance_id: '', account_id: '', server: '', epoch: '',
-  symbol: 'XAUUSD', read_only: true, demo: false, hedging: true, netting_manage: false, real_trading: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
+  symbol: 'XAUUSD', read_only: true, demo: false, hedging: false, netting_manage: false, real_trading: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
   latency: null, account: {}, tick: null,
   positions: [], orders: [], bars: {}, history_ready: false, commands: [], revision: 0,
 });
@@ -206,10 +206,10 @@ export class LocalTerminal {
       server: String(message.server ?? this.state.server), epoch: String(message.epoch ?? this.state.epoch),
       symbol: String(message.symbol ?? this.state.symbol), read_only: message.read_only !== false,
       demo: message.demo === true,
-      hedging: message.hedging !== false,
+      hedging: message.hedging === true,
       netting_manage: message.netting_manage === true,
       real_trading: message.real_trading === true,
-      capabilities: Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : this.state.capabilities,
+      capabilities: Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [],
       product: typeof message.product === 'string' ? message.product : this.state.product,
       features: Array.isArray(message.features) ? message.features.filter((value: unknown): value is string => typeof value === 'string') : this.state.features,
       server_offset_sec: typeof message.server_offset_sec === 'number' && Number.isFinite(message.server_offset_sec) ? message.server_offset_sec : this.state.server_offset_sec,
@@ -268,6 +268,11 @@ export class LocalTerminal {
           tick: message.tick || this.state.tick,
           read_only: message.read_only === undefined ? this.state.read_only : message.read_only !== false,
           demo: message.demo === undefined ? this.state.demo : message.demo === true,
+          hedging: message.hedging === undefined ? this.state.hedging : message.hedging === true,
+          netting_manage: message.netting_manage === undefined ? this.state.netting_manage : message.netting_manage === true,
+          real_trading: message.real_trading === undefined ? this.state.real_trading : message.real_trading === true,
+          capabilities: message.capabilities === undefined ? this.state.capabilities
+            : Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [],
           server_offset_sec: typeof message.server_offset_sec === 'number' && Number.isFinite(message.server_offset_sec) ? message.server_offset_sec : this.state.server_offset_sec,
         });
       } else if (message.type === 'tick') {
@@ -328,6 +333,7 @@ export class LocalTerminal {
   command(action: string, payload: Record<string, unknown>) {
     const allowed = this.state.demo || this.state.real_trading;
     if (this.state.phase !== 'connected' || this.state.read_only || !allowed || !this.state.capabilities.includes(action)) throw new Error('本机 EA 当前未授权此账户交易操作。');
+    if ((action === 'close' || action === 'modify') && !this.state.hedging && !this.state.netting_manage) throw new Error('净额或账户模式未确认：EA 未明确授权持仓管理。');
     if (this.state.commands.some((command) => command.account_id === this.state.account_id && command.server === this.state.server && unresolvedStates.has(command.state))) throw new Error('当前账户有指令的结果尚未确认，请先查询或在 MT5 中核实。');
     const id = crypto.randomUUID();
     const command: LocalCommand = { command_id: id, action, state: 'sending', created: Date.now(), account_id: this.state.account_id, server: this.state.server };

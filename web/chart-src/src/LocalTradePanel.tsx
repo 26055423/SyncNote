@@ -39,7 +39,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   };
   const prepare = (action: string, payload: Record<string, unknown>, description: string) => {
     setError('');
-    if (!enabled || !state.capabilities.includes(action)) { setError('请在 EA 中授权此模拟账户操作，并处理完待核实指令。'); return; }
+    if (!enabled || !state.capabilities.includes(action) || ((action === 'close' || action === 'modify') && !canManage)) { setError('请在 EA 中授权此账户操作，并处理完待核实指令。'); return; }
     setPrepared({ action, payload, description, epoch: state.epoch });
   };
   const modify = () => {
@@ -60,10 +60,9 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
       <div className="local-buttons"><input id="local-pair-code" autoComplete="off" inputMode="numeric" pattern="[0-9]{8}" maxLength={8} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} placeholder="00000000" /><button className="primary" type="submit" disabled={!/^\d{8}$/.test(code)}>配对</button></div>
     </form> : null}
     {state.phase === 'confirming' ? <p className="local-notice">请切换到 MT5，在 EA 图表上点击「允许本次连接」。</p> : null}
-    {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || !state.demo ? '只读 · 模拟账户验收阶段' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
     {state.error || error ? <p className="local-error" role="alert">{error || state.error}</p> : null}
-    <HistorySyncPanel terminal={state} />
     <OrderTicket
+        key={`${state.instance_id}:${state.epoch}:${state.account_id}:${state.server}:${realTrading}`}
         account={{ login: state.account_id, balance: state.account?.balance, equity: state.account?.equity, currency: state.account?.currency, leverage: state.account?.leverage }}
         symbol={state.symbol}
         bid={state.tick?.bid ?? 0}
@@ -71,27 +70,32 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
         connected={enabled}
         lockedReason={lockedReason}
         real={realTrading}
-        allowPending={state.capabilities.includes('pending')}
+        allowedActions={(['market', 'limit', 'stop'] as const).filter((action) => state.capabilities.includes(action))}
         onSubmit={submitMarketOrder}
       />
       {realTrading ? (
         <p className="local-real-warning" role="alert">实盘账户：下单按钮发出的指令会真实成交，请先核对手数、方向与止损。</p>
       ) : null}
+    {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || (!state.demo && !realTrading) ? '只读' : realTrading ? '已获本机实盘交易授权' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
     {connected ? <>
       
       <h3>本机持仓 <small>{state.positions.length}</small></h3>
       {state.positions.map((position) => <div className="local-position" key={String(position.ticket)}>
         <div><b>{position.symbol} · {position.side === 'sell' ? '卖出' : '买入'} {position.volume}</b><span className={(position.profit || 0) >= 0 ? 'up' : 'down'}>{money(position.profit)}</span></div>
         <p className="dim">#{String(position.ticket)} · 开仓 {quotePrice(position.price_open ?? position.open)} · SL {quotePrice(position.sl)} / TP {quotePrice(position.tp)}</p>
-        <div className="local-buttons"><button type="button" className="tool-btn" disabled={!enabled || !canManage} onClick={() => prepare('close', { position_ticket: String(position.ticket), volume: 0 }, `全部平仓 #${position.ticket} · ${position.symbol} · ${position.volume} 手`)}>平仓</button><button type="button" className="link" disabled={!enabled || !canManage} onClick={() => { setModifyTicket(String(position.ticket)); setSl(String(position.sl || '')); setTp(String(position.tp || '')); }}>修改止损止盈</button></div>
+        <div className="local-buttons"><button type="button" className="tool-btn" disabled={!enabled || !canManage || !state.capabilities.includes('close')} onClick={() => prepare('close', { position_ticket: String(position.ticket), volume: 0 }, `全部平仓 #${position.ticket} · ${position.symbol} · ${position.volume} 手`)}>平仓</button><button type="button" className="link" disabled={!enabled || !canManage || !state.capabilities.includes('modify')} onClick={() => { setModifyTicket(String(position.ticket)); setSl(String(position.sl || '')); setTp(String(position.tp || '')); }}>修改止损止盈</button></div>
       </div>)}
       {!canManage ? <p className="dim">净额账户：持仓是合并的，平仓/改单已禁用（EA 参数 InpAllowNettingManage=true 可打开）。</p> : null}
       {!state.positions.length ? <p className="dim">本机账户没有持仓</p> : null}
       <h3>本机挂单 <small>{state.orders.length}</small></h3>
       {state.orders.map((order) => <div className="local-position" key={String(order.ticket)}><div><b>{order.symbol} · {order.type} · {order.volume} 手</b><button type="button" className="link" disabled={!enabled || !state.capabilities.includes('cancel')} onClick={() => prepare('cancel', { order_ticket: String(order.ticket) }, `撤销挂单 #${order.ticket} · ${order.symbol}`)}>撤单</button></div><p className="dim">#{String(order.ticket)} · {quotePrice(order.price)}</p></div>)}
-      {modifyTicket ? <div className="local-notice"><p>正在编辑 #{modifyTicket}，使用上方止损／止盈价格；留空表示清除。</p><div className="local-buttons"><button className="primary" type="button" disabled={!enabled} onClick={modify}>预览修改</button><button className="link" type="button" onClick={() => setModifyTicket('')}>取消编辑</button></div></div> : null}
+      {modifyTicket ? <div className="local-notice local-modify"><p>正在编辑 #{modifyTicket}；留空表示清除该价格。</p><div className="local-price-inputs"><label>止损<input type="number" step="0.01" inputMode="decimal" value={sl} onChange={(event) => setSl(event.target.value)} placeholder="价格" /></label><label>止盈<input type="number" step="0.01" inputMode="decimal" value={tp} onChange={(event) => setTp(event.target.value)} placeholder="价格" /></label></div><div className="local-buttons"><button className="primary" type="button" disabled={!enabled || !canManage || !state.capabilities.includes('modify')} onClick={modify}>预览修改</button><button className="link" type="button" onClick={() => setModifyTicket('')}>取消编辑</button></div></div> : null}
     </> : null}
-    {prepared && connected && prepared.epoch === state.epoch ? <div className="local-confirm" role="alert"><b>确认{actionText[prepared.action]}</b><p>账户 {state.account_id} · {state.server}</p><p>{prepared.description}</p><div className="local-buttons"><button className="primary" type="button" disabled={!enabled} onClick={() => perform(() => { localTerminal.command(prepared.action, prepared.payload); setPrepared(null); setModifyTicket(''); })}>确认发送一次</button><button className="tool-btn" type="button" onClick={() => setPrepared(null)}>取消</button></div></div> : null}
+    {prepared && connected && prepared.epoch === state.epoch ? <div className="local-confirm" role="alert"><b>确认{actionText[prepared.action]}</b><p>账户 {state.account_id} · {state.server}</p><p>{prepared.description}</p><div className="local-buttons"><button className="primary" type="button" disabled={!enabled || !state.capabilities.includes(prepared.action) || (['close', 'modify'].includes(prepared.action) && !canManage)} onClick={() => perform(() => { localTerminal.command(prepared.action, prepared.payload); setPrepared(null); setModifyTicket(''); })}>确认发送一次</button><button className="tool-btn" type="button" onClick={() => setPrepared(null)}>取消</button></div></div> : null}
     {state.commands.length ? <div className="local-command-log"><h3>本页交易回报</h3>{state.commands.slice(0, 8).map((command) => <div className="local-command" key={command.command_id}><b>{actionText[command.action]} · {commandText[command.state] || command.state}{command.partial ? ' · 部分成交' : ''}</b><p className="dim">{command.account_id} · {command.command_id.slice(0, 8)}{command.order ? ` · 订单 ${command.order}` : ''}{command.deal ? ` · 成交 ${command.deal}` : ''}</p>{command.error ? <p className="local-error">{command.error}</p> : null}{!['completed', 'rejected'].includes(command.state) ? <button type="button" className="link" disabled={!connected || command.account_id !== state.account_id || command.server !== state.server} onClick={() => perform(() => localTerminal.queryCommand(command.command_id))}>只查询执行结果</button> : null}</div>)}<p className="dim">结果待核实时不会自动重发。刷新网页会清除此处记录，请同时在 MT5 核查。</p></div> : null}
+    <details className="history-sync-details">
+      <summary>交易笔记同步（高级）</summary>
+      <HistorySyncPanel terminal={state} />
+    </details>
   </section>;
 }

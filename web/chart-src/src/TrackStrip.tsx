@@ -71,7 +71,10 @@ export function TrackStrip({ person, ticket, shareId, from, to, refreshKey, head
   }, [query, refreshKey]);
 
   if (!data || !data.tracks.length) {
-    return error ? <div className="tracks tracks-empty"><span>数据轨道：{error}</span></div> : null;
+    if (error) return <div className="tracks tracks-empty"><span>数据轨道：{error}</span></div>;
+    return headless
+      ? <p className="dim dock-empty">这笔交易还没有轨道数据；同步更多 K 线后会出现。</p>
+      : <div className="tracks tracks-empty"><span>这笔交易还没有轨道数据；同步更多 K 线后会出现。</span></div>;
   }
 
   const span = Math.max(1, data.to - data.from);

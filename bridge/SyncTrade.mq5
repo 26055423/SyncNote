@@ -1,29 +1,30 @@
 // SyncTrade (SyncNote Pro) - local trading and read-only history export.
 // Windows 8+ MT5 only; system Ws2_32.dll + bcrypt.dll + kernel32.dll; no custom DLL.
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
-// Trading is OFF by default and this initial release rejects ALL real accounts.
+// Trading is OFF by default; live trading requires separate local consent and durable caps.
 #property copyright "SyncTrade"
-#property version "1.101"
+#property version "1.102"
 #property strict
-#property description "Windows localhost WebSocket EA. Default read-only; demo-only trading. Allow system DLL imports."
+#property description "Windows localhost EA. Default read-only; live trading needs explicit opt-in and caps."
 
 #include "SyncNoteLocalJson.mqh"
 #include "SyncNoteLocalSocket.mqh"
 #include "SyncNoteHistory.mqh"
+#include "SyncTradeRisk.mqh"
 
 input string InpAllowedOrigin="https://sync-trade.top"; // Exact HTTPS website origin, no trailing slash
 input string InpSymbol="XAUUSD";                      // Exact broker symbol, suffix included
-input bool InpAllowTrading=false;                    // Explicit local opt-in; demo accounts only
+input bool InpAllowTrading=false;                    // Explicit local opt-in for all trading
 input bool InpAllowRealTrading=false;                 // Allow a REAL account (needs the two caps below)
 input double InpRealMaxLots=0.05;                     // Real account: max lots per order (0 = block real trading)
-input int InpRealMaxOrdersPerDay=5;                   // Real account: max new market orders per day (0 = block)
+input int InpRealMaxOrdersPerDay=5;                   // Real account: max new market/pending commands per broker day
 input double InpMaxOrderLots=0.10;                   // Maximum market order / partial close lots
 input double InpMaxSymbolLots=1.00;                  // Maximum gross exposure on selected symbol
 input int InpMaxDeviationPoints=20;                  // Maximum requested deviation in broker points
 input int InpMaxSpreadPoints=100;                    // 0 disables this additional local spread gate
 input long InpMagic=26055423;                        // Magic assigned to new website orders
 input bool InpManageOwnMagicOnly=true;               // Close/cancel/modify only this EA's magic
-input bool InpAllowNettingManage=false;               // Netting accounts: allow close/modify (ownership cannot be proven)
+input bool InpAllowNettingManage=false;               // Explicit netting-position management and pending-order consent
 input bool InpAllowClose=true;
 input bool InpAllowCancel=true;
 input bool InpAllowModify=true;
@@ -32,7 +33,7 @@ input double InpMaxDailyLoss=0.0;                      // Daily realized-loss ca
 input double InpMaxPendingDeviationPct=1.5;            // Pending price must stay within this % of the mid
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.101"
+#define LOCAL_VERSION "1.102"
 #define JOURNAL_MAX 10000
 #define PAIR_TTL_MS 120000
 
@@ -42,8 +43,8 @@ ulong g_pair_until=0;
 int g_pair_attempts=0,g_pending_peer=-1,g_session_peer=-1;
 ulong g_pending_until=0;
 ulong g_last_tick=0,g_last_snapshot=0,g_last_command=0;
-// 实盘下单计数（本地日，券商时间）：超过 InpRealMaxOrdersPerDay 就拒绝。
-int g_real_orders_day=-1,g_real_orders=0;
+CSyncTradeRisk g_risk;
+bool g_risk_ok=false;
 bool g_force_snapshot=true,g_journal_ok=false,g_account_stable=false;
 int g_journal=INVALID_HANDLE;
 string g_journal_path="";
@@ -102,54 +103,45 @@ CSyncNoteHistory g_history_export;
 ulong g_history_defer_until=0;
 
 bool LocalDemo() { return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_DEMO; }
-bool LocalReal() { return !LocalDemo(); }
+bool LocalReal() { return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_REAL; }
 bool LocalHedging() { return AccountInfoInteger(ACCOUNT_MARGIN_MODE)==ACCOUNT_MARGIN_MODE_RETAIL_HEDGING; }
 // 净额账户上，持仓是所有来源合并的，magic 归属无法证明：默认只允许开新仓。
 bool LocalManageAllowed() { return LocalHedging() || InpAllowNettingManage; }
 bool LocalCanTrade()
 {
-   if(!InpAllowTrading || !g_journal_ok || !g_account_stable) return false;
+   if(!InpAllowTrading || !g_journal_ok || !g_account_stable || !g_risk_ok || !g_risk.Healthy()) return false;
+   long margin=AccountInfoInteger(ACCOUNT_MARGIN_MODE);
+   if(margin!=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING && margin!=ACCOUNT_MARGIN_MODE_RETAIL_NETTING && margin!=ACCOUNT_MARGIN_MODE_EXCHANGE) return false;
    // 对冲、净额都允许开新仓；净额下 close/modify 的归属无法证明，另由 LocalManageAllowed 把关。
    if(LocalDemo()) return true;
    // 实盘：必须单独开关 + 单笔/每日上限都有效，否则一律只读。
-   return InpAllowRealTrading && InpRealMaxLots>0 && InpRealMaxOrdersPerDay>0;
+   return LocalReal() && InpAllowRealTrading && InpRealMaxLots>0 && InpRealMaxOrdersPerDay>0;
 }
 string JsonBool(const bool value) { return value ? "true" : "false"; }
 string CapabilitiesJson()
 {
    if(!LocalCanTrade()) return "[]";
    string capabilities="[\"market\"";
-   if(InpAllowClose) capabilities+=",\"close\"";
+   if(InpAllowClose && LocalManageAllowed()) capabilities+=",\"close\"";
    if(InpAllowCancel) capabilities+=",\"cancel\"";
-   if(InpAllowModify) capabilities+=",\"modify\"";
-   if(InpAllowPending) capabilities+=",\"pending\"";
+   if(InpAllowModify && LocalManageAllowed()) capabilities+=",\"modify\"";
+   // Keep the old UI label while granting only the explicit supported actions.
+   if(InpAllowPending && LocalManageAllowed()) capabilities+=",\"pending\",\"limit\",\"stop\"";
    return capabilities+"]";
 }
 
-// 当日已实现盈亏（含手续费与隔夜利息），只算本品种、只算平仓方向的 deal。
-double DailyRealized()
+bool NewOrderAction(const string action)
 {
-   datetime start=(datetime)((long)TimeCurrent()/86400*86400);
-   if(!HistorySelect(start,TimeCurrent()+60)) return 0.0;
-   double sum=0.0;
-   for(int i=0;i<HistoryDealsTotal();i++)
-   {
-      ulong deal=HistoryDealGetTicket(i);
-      if(deal==0) continue;
-      if(HistoryDealGetInteger(deal,DEAL_ENTRY)!=DEAL_ENTRY_OUT) continue;
-      if(HistoryDealGetString(deal,DEAL_SYMBOL)!=InpSymbol) continue;
-      sum+=HistoryDealGetDouble(deal,DEAL_PROFIT)+HistoryDealGetDouble(deal,DEAL_SWAP)+HistoryDealGetDouble(deal,DEAL_COMMISSION);
-   }
-   return sum;
+   return action=="market" || action=="limit" || action=="stop";
 }
-bool DailyLossOk() { return InpMaxDailyLoss<=0.0 || DailyRealized()>-InpMaxDailyLoss; }
 
 // 挂单价格语义：方向和距离都要对，挡掉大部分手滑。
 bool PendingSideValid(const string action,const bool buy,const double price,const MqlTick &tick)
 {
    if(price<=0 || tick.bid<=0 || tick.ask<=0) return false;
-   if(action=="limit") return buy ? price<tick.ask : price>tick.bid;
-   if(action=="stop") return buy ? price>tick.ask : price<tick.bid;
+   double distance=(double)SymbolInfoInteger(InpSymbol,SYMBOL_TRADE_STOPS_LEVEL)*SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
+   if(action=="limit") return buy ? price<tick.ask && tick.ask-price>=distance : price>tick.bid && price-tick.bid>=distance;
+   if(action=="stop") return buy ? price>tick.ask && price-tick.ask>=distance : price<tick.bid && tick.bid-price>=distance;
    return false;
 }
 string IdentityFields()
@@ -207,7 +199,8 @@ void PaintStatus()
       "\n账号: ",g_account," @ ",g_server,"\n品种: ",InpSymbol,
       "\n配对码: ",g_pair_code," (",IntegerToString((long)MathMax(0,(long)(g_pair_until-GetTickCount64())/1000)),"s)",
       "\n只监听 127.0.0.1:18765; 不读取/上传交易密码",pending,
-      g_journal_ok ? "" : "\n交易日志不可用，禁止交易。");
+      g_journal_ok ? "" : "\n交易日志不可用，禁止交易。",
+      g_risk_ok ? "" : "\n风控存储不可用，禁止交易。");
    ChartRedraw();
 }
 void ClearAuthorization()
@@ -308,10 +301,13 @@ void AccountChanged()
    string login=IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
    string server=AccountInfoString(ACCOUNT_SERVER);
    if(login==g_account && server==g_server) return;
-   ClearAuthorization();g_account_stable=false;
+   ClearAuthorization();g_account_stable=false;g_risk.Close();g_risk_ok=false;
    g_account=login;g_server=server;g_epoch=RandomHex(16);
    if(g_epoch=="" || !NewPairCode()) {Print("SyncTrade: cryptographic random generator unavailable");return;}
    g_journal_ok=OpenJournal();
+   string risk_error;
+   if(g_journal_ok) g_risk_ok=g_risk.Open(g_account,g_server,risk_error);
+   if(!g_risk_ok) Print("SyncTrade: risk storage unavailable; trading disabled: ",risk_error);
    g_account_stable=(AccountInfoInteger(ACCOUNT_LOGIN)>0 && server!="");
    g_force_snapshot=true;PaintStatus();
 }
@@ -557,6 +553,74 @@ bool SetFill(MqlTradeRequest &request)
    else return false;
    return true;
 }
+bool PendingStopsValid(const bool buy,const double price,const double sl,const double tp)
+{
+   if(price<=0 || !PriceValid(price) || !PriceValid(sl) || !PriceValid(tp)) return false;
+   double distance=(double)SymbolInfoInteger(InpSymbol,SYMBOL_TRADE_STOPS_LEVEL)*SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
+   if(sl>0 && (buy ? sl>=price || price-sl<distance : sl<=price || sl-price<distance)) return false;
+   if(tp>0 && (buy ? tp<=price || tp-price<distance : tp>=price || price-tp<distance)) return false;
+   return true;
+}
+bool NettingOrderAllowed(const string action,string &error)
+{
+   if(LocalHedging()) return true;
+   if(!InpAllowNettingManage && action!="market")
+   {error="NETTING_MANAGEMENT_REQUIRED: pending orders may affect a future net position";return false;}
+   for(int i=0;i<PositionsTotal();i++)
+   {
+      if(PositionGetTicket(i)==0) {error="Cannot verify current position ownership";return false;}
+      string symbol=PositionGetString(POSITION_SYMBOL);
+      if(symbol=="") {error="Cannot read current position symbol";return false;}
+      if(symbol!=InpSymbol) continue;
+      if(!InpAllowNettingManage || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic))
+      {error="NETTING_EXPOSURE: a new order could change an existing position outside local consent";return false;}
+   }
+   for(int i=0;i<OrdersTotal();i++)
+   {
+      if(OrderGetTicket(i)==0) {error="Cannot verify current pending-order ownership";return false;}
+      string symbol=OrderGetString(ORDER_SYMBOL);
+      if(symbol=="") {error="Cannot read pending-order symbol";return false;}
+      if(symbol!=InpSymbol) continue;
+      if(!InpAllowNettingManage || (InpManageOwnMagicOnly && OrderGetInteger(ORDER_MAGIC)!=InpMagic))
+      {error="NETTING_EXPOSURE: a pending order may affect this net position";return false;}
+   }
+   return true;
+}
+bool ExposureAllowed(const double volume,string &error)
+{
+   double exposure=0;
+   for(int i=0;i<PositionsTotal();i++)
+   {
+      if(PositionGetTicket(i)==0) {error="Cannot read current exposure";return false;}
+      string symbol=PositionGetString(POSITION_SYMBOL);
+      if(symbol=="") {error="Cannot read current exposure symbol";return false;}
+      if(symbol!=InpSymbol) continue;
+      double amount=PositionGetDouble(POSITION_VOLUME);
+      if(!MathIsValidNumber(amount) || amount<0) {error="Invalid current exposure";return false;}
+      exposure+=amount;
+   }
+   for(int i=0;i<OrdersTotal();i++)
+   {
+      if(OrderGetTicket(i)==0) {error="Cannot read pending exposure";return false;}
+      string symbol=OrderGetString(ORDER_SYMBOL);
+      if(symbol=="") {error="Cannot read pending exposure symbol";return false;}
+      if(symbol!=InpSymbol) continue;
+      double amount=OrderGetDouble(ORDER_VOLUME_CURRENT);
+      if(!MathIsValidNumber(amount) || amount<0) {error="Invalid pending exposure";return false;}
+      exposure+=amount;
+   }
+   if(!MathIsValidNumber(exposure) || exposure+volume>InpMaxSymbolLots+1e-9)
+   {error="Total symbol exposure exceeds local limit";return false;}
+   return true;
+}
+bool OpeningAllowed(const string action,const double volume,string &error)
+{
+   if(!NewOrderAction(action)) return true;
+   if(!NettingOrderAllowed(action,error) || !ExposureAllowed(volume,error)) return false;
+   if(LocalReal() && (InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9))
+   {error="Real account lot cap exceeded";return false;}
+   return g_risk.LossAllowed(InpSymbol,InpMaxDailyLoss,error);
+}
 void HandleTradeCommand(const int peer,const string js)
 {
    const long received_utc=LocalUtcMs();const ulong received_mono=GetTickCount64();
@@ -584,7 +648,6 @@ void HandleTradeCommand(const int peer,const string js)
    else if(!LocalCanTrade()) error="READ_ONLY: trading needs EA opt-in and healthy journal (real accounts also need InpAllowRealTrading and caps)";
    else if(!TerminalInfoInteger(TERMINAL_CONNECTED)||!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)||!MQLInfoInteger(MQL_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_EXPERT)) error="MT5 trading permissions or connection unavailable";
    else if(!LocalDeadlineValid(expires,received_utc)) error="Command expired or deadline is more than 30s ahead; check computer clock";
-   else if((action=="market"||action=="limit"||action=="stop") && !DailyLossOk()) error="Daily realized-loss cap reached; new orders blocked until tomorrow";
    else if(GetTickCount64()-g_last_command<500) error="Local command rate limit: wait 500ms";
    else if(symbol!="" && symbol!=InpSymbol) error="Symbol is not allowed by this EA";
    else if(deviation<0 || deviation>InpMaxDeviationPoints || deviation!=MathFloor(deviation)) error="Deviation exceeds local limit";
@@ -597,19 +660,6 @@ void HandleTradeCommand(const int peer,const string js)
    if(error=="" && action=="market")
    {
       if(symbol!=InpSymbol || (side!="buy" && side!="sell") || !VolumeValid(volume)) error="Market order symbol/side/volume invalid";
-      double exposure=0;
-      for(int i=0;i<PositionsTotal();i++) if(PositionGetTicket(i)>0 && PositionGetString(POSITION_SYMBOL)==InpSymbol) exposure+=PositionGetDouble(POSITION_VOLUME);
-      for(int i=0;i<OrdersTotal();i++) if(OrderGetTicket(i)>0 && OrderGetString(ORDER_SYMBOL)==InpSymbol) exposure+=OrderGetDouble(ORDER_VOLUME_CURRENT);
-      if(error=="" && exposure+volume>InpMaxSymbolLots+1e-9) error="Total symbol exposure exceeds local limit";
-      // 实盘额外两道闸：单笔手数上限 + 每个券商日的新单数上限。
-      if(error=="" && LocalReal())
-      {
-         int today=(int)(TimeTradeServer()/86400);
-         if(g_real_orders_day!=today) {g_real_orders_day=today;g_real_orders=0;}
-         if(InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9) error="Real account lot cap exceeded";
-         else if(g_real_orders>=InpRealMaxOrdersPerDay) error="Real account daily order limit reached";
-         else g_real_orders++;
-      }
       bool buy=side=="buy";
       if(error=="" && !StopsValid(buy,sl,tp,tick)) error="SL/TP side or broker stop distance invalid";
       request.action=TRADE_ACTION_DEAL;request.type=buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -622,38 +672,27 @@ void HandleTradeCommand(const int peer,const string js)
       else if(symbol!=InpSymbol || (side!="buy" && side!="sell") || !VolumeValid(volume)) error="Pending order symbol/side/volume invalid";
       else if(!PriceValid(price)) error="Pending price must be a positive price on the tick grid";
       else if(!PendingSideValid(action,buy,price,tick)) error="Pending price is on the wrong side of the market (buy limit < ask, buy stop > ask)";
-      else if(!StopsValid(buy,sl,tp,tick)) error="SL/TP side or broker stop distance invalid";
+      else if(!PendingStopsValid(buy,price,sl,tp)) error="Pending SL/TP must use the entry price and broker stop distance";
       else
       {
          // 偏离中间价太远就拒绝：防止输错一位数挂到天上去。
          double mid=(tick.bid+tick.ask)/2.0;
          if(InpMaxPendingDeviationPct>0 && mid>0 && MathAbs(price-mid)/mid*100.0>InpMaxPendingDeviationPct)
             error="Pending price deviates too far from the mid price";
-         double exposure=0;
-         for(int i=0;i<PositionsTotal();i++) if(PositionGetTicket(i)>0 && PositionGetString(POSITION_SYMBOL)==InpSymbol) exposure+=PositionGetDouble(POSITION_VOLUME);
-         for(int i=0;i<OrdersTotal();i++) if(OrderGetTicket(i)>0 && OrderGetString(ORDER_SYMBOL)==InpSymbol) exposure+=OrderGetDouble(ORDER_VOLUME_CURRENT);
-         if(error=="" && exposure+volume>InpMaxSymbolLots+1e-9) error="Total symbol exposure exceeds local limit";
-         if(error=="" && LocalReal())
-         {
-            int today=(int)(TimeTradeServer()/86400);
-            if(g_real_orders_day!=today) {g_real_orders_day=today;g_real_orders=0;}
-            if(InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9) error="Real account lot cap exceeded";
-            else if(g_real_orders>=InpRealMaxOrdersPerDay) error="Real account daily order limit reached";
-            else g_real_orders++;
-         }
          if(error=="")
          {
             request.action=TRADE_ACTION_PENDING;
             if(action=="limit") request.type=buy ? ORDER_TYPE_BUY_LIMIT : ORDER_TYPE_SELL_LIMIT;
             else request.type=buy ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP;
             request.price=price;request.volume=volume;request.sl=sl;request.tp=tp;request.magic=(ulong)InpMagic;
-            request.type_time=ORDER_TIME_GTC;request.expiration=0;
+            request.type_time=ORDER_TIME_GTC;request.expiration=0;request.type_filling=ORDER_FILLING_RETURN;
          }
       }
    }
    else if(error=="" && action=="close")
    {
-      if(!InpAllowClose || !JsonId(js,"position_ticket",position) || !PositionSelectByTicket((ulong)StringToInteger(position))) error="Close disabled or position not found";`r`n      else if(!LocalManageAllowed()) error="Netting account: close is disabled (ownership cannot be proven). Set InpAllowNettingManage=true to override";
+      if(!InpAllowClose || !JsonId(js,"position_ticket",position) || !PositionSelectByTicket((ulong)StringToInteger(position))) error="Close disabled or position not found";
+      else if(!LocalManageAllowed()) error="Netting account: close is disabled (ownership cannot be proven). Set InpAllowNettingManage=true to override";
       else if(PositionGetString(POSITION_SYMBOL)!=InpSymbol || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)) error="Position is outside local ownership policy";
       else
       {
@@ -673,7 +712,8 @@ void HandleTradeCommand(const int peer,const string js)
    }
    else if(error=="" && action=="modify")
    {
-      if(!InpAllowModify || !JsonId(js,"ticket",ticket) || !PositionSelectByTicket((ulong)StringToInteger(ticket))) error="Modify disabled or position not found; pending-order modification is not supported in v1";`r`n      else if(!LocalManageAllowed()) error="Netting account: modify is disabled (ownership cannot be proven). Set InpAllowNettingManage=true to override";
+      if(!InpAllowModify || !JsonId(js,"ticket",ticket) || !PositionSelectByTicket((ulong)StringToInteger(ticket))) error="Modify disabled or position not found; pending-order modification is not supported in v1";
+      else if(!LocalManageAllowed()) error="Netting account: modify is disabled (ownership cannot be proven). Set InpAllowNettingManage=true to override";
       else if(PositionGetString(POSITION_SYMBOL)!=InpSymbol || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)) error="Position is outside local ownership policy";
       else if(JsonValuePos(js,"sl")<0 || JsonValuePos(js,"tp")<0 || !StopsValid(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY,sl,tp,tick)) error="Modify requires explicit valid sl and tp (0 clears)";
       else {request.action=TRADE_ACTION_SLTP;request.position=(ulong)StringToInteger(ticket);request.sl=sl;request.tp=tp;}
@@ -682,6 +722,7 @@ void HandleTradeCommand(const int peer,const string js)
    request.symbol=InpSymbol;request.deviation=(ulong)MathMax(0,deviation);
    request.comment="tpl:"+StringSubstr(id,0,26);
    if(error=="" && request.action==TRADE_ACTION_DEAL && !SetFill(request)) error="No supported broker filling mode; no retry will be attempted";
+   if(error=="" && !OpeningAllowed(action,volume,error) && error=="") error="New order risk check failed";
    if(error!="")
    {
       string rejected=CommandResult(id,"rejected",error);
@@ -700,24 +741,43 @@ void HandleTradeCommand(const int peer,const string js)
    g_commands[index].id=id;g_commands[index].fingerprint=fingerprint;g_commands[index].state="intent";
    g_commands[index].broker_order=0;g_commands[index].broker_deal=0;
    g_commands[index].result=CommandResult(id,"uncertain","Durable intent recorded; outcome not yet known");
+   bool reserved=false;
+   long reserved_day=0;
+   if(LocalReal() && NewOrderAction(action))
+   {
+      long broker_day=(long)TimeTradeServer()/86400;
+      if(!g_risk.Reserve(id,broker_day,InpRealMaxOrdersPerDay,error))
+      {
+         g_risk_ok=g_risk.Healthy();g_commands[index].state="rejected";
+         g_commands[index].result=CommandResult(id,"rejected",error);
+         JournalAppend(index);WsText(peer,g_commands[index].result);return;
+      }
+      reserved=true;reserved_day=broker_day;
+   }
    if(!JournalAppend(index))
    {
+      if(reserved) {string release_error;g_risk.Release(id,release_error);g_risk_ok=g_risk.Healthy();}
       g_commands[index].state="rejected";
       g_commands[index].result=CommandResult(id,"rejected","Could not flush durable intent; order was not sent");
       WsText(peer,g_commands[index].result);return;
    }
-   // Re-check target immediately before the ONLY call to OrderSend. No filling-mode retry.
-   if(IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))!=g_account || AccountInfoString(ACCOUNT_SERVER)!=g_server || !LocalDemo())
+   // Re-check consent, exposure and current losses after durable IO. Account
+   // changes and failed risk reads cannot fall through to the one OrderSend.
+   error="";
+   if(IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))!=g_account || AccountInfoString(ACCOUNT_SERVER)!=g_server)
+      error="Account changed before submission";
+   else if(!LocalCanTrade() || !TerminalInfoInteger(TERMINAL_CONNECTED) || !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ||
+           !MQLInfoInteger(MQL_TRADE_ALLOWED) || !AccountInfoInteger(ACCOUNT_TRADE_ALLOWED) || !AccountInfoInteger(ACCOUNT_TRADE_EXPERT))
+      error="Trading permission or risk storage changed before submission";
+   else if(!OpeningAllowed(action,volume,error) && error=="") error="New order risk check failed before submission";
+   if(error=="" && reserved && (long)TimeTradeServer()/86400!=reserved_day)
+      error="Broker day changed before submission; order was not sent";
+   if(error=="" && !LocalDeadlineReady(expires,received_utc,received_mono,LocalUtcMs(),GetTickCount64()))
+      error="Command expired before submission; order was not sent";
+   if(error!="")
    {
-      g_commands[index].state="rejected";g_commands[index].result=CommandResult(id,"rejected","Account changed before submission");JournalAppend(index);
-      WsText(peer,g_commands[index].result);return;
-   }
-   // Durable intent/validation may block. Reject after flushing, before touching
-   // MT5, and keep the same command_id durably rejected instead of replaying it.
-   if(!LocalDeadlineReady(expires,received_utc,received_mono,LocalUtcMs(),GetTickCount64()))
-   {
-      g_commands[index].state="rejected";
-      g_commands[index].result=CommandResult(id,"rejected","Command expired before submission; order was not sent");
+      if(reserved) {string release_error;g_risk.Release(id,release_error);g_risk_ok=g_risk.Healthy();}
+      g_commands[index].state="rejected";g_commands[index].result=CommandResult(id,"rejected",error);
       JournalAppend(index);WsText(peer,g_commands[index].result);return;
    }
    g_last_command=GetTickCount64();
@@ -726,6 +786,11 @@ void HandleTradeCommand(const int peer,const string js)
    // RETURN leaves the unfilled remainder working: keep tracking its exact order.
    // IOC cancels the remainder and may finish as a terminal partial execution.
    string state=LocalSubmissionState(result.retcode,request.type_filling);
+   // A pending-placement command is done once the broker accepts the order.
+   // The working order is managed separately; waiting for its future fill would
+   // lock the browser out of issuing a cancel command for that same order.
+   if(request.action==TRADE_ACTION_PENDING && result.retcode==10008) state="completed";
+   if(reserved && state=="rejected") {string release_error;g_risk.Release(id,release_error);g_risk_ok=g_risk.Healthy();}
    g_commands[index].state=state;
    g_commands[index].broker_order=result.order;g_commands[index].broker_deal=result.deal;
    g_commands[index].result=CommandResult(id,state,result.comment,result.retcode,result.order,result.deal,result.price,result.volume);
@@ -825,7 +890,10 @@ int OnInit()
    if(!MQLInfoInteger(MQL_DLLS_ALLOWED)) {Print("SyncTrade: allow system DLL imports in EA settings");return INIT_FAILED;}
    if(StringFind(InpAllowedOrigin,"https://")!=0 || StringFind(InpAllowedOrigin,"/",8)>=0 || StringFind(InpAllowedOrigin," ")>=0 || StringFind(InpAllowedOrigin,"*")>=0)
    {Print("SyncTrade: allowed origin must be one exact https origin without path/wildcards");return INIT_PARAMETERS_INCORRECT;}
-   if(InpMaxOrderLots<=0 || InpMaxSymbolLots<InpMaxOrderLots || InpMaxDeviationPoints<0 || InpMaxSpreadPoints<0 || InpMagic<0 || !SymbolSelect(InpSymbol,true)) return INIT_PARAMETERS_INCORRECT;
+   if(!MathIsValidNumber(InpMaxOrderLots) || !MathIsValidNumber(InpMaxSymbolLots) || !MathIsValidNumber(InpRealMaxLots) ||
+      !MathIsValidNumber(InpMaxDailyLoss) || !MathIsValidNumber(InpMaxPendingDeviationPct) || InpRealMaxLots<0 || InpRealMaxOrdersPerDay<0 ||
+      InpMaxDailyLoss<0 || InpMaxPendingDeviationPct<0 || InpMaxOrderLots<=0 || InpMaxSymbolLots<InpMaxOrderLots ||
+      InpMaxDeviationPoints<0 || InpMaxSpreadPoints<0 || InpMagic<0 || !SymbolSelect(InpSymbol,true)) return INIT_PARAMETERS_INCORRECT;
    g_digits=(int)SymbolInfoInteger(InpSymbol,SYMBOL_DIGITS);
    g_instance=RandomHex(16);
    if(g_instance=="") return INIT_FAILED;
@@ -840,6 +908,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();WsStop();
+   g_risk.Close();g_risk_ok=false;
    if(g_journal!=INVALID_HANDLE) {FileFlush(g_journal);FileClose(g_journal);g_journal=INVALID_HANDLE;}
    ObjectDelete(0,g_button_allow);ObjectDelete(0,g_button_revoke);Comment("");
 }

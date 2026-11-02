@@ -87,7 +87,8 @@ export class ReviewProvider implements DataProvider {
 
   info() {
     return {
-      name: this.providerName,
+      // name 是图例里显示的短名；provider 注册键仍在 ChartWorkspace 里单独使用。
+      name: this.providerName === 'market' ? '历史行情' : this.providerName === 'review' ? '复盘' : this.providerName,
       displayName: this.providerName === 'market' ? '同频历史行情' : '同频复盘行情',
       supportedTimeframes: this.availableTimeframes,
       capabilities: { enumerate: true, stream: false, symbolInfo: false },
@@ -142,7 +143,7 @@ export class LiveProvider implements DataProvider {
 
   info() {
     return {
-      name: 'live',
+      name: '行情',
       displayName: '同频实时行情',
       supportedTimeframes: Object.keys(TIMEFRAMES),
       capabilities: { enumerate: true, stream: true, symbolInfo: false },

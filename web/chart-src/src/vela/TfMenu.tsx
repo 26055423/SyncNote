@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
  * 抢走命中区而收起。这里只提供后端真正有 K 线的周期。
  */
 
-export function TfMenu({ current, options, onPick }: { current: string; options: Array<{ id: string; label: string }>; onPick: (id: string) => void }) {
+export function TfMenu({ current, options, scopeAll = false, onPick }: { current: string; options: Array<{ id: string; label: string }>; scopeAll?: boolean; onPick: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -31,8 +31,9 @@ export function TfMenu({ current, options, onPick }: { current: string; options:
 
   return (
     <div className="tp-menu" ref={rootRef}>
-      <button type="button" className={`tp-btn ${open ? 'is-active' : ''}`} onClick={() => setOpen((value) => !value)} title="当前格子的周期">
+      <button type="button" className={`tp-btn ${open ? 'is-active' : ''}`} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((value) => !value)} title={scopeAll ? '周期：同步到全部图表' : '周期：只作用于当前格子'}>
         {label}
+        {scopeAll ? <span className="tp-scope">全部</span> : null}
         <span className="tp-caret" aria-hidden="true">▾</span>
       </button>
       {open ? (

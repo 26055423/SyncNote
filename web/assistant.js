@@ -28,6 +28,7 @@ window.bindAssistant = () => {
   if (site) site.textContent = location.origin;
 
   gen.onclick = async () => {
+    if (!confirm('生成新连接码会让旧连接码立即失效，正在同步的 EA / bridge_push 会断开。确定继续？')) return;
     gen.disabled = true;
     feedback.textContent = '正在生成…';
     try {

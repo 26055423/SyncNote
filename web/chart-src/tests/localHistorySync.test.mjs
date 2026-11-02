@@ -76,6 +76,16 @@ function unconfirmedPlan(stored) {
   return plan;
 }
 
+function completedCheckpoint(lastFull = NOW) {
+  const to = NOW / 1000 + 10800;
+  return { version: 1, account_key: ACCOUNT_KEY, account: '1001', server: 'Demo-Server',
+    range: { from_server: to - 365 * 86400, to_server: to }, cursor: '', through_server: to,
+    last_deal_ticket: '123', window_complete: true, saved_at: NOW, last_full: lastFull, full_run: true };
+}
+function checkpointStorage(checkpoint) {
+  return new Map([[`syncnote-history-v1:site-user:${ACCOUNT_KEY}`, JSON.stringify(checkpoint)]]);
+}
+
 test('history consent starts off, and import contains raw history without account finances or EA credentials', async () => {
   const { sync, reads, uploads, stored } = fixture();
   assert.equal(sync.getSnapshot().enabled, false);
@@ -182,6 +192,102 @@ test('completed windows overlap a day on the next scan to pick up late deals and
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(reads[1].range.from_server, previousTo - 86400);
   assert.equal(reads[1].cursor, '');
+});
+
+test('a full reconciliation is successful only after its final matching ACK', async () => {
+  const { sync, stored } = fixture();
+  await sync.start();
+  const checkpoint = JSON.parse([...stored.values()][0]);
+  assert.equal(checkpoint.full_run, true);
+  assert.equal(checkpoint.last_full, NOW);
+  assert.equal(sync.getSnapshot().last_full, NOW);
+});
+
+test('daily reconciliation switches from one-day overlap to the full 365-day range exactly at 24 hours', async () => {
+  const subject = fixture();
+  await subject.sync.start();
+  subject.advance(24 * 3600 * 1000 - 1);
+  await subject.wake();
+  assert.equal(subject.reads[1].range.to_server - subject.reads[1].range.from_server, 86400 + 24 * 3600 - 1);
+  assert.equal(JSON.parse([...subject.stored.values()][0]).last_full, NOW);
+  subject.advance(1);
+  await subject.wake();
+  assert.equal(subject.reads[2].range.to_server - subject.reads[2].range.from_server, 365 * 86400);
+  assert.equal(subject.reads[2].cursor, '');
+  assert.equal(JSON.parse([...subject.stored.values()][0]).last_full, NOW + 24 * 3600 * 1000);
+});
+
+test('refresh restores last_full and schedules a due full reconciliation without retaining consent', async () => {
+  const subject = fixture({ stored: checkpointStorage(completedCheckpoint(NOW - 24 * 3600 * 1000)) });
+  assert.equal(subject.sync.getSnapshot().enabled, false);
+  await subject.sync.start();
+  assert.equal(subject.reads[0].range.to_server - subject.reads[0].range.from_server, 365 * 86400);
+  assert.equal(JSON.parse([...subject.stored.values()][0]).last_full, NOW);
+});
+
+test('legacy completed cursors without reconciliation metadata get one full reconciliation', async () => {
+  const old = completedCheckpoint();
+  delete old.last_full;
+  delete old.full_run;
+  const subject = fixture({ stored: checkpointStorage(old) });
+  await subject.sync.start();
+  assert.equal(subject.reads[0].range.to_server - subject.reads[0].range.from_server, 365 * 86400);
+});
+
+test('a legacy unfinished short window completes its fixed range before a due full reconciliation starts', async () => {
+  const old = completedCheckpoint();
+  delete old.last_full;
+  delete old.full_run;
+  old.window_complete = false;
+  old.range = { from_server: 1700000000, to_server: 1700100000 };
+  old.through_server = old.range.from_server + 10;
+  old.cursor = 'legacy-partial';
+  let subject;
+  subject = fixture({ stored: checkpointStorage(old), read: (page, count) => {
+    if (count === 1) { subject.advance(48 * 3600 * 1000); return { ...page, has_more: true, next_cursor: 'next', through_server: page.range.from_server + 100 }; }
+    return page;
+  } });
+  await subject.sync.start();
+  assert.deepEqual(subject.reads[0].range, old.range);
+  assert.deepEqual(subject.reads[1].range, old.range);
+  assert.equal(subject.reads[0].cursor, 'legacy-partial');
+  assert.equal(JSON.parse([...subject.stored.values()][0]).last_full, 0);
+  await subject.wake();
+  assert.equal(subject.reads[2].range.to_server - subject.reads[2].range.from_server, 365 * 86400);
+});
+
+test('partial full reconciliation ACKs do not change last_full and restore the same range after failure/reload', async () => {
+  const lastFull = NOW - 24 * 3600 * 1000;
+  const subject = fixture({ stored: checkpointStorage(completedCheckpoint(lastFull)),
+    read: (page, count) => count === 1 ? { ...page, has_more: true, next_cursor: 'ack-full-page-1', through_server: page.range.from_server + 100 } : page,
+    upload: (body, count) => { if (count === 2) throw new Error('network'); return { ok: true, batch_id: body.batch_id, account_key: body.account_key }; } });
+  await subject.sync.start();
+  const partial = JSON.parse([...subject.stored.values()][0]);
+  assert.equal(partial.window_complete, false);
+  assert.equal(partial.full_run, true);
+  assert.equal(partial.last_full, lastFull);
+  assert.equal(partial.cursor, 'ack-full-page-1');
+  assert.equal(subject.sync.getSnapshot().status, 'error');
+  subject.sync.stop();
+  const resumed = fixture({ stored: subject.stored, now: NOW + 48 * 3600 * 1000 });
+  await resumed.sync.start();
+  assert.deepEqual(resumed.reads[0].range, partial.range);
+  assert.equal(resumed.reads[0].cursor, partial.cursor);
+  assert.equal(JSON.parse([...resumed.stored.values()][0]).last_full, NOW + 48 * 3600 * 1000);
+});
+
+test('even a failed first full-reconciliation page leaves a fixed plan without advancing acknowledged progress', async () => {
+  const lastFull = NOW - 24 * 3600 * 1000;
+  const subject = fixture({ stored: checkpointStorage(completedCheckpoint(lastFull)), upload: () => { throw new Error('network'); } });
+  await subject.sync.start();
+  const planned = JSON.parse([...subject.stored.values()][0]);
+  assert.equal(planned.last_full, lastFull);
+  assert.equal(planned.cursor, '');
+  assert.equal(planned.through_server, planned.range.from_server - 1);
+  assert.equal(planned.window_complete, false);
+  const resumed = fixture({ stored: subject.stored, now: NOW + 48 * 3600 * 1000 });
+  await resumed.sync.start();
+  assert.deepEqual(resumed.reads[0].range, planned.range);
 });
 
 test('history data from a different account or range is never uploaded', async () => {

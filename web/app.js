@@ -4,7 +4,7 @@ let names = Object.fromEntries(members.map(m=>[m.id,m.name]));
 const esc = x => String(x ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const signed = n => (n>=0?'+':'') + money(n);
-const timeLabel = t => new Date(t*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+const timeLabel = t => window.syncnoteTime ? window.syncnoteTime(t) : new Date(t*1000).toLocaleString('zh-CN',{hour12:false});
 function savedPreference(key,fallback){try{return localStorage.getItem(key)??fallback;}catch{return fallback;}}
 function savePreference(key,value){try{localStorage.setItem(key,String(value));}catch{}}
 let volume=Math.max(0,Math.min(1,Number(savedPreference('board-volume',.8))));
@@ -109,11 +109,11 @@ $('#message-form button').disabled=true;
 async function refresh(){
  if(demo||refreshPending)return;
  refreshPending=true;
- try{const r=await fetch('/api/state?view=board',{cache:'no-store'});if(r.status===401){location.replace('/login');return;}if(!r.ok)throw new Error();const next=await r.json();if(demo)return;state=next;render();$('#message-form button').disabled=false;}
+ try{const r=await fetch('/api/state?view=board',{cache:'no-store'});if(r.status===401){window.syncnoteLogin();return;}if(!r.ok)throw new Error();const next=await r.json();if(demo)return;state=next;render();$('#message-form button').disabled=false;}
  catch{state=null;initialized=false;loadingBoard('暂时无法读取数据，正在重试…');}
  finally{refreshPending=false;}
 }
-$('#message-form').onsubmit=async e=>{e.preventDefault();const input=$('#message'), text=input.value.trim();if(!text)return;const b=e.target.querySelector('button');b.disabled=true;$('#form-error').textContent='';try{if(demo){state.messages.push({id:'demo-'+(++demoSequence),person:viewer,text,created:Date.now()/1000});render();}else{const r=await fetch('/api/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({person:viewer,text})});const result=await r.json();if(r.status===401){location.replace('/login');return;}if(!r.ok)throw new Error(result.error);await refresh();}input.value='';$('#messages').scrollTop=$('#messages').scrollHeight;}catch(err){$('#form-error').textContent=err.message||'发送失败，请重试';}finally{b.disabled=false;}};
+$('#message-form').onsubmit=async e=>{e.preventDefault();const input=$('#message'), text=input.value.trim();if(!text)return;const b=e.target.querySelector('button');b.disabled=true;$('#form-error').textContent='';try{if(demo){state.messages.push({id:'demo-'+(++demoSequence),person:viewer,text,created:Date.now()/1000});render();}else{const r=await fetch('/api/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({person:viewer,text})});const result=await r.json();if(r.status===401){window.syncnoteLogin();return;}if(!r.ok)throw new Error(result.error);await refresh();}input.value='';$('#messages').scrollTop=$('#messages').scrollHeight;}catch(err){$('#form-error').textContent=err.message||'发送失败，请重试';}finally{b.disabled=false;}};
 refresh();setInterval(refresh,2000);
 
 const memberHeightObserver=new ResizeObserver(entries=>{const height=entries[0]?.borderBoxSize?.[0]?.blockSize ?? $('#accounts').getBoundingClientRect().height;$('.workspace').style.setProperty('--member-column-height',height+'px');});

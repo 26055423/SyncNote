@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理后台 · 同频</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script>try{var p=JSON.parse(localStorage.getItem('sn-ui.v1')||'{}');document.documentElement.dataset.theme=p.theme==='light'?'light':'dark';}catch(e){document.documentElement.dataset.theme='dark';}</script>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/admin.css">
 </head>
@@ -15,7 +16,7 @@
 </header>
 
 <main class="admin-main">
-  <nav class="admin-tabs" id="tabs">
+  <nav class="admin-tabs" id="tabs" hidden>
     <button type="button" data-tab="users">用户</button>
     <button type="button" data-tab="invites">邀请码</button>
   </nav>
@@ -90,6 +91,7 @@
   </div>
 </main>
 
+<script src="/api.js"></script>
 <script type="module" src="/admin.js"></script>
 </body>
 </html>

@@ -37,14 +37,12 @@ function gridDef(rows: number, cols: number): Pick<LayoutDef, 'cols' | 'rows'> {
 
 export type SyncKindId = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
 
-/** TradingView's "sync to all charts" list, in their order. */
+/** TradingView's "sync to all charts" list, in their order. 只保留本站真的能改的项。 */
 const SYNC_ROWS: { kind: SyncKindId; label: string }[] = [
-  { kind: 'symbol', label: '商品代码' },
   { kind: 'timeframe', label: '周期' },
   { kind: 'crosshair', label: '十字线' },
   { kind: 'viewport', label: '时间轴' },
   { kind: 'drawings', label: '绘图' },
-  { kind: 'style', label: '样式' },
 ];
 
 export function LayoutMenu({
@@ -78,11 +76,16 @@ export function LayoutMenu({
   }, [open]);
 
   const currentDef = BY_ID.get(current);
-  const triggerRects = currentDef ? slotRects(currentDef) : slotRects(gridDef(2, 2));
+  const grid = /^g(\d+)x(\d+)$/.exec(current);
+  const triggerRects = currentDef
+    ? slotRects(currentDef)
+    : grid
+      ? slotRects(gridDef(Number(grid[1]), Number(grid[2])))
+      : slotRects(gridDef(2, 2));
 
   return (
     <div className="lp" ref={rootRef}>
-      <button type="button" className={`vela-tool-btn lp-trigger ${open ? 'is-active' : ''}`} onClick={() => setOpen((v) => !v)} title="布局">
+      <button type="button" className={`vela-tool-btn lp-trigger ${open ? 'is-active' : ''}`} onClick={() => setOpen((v) => !v)} title="布局" aria-haspopup="dialog" aria-expanded={open}>
         <Thumb rects={triggerRects} active={false} size={22} />
         {'布局'}
       </button>

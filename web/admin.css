@@ -4,7 +4,7 @@
 .admin-head .brand { color: #e6edf3; text-decoration: none; font-weight: 600; letter-spacing: .3px; }
 .admin-head .muted { color: #8b98a5; text-decoration: none; font-size: 13px; }
 .admin-main { max-width: 980px; margin: 24px auto 60px; padding: 0 18px; display: flex; flex-direction: column; gap: 18px; }
-.card { background: #101922; border: 1px solid #1c2836; border-radius: 12px; padding: 18px 20px; }
+.card { background: #101922; border: 1px solid #1c2836; border-radius: 12px; padding: 18px 20px; overflow-x: auto; }
 .card h1 { font-size: 17px; margin: 0 0 6px; }
 .card h2 { font-size: 15px; margin: 0; }
 .muted { color: #8b98a5; }
@@ -40,3 +40,22 @@ table.invites td { padding: 6px 8px; border-bottom: 1px solid #16212c; white-spa
 .admin-tabs button { background: transparent; border: 1px solid #243244; color: #8b98a5; padding: 7px 18px; border-radius: 8px; }
 .admin-tabs button.is-active { background: #16222f; color: #e6edf3; border-color: #2b5787; }
 .tab-pane { display: flex; flex-direction: column; gap: 18px; }
+
+/* 亮色：管理后台跟随全站主题，避免从交易台点进来突然变回深色。 */
+html[data-theme='light'] .admin-page{background:#eef1f6;color:#16202e}
+html[data-theme='light'] .admin-head{border-color:#d6dde8}
+html[data-theme='light'] .admin-head .brand{color:#16202e}
+html[data-theme='light'] .admin-head .muted,html[data-theme='light'] .muted{color:#5b6b80}
+html[data-theme='light'] .card{background:#fff;border-color:#d6dde8}
+html[data-theme='light'] .admin-page input{background:#fff;border-color:#c9d3e0;color:#16202e}
+html[data-theme='light'] .admin-page button{background:#f6f8fc;border-color:#c9d3e0;color:#16202e}
+html[data-theme='light'] .admin-page button.primary{background:#e4eefc;border-color:#a8c4e8;color:#0f4f9e}
+html[data-theme='light'] .admin-page button.ghost{background:transparent;color:#5b6b80}
+html[data-theme='light'] table.invites th{color:#5b6b80;border-color:#d6dde8}
+html[data-theme='light'] table.invites td{border-color:#e9eef5}
+html[data-theme='light'] .state.unused{background:#e8f6ef;color:#0a6b52}
+html[data-theme='light'] .state.used{background:#eef1f6;color:#5b6b80}
+html[data-theme='light'] .state.expired,html[data-theme='light'] .state.revoked{background:#fdecec;color:#a11d1d}
+html[data-theme='light'] .codes li{background:#fff;border-color:#d6dde8}
+html[data-theme='light'] .admin-tabs button{border-color:#d6dde8;color:#5b6b80}
+html[data-theme='light'] .admin-tabs button.is-active{background:#e4eefc;color:#0f4f9e;border-color:#a8c4e8}

@@ -45,14 +45,14 @@ export interface OrderTicketProps {
   lockedReason?: string;
   /** 实盘账户：额外显示醒目标签并多一道确认。 */
   real?: boolean;
-  /** EA 是否声明支持挂单（limit/stop）。首版协议没有，默认关闭。 */
-  allowPending?: boolean;
+  /** EA 逐项声明的开仓动作；pending 兼容标签不授予 limit/stop 权限。 */
+  allowedActions?: readonly OrderAction[];
   submitting?: boolean;
   onSubmit?: (request: OrderRequest, key: string) => Promise<OrderAttempt>;
   onConnect?: () => void;
 }
 
-export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason, real = false, allowPending = false, submitting = false, onSubmit, onConnect }: OrderTicketProps) {
+export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason, real = false, allowedActions = ['market'], submitting = false, onSubmit, onConnect }: OrderTicketProps) {
   const [action, setAction] = useState<OrderAction>('market');
   const [side, setSide] = useState<OrderSide>('buy');
   const [volume, setVolume] = useState('0.01');
@@ -99,10 +99,10 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
   const preview = useMemo(() => previewRisk(request, ref, account), [request, ref, account]);
   const entry = resolveEntry(request, ref);
 
-  const blocked = action !== 'market' && !allowPending
-    ? '本机 EA 首版不支持挂单（限价/止损），请用市价'
+  const blocked = !allowedActions.includes(action)
+    ? '本机 EA 未授权此下单类型'
     : !connected
-      ? '本机 EA 未连接 —— 下单已禁用'
+      ? (lockedReason || '本机 EA 未连接 —— 下单已禁用')
     : !hasQuote
       ? '等待行情报价…'
       : !armed
@@ -124,7 +124,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
   }
 
   async function submit(): Promise<void> {
-    if (!onSubmit) return;
+    if (!onSubmit || !canSubmit) return;
     setConfirming(false);
     setBusy(true);
     const key = keyFor(request);
@@ -172,6 +172,19 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
   }
 
   return (
+    !connected ? (
+      <section className="ticket is-locked">
+        <header className="ticket-head">
+          <h3>下单 {real ? <span className="ticket-real">实盘</span> : null}</h3>
+          <span className="dim">未解锁</span>
+        </header>
+        <div className="lock-banner">
+          {lockedReason || '本机 EA 未连接'}
+          {onConnect ? <button type="button" className="link" onClick={onConnect}>如何连接</button> : null}
+        </div>
+        <p className="hint">连接并授权后，这里才会显示手数、止损止盈和风险预览。</p>
+      </section>
+    ) : (
     <section className={cls('ticket', !connected && 'is-locked')}>
       <header className="ticket-head">
         <h3>下单 {real ? <span className="ticket-real">实盘</span> : null}</h3>
@@ -187,7 +200,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
 
       <div className="seg">
         {(['market', 'limit', 'stop'] as OrderAction[]).map((a) => (
-          <button key={a} type="button" className={cls('seg-btn', action === a && 'is-active')} disabled={a !== 'market' && !allowPending} title={a !== 'market' && !allowPending ? 'EA 首版未开放挂单' : undefined} onClick={() => pickAction(a)}>
+          <button key={a} type="button" className={cls('seg-btn', action === a && 'is-active')} disabled={!allowedActions.includes(a)} title={!allowedActions.includes(a) ? 'EA 未授权此下单类型' : undefined} onClick={() => pickAction(a)}>
             {a === 'market' ? '市价' : a === 'limit' ? '限价' : '止损'}
           </button>
         ))}
@@ -264,6 +277,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
         {preview.problems.length > 0 ? (
           <ul className="problems">{preview.problems.map((p) => <li key={p}>{p}</li>)}</ul>
         ) : null}
+        {!/XAU/i.test(symbol) ? <p className="hint">风险预览按 XAUUSD 100 oz/手估算；非黄金品种的数值仅作参考。</p> : null}
       </div>
 
       <label className="arm">
@@ -280,7 +294,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
 
       <label className={cls('arm', 'oneclick', oneClick && 'is-on')}>
         <input type="checkbox" checked={oneClick} onChange={(e) => setOneClick(e.target.checked)} disabled={!connected || !armed} />
-        <span>一键下单 <em>（勾选后跳过确认，点按钮即刻成交）</em></span>
+        <span>一键下单 <em>（勾选后跳过确认，点按钮立即提交委托）</em></span>
       </label>
 
       <button
@@ -300,7 +314,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
       {confirming ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setConfirming(false)}>
           <div className="modal" role="dialog" aria-modal="true" aria-label="确认下单" onClick={(e) => e.stopPropagation()}>
-            <h3>确认下单（真实账户）</h3>
+            <h3>确认下单（{real ? '实盘账户' : '模拟账户'}）</h3>
             <dl className="confirm-grid">
               <dt>账户</dt><dd>#{account?.login ?? '—'} · {account?.currency ?? 'USD'}</dd>
               <dt>品种</dt><dd>{symbol}</dd>
@@ -315,12 +329,13 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
             </dl>
             <div className="modal-actions">
               <button type="button" className="btn" onClick={() => setConfirming(false)}>取消</button>
-              <button type="button" className={cls('btn', 'primary', side)} onClick={() => void submit()}>确认提交</button>
+              <button type="button" className={cls('btn', 'primary', side)} disabled={!canSubmit} onClick={() => void submit()}>确认提交</button>
             </div>
           </div>
         </div>
       ) : null}
     </section>
+    )
   );
 }
 
@@ -338,7 +353,7 @@ function ResultCard({ attempt, onDismiss }: { attempt: OrderAttempt; onDismiss: 
       {uncertain ? (
         <p className="result-warn">
           {transportError ? `网络/EA 错误：${transportError}` : '指令可能已经到达 EA 并成交。'}
-          <br />请先核对「持仓 / 挂单」，再决定是否用同一幂等键重试。
+          <br />请只查询执行结果或在 MT5 核查，不要重复提交交易指令。
         </p>
       ) : null}
       <dl className="result-grid">
