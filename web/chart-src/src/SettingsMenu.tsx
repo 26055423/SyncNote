@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { prefs, usePrefs, type ChartLocale, type Theme } from './ui/prefs';
+import { GearIcon } from './ui/icons';
 import { ZONES } from './lib/zones';
 import { resolveZone, systemZone, zoneOffsetLabel } from './lib/time';
 
@@ -39,20 +40,16 @@ export function SettingsMenu({ name = '账户' }: { name?: string }) {
         type="button"
         className={`tool-btn settings-trigger ${open ? 'is-active' : ''}`}
         onClick={() => setOpen((value) => !value)}
-        title="设置：主题、时区、图表语言"
-        aria-label="设置"
+        title="账户与图表设置"
+        aria-label="账户与图表设置"
         aria-expanded={open}
       >
-        {name} ▾
+        <GearIcon />
+        <span>{name}</span>
       </button>
 
       {open ? (
         <div className="settings-panel" role="dialog" aria-label="账户与设置">
-          <div className="settings-group">
-            <span className="settings-title">账户</span>
-            <a className="settings-link" href="/profile" target="_blank" rel="noopener noreferrer">个人中心 ↗</a>
-            <a className="settings-link" href="/history" target="_blank" rel="noopener noreferrer">交易日历 ↗</a>
-          </div>
           <div className="settings-group">
             <span className="settings-title">主题</span>
             <div className="settings-row">
@@ -110,6 +107,9 @@ export function SettingsMenu({ name = '账户' }: { name?: string }) {
               ))}
             </div>
             <span className="settings-foot">只换 K 线图内部（工具栏、指标、右键菜单）的语言。</span>
+          </div>
+          <div className="settings-group">
+            <a className="settings-link" href="/profile#chart" target="_blank" rel="noopener noreferrer">个人中心 · 全部设置 ↗</a>
           </div>
         </div>
       ) : null}

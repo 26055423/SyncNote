@@ -952,7 +952,6 @@ export default function App() {
           <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>
           <a href="/history" target="_blank" rel="noopener noreferrer" title="新标签页打开，保留本机 EA 连接">交易日历 ↗</a>
           <SettingsMenu name={me?.nickname || '账户'} />
-          <button type="button" className="icon" title="显示/隐藏右侧栏" aria-label={railOpen ? '收起右侧栏' : '展开右侧栏'} aria-expanded={railOpen} onClick={() => setRailOpen((v) => !v)}>▤</button>
         </nav>
       </header>
 
@@ -1082,8 +1081,7 @@ export default function App() {
         </section>
 
         {/* ------------------------------------------------------ 右栏 */}
-        {railOpen ? (
-          <aside className="rail">
+        <aside className={railOpen ? "rail" : "rail is-collapsed"}>
             <div className="rail-icons">
               {([
                 { key: 'review', label: '复盘', Icon: ReviewIcon },
@@ -1101,8 +1099,11 @@ export default function App() {
                     aria-label={fresh ? `${label}，${unseen} 条未读` : label}
                     aria-current={tab === key ? 'page' : undefined}
                     onClick={() => {
-                      if (key === 'review') { switchMode('review'); return; }
+                      const same = tab === key && railOpen;
+                      if (same) { setRailOpen(false); return; }
+                      if (key === 'review') { switchMode('review'); setRailOpen(true); return; }
                       setTab(key);
+                      setRailOpen(true);
                     }}
                   >
                     <Icon />
@@ -1358,8 +1359,7 @@ export default function App() {
               ) : null}
 
             </div>
-          </aside>
-        ) : null}
+        </aside>
       </div>
 
       {/* ---------------------------------------------------------- 底栏 */}

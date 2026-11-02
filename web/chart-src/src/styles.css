@@ -251,6 +251,10 @@ button { font: inherit; cursor: pointer; }
   .rail-icons button.has-new .dot { animation: none; }
 }
 .rail-body { flex: 1; min-width: 0; overflow: auto; }
+/* 收起时只留图标条：顶栏那个 ▤ 已经去掉，点当前页签再点一次就收 */
+.rail.is-collapsed { width: 46px; flex-basis: 46px; }
+.rail.is-collapsed .rail-body { display: none; }
+.rail.is-collapsed .rail-icons { border-right: 1px solid var(--line); }
 
 .pane { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .pane h3 { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
