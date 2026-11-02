@@ -76,6 +76,16 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 11. **SyncNote 必须保持只读**：`local_ea.source_package` 打包时会拒绝 `#import` / `OrderSend` / `CTrade` / `SocketCreate`，
     触发就返回 503。这条校验是产品不变量，不要为了让包能下得动而放宽。
 
+## 时间对齐（改时间相关代码前必看）
+
+库里存的是**券商墙钟**，接口一律返回 **UTC**，换算只有一处：`trade_time.offset_for()`。
+
+- 不要在前端或各接口里自己加减偏移；`bars.to_utc()` 已经统一处理 K 线、缺口和范围。
+- 新券商：在 `trade_time.RULES` 登记 `offset_seconds`（有夏令时就给 `zoneinfo` 规则），
+  或等 `broker_clocks` 从 EA 心跳学到观测值。
+- 复盘快照在 `journal.review()` 里已平移，别重复减。
+- 详细约定见 `docs/架构说明.md` §5.1。
+
 ## 数据源有两种，别混淆
 
 - **复盘数据**：每笔交易的四周期 K 线，来自 `trade_reviews.payload`（EA 上传或 hub 用缓存 K 线生成）。

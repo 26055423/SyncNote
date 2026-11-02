@@ -117,12 +117,12 @@ def set_source_offset(db, source, offset_sec, now=None):
 
 
 def source_offset(db, source):
-  """这条轨的墙钟偏移；没记录时返回 0（按 UTC 处理）。"""
+  """这条轨的墙钟偏移：统一交给 trade_time.offset_for（规则 → 观测 → 0）。"""
   try:
-    row = db.execute('SELECT offset_sec FROM source_clock WHERE source=?', (source,)).fetchone()
-  except TypeError:
+    import trade_time
+    return trade_time.offset_for(db, source)
+  except Exception:
     return 0
-  return int(row['offset_sec']) if row and isinstance(row['offset_sec'], (int, float)) else 0
 
 
 def to_utc(bars_payload, offset_sec):

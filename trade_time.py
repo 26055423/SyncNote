@@ -7,6 +7,29 @@ from zoneinfo import ZoneInfo
 RULES={'EasyTradingOnlineLtd-Server':{'offset_seconds':10800,'provisional':True}}
 RULES.update(json.loads(os.environ.get('BROKER_TIME_RULES','{}')))
 
+
+def offset_for(db, source):
+    """时间对齐的唯一入口：券商墙钟 → UTC 要减掉的秒数。
+
+    优先级：
+      1. `RULES` 里按券商服务器写的规则（可以带 DST，走 `zoneinfo`）；
+      2. `source_clock` 里观测到的偏移（`bind_feed` 从 `broker_clocks` 记的）；
+      3. 0（当作 UTC 处理）。
+
+    所有"库里存墙钟、出库换 UTC"的地方都必须走这里，别各自算。
+    """
+    name = source[4:] if isinstance(source, str) and source.startswith('srv:') else source
+    rule = RULES.get(name)
+    if rule and isinstance(rule.get('offset_seconds'), int):
+        return int(rule['offset_seconds'])
+    try:
+        row = db.execute('SELECT offset_sec FROM source_clock WHERE source=?', (source,)).fetchone()
+        if row is not None and isinstance(row['offset_sec'], int):
+            return int(row['offset_sec'])
+    except Exception:
+        pass
+    return 0
+
 def utc_trade(trade, clock=None):
     result=dict(trade)
     clock=dict(clock) if clock else None
