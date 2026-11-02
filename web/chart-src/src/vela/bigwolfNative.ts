@@ -536,7 +536,7 @@ export async function registerBigwolf() {
   const register = registerNativeIndicator!;
   register({
     type: 'bigwolf',
-    title: '★ bigwolf',
+    title: '★ bigwolf（主图）',
     shortTitle: 'bigwolf',
     paneHint: 'price',
     overlay: true,
@@ -546,7 +546,7 @@ export async function registerBigwolf() {
   });
   register({
     type: 'bigwolf-macd',
-    title: '★ bigwolf · MACD',
+    title: '★ bigwolf · MACD（副图）',
     shortTitle: 'bw MACD',
     paneHint: 'new',
     overlay: false,

@@ -123,6 +123,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   // 分享时要把开平仓标注剔掉，`stripMarks` 定义在初始化闭包里，用 ref 传出来。
   const stripRef = useRef<((document: unknown) => unknown) | null>(null);
+  // 自动配对 bigwolf 主图 + MACD 副图时防止自我递归。
+  const pairingRef = useRef(false);
   // 「时间轴同步」= 点击跳到同一时刻（像 TradingView），不是缩放同步。
   // 存在本机，刷新后仍然生效。
   const timeSyncRef = useRef<boolean>((() => {
@@ -556,7 +558,23 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
-          cell.chart?.on?.('load:end', () => {
+          // 添加「★ bigwolf（主图）」时自动补一个 MACD 副图：一个功能、两块窗格。
+          try {
+            cell.chart?.on?.('indicator:added', () => {
+              if (pairingRef.current) return;
+              const present = new Set<string>(cell.chart?.presentNativeIndicators?.() ?? []);
+              if (present.has('bigwolf') && !present.has('bigwolf-macd')) {
+                pairingRef.current = true;
+                try {
+                  cell.chart?.addNativeIndicator?.('bigwolf-macd');
+                } finally {
+                  pairingRef.current = false;
+                }
+              }
+            });
+          } catch {
+            /* 没有原生指标 API 时忽略 */
+          }          cell.chart?.on?.('load:end', () => {
             focusOne(cell);
             lockDrawings(cell);
             annotate(cell);
