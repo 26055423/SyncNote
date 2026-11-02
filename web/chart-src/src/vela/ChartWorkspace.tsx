@@ -324,6 +324,14 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         } catch {
           /* ignore */
         }
+        // 各窗口的缩放/平移互不跟随：只保留十字线联动。
+        // 存档里可能带着旧的 viewport 同步，这里强制关掉，避免"拖一格、别的格跟着缩放"。
+        try {
+          ws.sync?.set?.('viewport', false);
+          onSyncs?.((ws.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>);
+        } catch {
+          /* ignore */
+        }
 
         const focusOne = (cell: any) => {
           const tf = cell?.chart?.market?.timeframe ?? '15';
