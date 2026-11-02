@@ -200,7 +200,9 @@ button { font: inherit; cursor: pointer; }
 .link-dot.off { color: var(--dim); }
 
 .main { display: flex; min-height: 0; min-width: 0; }
-.main.rail-closed .rail { display: none; }
+/* 收起时不再整条隐藏：右栏自己缩成 46px 图标条（.rail.is-collapsed），
+   否则收起后就再也点不开了。 */
+.main.rail-closed .rail { display: flex; }
 
 /* ---------------------------------------------------------------- 图表区 */
 .chart-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
