@@ -60,11 +60,31 @@ def thread(db, uid, peer, limit=100):
     for row in reversed(rows):
         items.append({
             'id': row['id'],
+            'kind': 'text',
             'mine': row['sender'] == uid,
             'text': row['text'],
             'created': row['created'],
             'read': bool(row['read_at']),
         })
+    # 合并两个人之间互相分享的复盘：在聊天里就是一张卡片，和微信分享文章一样。
+    shares = db.execute(
+        '''SELECT id,owner,ticket,message,created FROM review_shares
+           WHERE (owner=? AND recipient=?) OR (owner=? AND recipient=?)
+           ORDER BY created DESC LIMIT ?''',
+        (uid, peer, peer, uid, max(1, min(limit, 300))),
+    ).fetchall()
+    for row in shares:
+        items.append({
+            'id': 's' + str(row['id']),
+            'kind': 'share',
+            'mine': row['owner'] == uid,
+            'text': row['message'] or '',
+            'ticket': row['ticket'],
+            'share': row['id'],
+            'created': row['created'],
+            'read': True,
+        })
+    items.sort(key=lambda item: item['created'])
     return items
 
 
@@ -101,4 +121,6 @@ def threads(db, uid):
 
 
 def total_unread(db, uid):
-    return db.execute('SELECT count(*) FROM direct_messages WHERE recipient=? AND read_at IS NULL', (uid,)).fetchone()[0]
+    messages = db.execute('SELECT count(*) FROM direct_messages WHERE recipient=? AND read_at IS NULL', (uid,)).fetchone()[0]
+    shares = db.execute('SELECT count(*) FROM review_shares WHERE recipient=? AND seen=0', (uid,)).fetchone()[0]
+    return messages + shares

@@ -69,7 +69,7 @@ def main():
    ensure(bob.request('/api/profile')['user']['nickname']=='bb','profile ownership')
    alice.request('/api/admin/users',status=403);alice.request('/api/invite',status=403)
    alice.request('/api/admin/invites',status=404);alice.request('/api/admin/sudo',{'password':password},status=404)
-   used=new_code();register(Client(base),'cc',used)
+   used=new_code();cc=Client(base);register(cc,'cc',used)
    reused=Client(base);challenge=anon.request('/api/login-challenge');rt=challenge['challenge_id']
    with sqlite3.connect(db) as conn:rh=conn.execute('SELECT answer FROM login_challenges WHERE id=?',(rt,)).fetchone()[0]
    ra=next(str(i) for i in range(9) if hashlib.sha256((rt+str(i)).encode()).hexdigest()==rh)
@@ -94,13 +94,18 @@ def main():
    alice.request('/api/dm',{'to':b['id'],'text':'在吗？看下这单'})
    inbox=bob.request('/api/dm?with='+a['id'])
    ensure([m['text'] for m in inbox['messages']]==['在吗？看下这单'],'好友能收到私信')
-   ensure(bob.request('/api/dm/threads')['unread']==0,'打开会话后未读清零')
+   with sqlite3.connect(db) as conn: conn.execute('INSERT OR IGNORE INTO trades(person,ticket,payload) VALUES(?,?,?)',(a['id'],'fixture-dm','{"ticket":"fixture-dm","symbol":"XAUUSD"}'))
+   alice.request('/api/reviews/share',{'ticket':'fixture-dm','recipients':[b['id']],'message':'看这单'})
+   dm=[m for m in bob.request('/api/dm?with='+a['id'])['messages'] if m['kind']=='share']
+   ensure(dm and dm[0]['message' if False else 'text']=='看这单','复盘分享出现在私信里')
+   bob.request('/api/reviews/share/seen',{'id':dm[0]['share']})
+   ensure(all(t['unread']==0 for t in bob.request('/api/dm/threads')['threads']),'打开会话后未读清零')
    bob.request('/api/dm',{'to':a['id'],'text':'看了，没问题'})
    thread=alice.request('/api/dm?with='+b['id'])['messages']
-   ensure(len(thread)==2 and thread[-1]['text']=='看了，没问题','双向对话按时间排序')
-   outsider=Client(base);register(outsider,'ff')
-   outsider.request('/api/dm?with='+a['id'],status=403)
-   outsider.request('/api/dm',{'to':a['id'],'text':'陌生人'},status=403)
+   texts=[m for m in thread if m['kind']=='text']
+   ensure(len(texts)==2 and texts[-1]['text']=='看了，没问题','双向对话按时间排序')
+   cc.request('/api/dm?with='+a['id'],status=403)
+   cc.request('/api/dm',{'to':a['id'],'text':'陌生人'},status=403)
    bob.request('/api/messages',{'text':'friend-only hello'})
    ensure(any(m['text']=='friend-only hello' for m in alice.request('/api/state')['messages']),'好友之间能看到留言')
    bob.request('/api/friends/remove',{'target':a['id']})

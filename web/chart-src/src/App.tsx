@@ -11,7 +11,7 @@ import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
 import { FriendChat } from './FriendChat';
 import { GroupsPanel } from './GroupsPanel';
-import { FriendsIcon, GroupsIcon, MailIcon, ReviewIcon, TradeIcon } from './ui/icons';
+import { FriendsIcon, GroupsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
 import { localHistorySync } from './localHistorySync';
@@ -157,6 +157,7 @@ export default function App() {
   // 好友申请：别人申请我的（可通过对）/ 我申请的（可取消）。
   const [dmPeer, setDmPeer] = useState<{ id: string; nickname: string; avatar?: string } | null>(null);
   const [dmUnread, setDmUnread] = useState<Record<string, number>>({});
+  const [groupUnread, setGroupUnread] = useState(0);
   const [friendReq, setFriendReq] = useState<{ incoming: Array<{ id: string; nickname: string; username: string }>; outgoing: Array<{ id: string; nickname: string; username: string }> }>({ incoming: [], outgoing: [] });
   const [recipients, setRecipients] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState('');
@@ -485,6 +486,9 @@ export default function App() {
               for (const row of dm.threads ?? []) if (row.unread) map[row.peer.id] = row.unread;
               if (!alive) return;
               setDmUnread(map);
+              void api<{ groups: Array<{ unread: number; mentions: number }> }>('/api/groups')
+                .then((gs) => { if (alive) setGroupUnread((gs.groups ?? []).reduce((n, g) => n + (g.unread || 0), 0)); })
+                .catch(() => undefined);
             })
             .catch(() => undefined);
         })
@@ -1142,18 +1146,18 @@ export default function App() {
               {([
                 { key: 'review', label: '复盘', Icon: ReviewIcon },
                 { key: 'trade', label: '交易', Icon: TradeIcon },
-                { key: 'inbox', label: '消息', Icon: MailIcon },
                 { key: 'friends', label: '好友', Icon: FriendsIcon },
                 { key: 'groups', label: '群组', Icon: GroupsIcon },
               ] as Array<{ key: Tab; label: string; Icon: typeof TradeIcon }>).map(({ key, label, Icon }) => {
-                const fresh = key === 'inbox' && unseen > 0;
+                const fresh = (key === 'friends' && Object.values(dmUnread).reduce((n, v) => n + v, 0) > 0) || (key === 'groups' && groupUnread > 0);
+                const badge = key === 'friends' ? Object.values(dmUnread).reduce((n, v) => n + v, 0) : key === 'groups' ? groupUnread : 0;
                 return (
                   <button
                     key={key}
                     type="button"
                     className={`${tab === key ? 'is-active' : ''} ${fresh ? 'has-new' : ''}`.trim()}
-                    title={fresh ? `${label}（${unseen} 条未读）` : label}
-                    aria-label={fresh ? `${label}，${unseen} 条未读` : label}
+                    title={fresh ? `${label}（${badge} 条未读）` : label}
+                    aria-label={fresh ? `${label}，${badge} 条未读` : label}
                     aria-current={tab === key ? 'page' : undefined}
                     onClick={() => {
                       const same = tab === key && railOpen;
@@ -1165,7 +1169,7 @@ export default function App() {
                   >
                     <Icon />
                     <span className="rail-label">{label}</span>
-                    {fresh ? <i className="dot">{unseen}</i> : null}
+                    {fresh ? <i className="dot">{badge}</i> : null}
                   </button>
                 );
               })}

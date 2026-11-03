@@ -9,9 +9,12 @@ interface Peer {
 }
 
 interface Message {
-  id: number;
+  id: number | string;
+  kind?: 'text' | 'share';
   mine: boolean;
   text: string;
+  ticket?: string;
+  share?: number;
   created: number;
   read: boolean;
 }
@@ -89,7 +92,20 @@ export function FriendChat({ peer, online, onBack, onError }: Props) {
         {messages.length ? (
           messages.map((message) => (
             <div className={`dm-bubble ${message.mine ? 'is-mine' : ''}`} key={message.id}>
-              <div className="dm-text">{message.text}</div>
+              {message.kind === 'share' ? (
+                <button
+                  type="button"
+                  className="dm-share"
+                  onClick={() => {
+                    if (message.share) location.href = `/chart?share=${message.share}`;
+                  }}
+                >
+                  复盘 #{message.ticket}
+                </button>
+              ) : (
+                <div className="dm-text">{message.text}</div>
+              )}
+              {message.kind === 'share' && message.text ? <div className="dm-text">{message.text}</div> : null}
               <small className="dim">{new Date(message.created * 1000).toLocaleTimeString()}</small>
             </div>
           ))
