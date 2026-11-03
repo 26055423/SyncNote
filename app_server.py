@@ -81,11 +81,6 @@ with connect() as db:
     if 'locked' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0')
 with connect() as db:
     if 'share_reviews' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN share_reviews INTEGER NOT NULL DEFAULT 0')
-    # 老的「单向关注」升级成好友关系：互关→已通过，单向→待对方通过（幂等）。
-    try:
-        migrate_friends(db)
-    except Exception:
-        pass
     auth_security.initialize(db)
     journal.initialize(db)
     sync_history.initialize(db)
@@ -239,6 +234,15 @@ def assistant_zip(platform,binding):
     marker=b'TONGPIN_BINDING_SLOT_V1'+b' '*(4096-len(b'TONGPIN_BINDING_SLOT_V1'))
     if image.count(marker)!=1 or len(config)>4096:raise Error('安装镜像暂时不可用，请稍后重试',503)
     return image.replace(marker,config+b' '*(4096-len(config)),1)
+
+# 好友迁移：老的 follows → friend_edges。放在所有 helper 定义之后，
+# 否则启动时 migrate_friends 还没定义会被 except 吞掉。
+try:
+    with connect() as _migrate_db:
+        migrate_friends(_migrate_db)
+except Exception:
+    pass
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*_):pass
