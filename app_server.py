@@ -517,7 +517,8 @@ class Handler(BaseHTTPRequestHandler):
                             limit=100
                         return self.reply({'messages':groups.messages(db,gid,uid,limit)})
                     if path=='/api/dm/threads':
-                        return self.reply({'threads':dm.threads(db,uid),'unread':dm.total_unread(db,uid)})
+                        allowed={r['id'] for r in friends_of(db,uid) if can_chat(db,uid,r['id'])}
+                        return self.reply({'threads':dm.threads(db,uid,allowed),'unread':dm.total_unread(db,uid,allowed)})
                     if path=='/api/dm':
                         peer=str(q.get('with',[''])[0])
                         if not peer or not are_friends(db,uid,peer):raise Error('你们还不是好友',403)
@@ -565,7 +566,7 @@ class Handler(BaseHTTPRequestHandler):
                         last_history=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=?',(uid,)).fetchone()[0]
                         configured=bool(link and (link['token_hash'] or link['account_key']))
                         online=bool(configured and ((snap and time.time()-snap['updated']<=45 and json.loads(snap['payload']).get('online',True)) or (last_history and time.time()-last_history<=90)))
-                        return self.reply({'user':public(u),'following':following,'followers':followers,'friends':following,'incoming':[public(r) for r in incoming],'outgoing':[public(r) for r in outgoing],'blocked':[public(r) for r in blocked_of(db,uid)],'mt5':{'configured':configured,'bound':bool(link and link['account_key']),'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'}})
+                        return self.reply({'user':public(u),'following':following,'followers':followers,'friends':[{**person,'can_chat':can_chat(db,uid,person['id'])} for person in following],'incoming':[public(r) for r in incoming],'outgoing':[public(r) for r in outgoing],'blocked':[public(r) for r in blocked_of(db,uid)],'mt5':{'configured':configured,'bound':bool(link and link['account_key']),'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'}})
                     if path=='/api/users':
                         text=q.get('q',[''])[0].strip().lower()
                         if not 2<=len(text)<=40:raise Error('请输入至少 2 个字符查找用户')
@@ -891,7 +892,10 @@ class Handler(BaseHTTPRequestHandler):
                         pw=pw_hash(data.get('new_password'));db.execute('DELETE FROM trusted_devices WHERE user_id=?',(uid,));db.execute('DELETE FROM login_pending WHERE user_id=?',(uid,));db.execute('UPDATE users SET password=? WHERE id=?',(pw,uid));db.execute('DELETE FROM sessions WHERE user_id=?',(uid,));cookie=self.session(db,uid)
                     elif path=='/api/dm':
                         to=str(data.get('to',''))
-                        result=dm.send(db,uid,to,str(data.get('text','')),bool(to) and are_friends(db,uid,to))
+                        result=dm.send(db,uid,to,str(data.get('text','')),bool(to) and are_friends(db,uid,to),data.get('reply_to'))
+                    elif path=='/api/dm/reaction':
+                        to=str(data.get('to',''))
+                        result=dm.reaction(db,uid,to,data.get('id'),data.get('emoji'),data.get('active'),bool(to) and are_friends(db,uid,to))
                     elif path=='/api/groups/create':
                         result=groups.create(db,uid,str(data.get('name','')))
                     elif path=='/api/groups/join':
@@ -909,10 +913,12 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/groups/kick':
                         result=groups.kick(db,uid,str(data.get('group','')),str(data.get('target','')))
                     elif path=='/api/groups/message':
-                        result=groups.post(db,uid,str(data.get('group','')),str(data.get('text','')))
+                        result=groups.post(db,uid,str(data.get('group','')),str(data.get('text','')),data.get('reply_to'))
+                    elif path=='/api/groups/reaction':
+                        result=groups.reaction(db,uid,str(data.get('group','')),data.get('id'),data.get('emoji'),data.get('active'))
                     elif path=='/api/groups/share':
                         try:
-                            result=groups.share_trade(db,uid,str(data.get('group','')),str(data.get('ticket','')))
+                            result=groups.share_trade(db,uid,str(data.get('group','')),str(data.get('ticket','')),data.get('snapshot'))
                         except groups.GroupError:
                             raise
                         except Exception as _e:

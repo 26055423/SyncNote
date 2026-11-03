@@ -14,6 +14,7 @@ import secrets
 import time
 
 import chart
+import dm
 
 MAX_NAME = 40
 MAX_TEXT = 1000
@@ -59,6 +60,12 @@ def initialize(db):
             recalled INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages(group_id,id);
+        CREATE TABLE IF NOT EXISTS group_reactions(
+            message_id INTEGER NOT NULL REFERENCES group_messages(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id),
+            emoji TEXT NOT NULL,
+            PRIMARY KEY(message_id,user_id,emoji)
+        );
         '''
     )
     # 老库补列
@@ -68,6 +75,10 @@ def initialize(db):
     if 'avatar' not in group_cols:
         db.execute("ALTER TABLE groups ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
     message_cols = {r[1] for r in db.execute('PRAGMA table_info(group_messages)')}
+    if 'snapshot' not in message_cols:
+        db.execute('ALTER TABLE group_messages ADD COLUMN snapshot TEXT')
+    if 'reply_to' not in message_cols:
+        db.execute('ALTER TABLE group_messages ADD COLUMN reply_to INTEGER REFERENCES group_messages(id) ON DELETE SET NULL')
     if 'mentions' not in message_cols:
         db.execute("ALTER TABLE group_messages ADD COLUMN mentions TEXT NOT NULL DEFAULT '[]'")
     if 'recalled' not in message_cols:
@@ -89,7 +100,7 @@ def require_member(db, gid, uid):
 
 def _payload(db, row, uid):
     members = db.execute('SELECT count(*) FROM group_members WHERE group_id=?', (row['id'],)).fetchone()[0]
-    last = db.execute('SELECT person,kind,text,created FROM group_messages WHERE group_id=? ORDER BY id DESC LIMIT 1', (row['id'],)).fetchone()
+    last = db.execute('SELECT person,kind,text,created,recalled FROM group_messages WHERE group_id=? ORDER BY id DESC LIMIT 1', (row['id'],)).fetchone()
     mine = _member(db, row['id'], uid)
     unread = 0
     mentions = 0
@@ -112,7 +123,7 @@ def _payload(db, row, uid):
         'mentions': mentions,
         'role': mine['role'] if mine else 'guest',
         'unread': unread,
-        'last': ({'person': last['person'], 'kind': last['kind'], 'text': last['text'], 'created': last['created']} if last else None),
+        'last': ({'person': last['person'], 'kind': 'recalled' if last['recalled'] else last['kind'], 'text': '' if last['recalled'] else last['text'], 'created': last['created']} if last else None),
     }
 
 
@@ -170,10 +181,10 @@ def members(db, gid, uid):
     """群成员列表：昵称、头像、角色、加入时间。"""
     require_member(db, gid, uid)
     rows = db.execute(
-        'SELECT u.id,u.nickname,u.avatar,m.role,m.joined FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=? ORDER BY (m.role=\'owner\') DESC,m.joined',
+        'SELECT u.id,u.nickname,u.avatar,m.role,m.joined,coalesce(p.updated,0) AS updated FROM group_members m JOIN users u ON u.id=m.user_id LEFT JOIN presence p ON p.user_id=u.id WHERE m.group_id=? ORDER BY (m.role=\'owner\') DESC,m.joined',
         (gid,),
     ).fetchall()
-    return [{'id': r['id'], 'nickname': r['nickname'], 'avatar': r['avatar'], 'role': r['role'], 'joined': r['joined']} for r in rows]
+    return [{'id': r['id'], 'nickname': r['nickname'], 'avatar': r['avatar'], 'role': r['role'], 'joined': r['joined'], 'online': r['updated'] > time.time() - 45} for r in rows]
 
 
 def set_notice(db, uid, gid, text):
@@ -200,23 +211,26 @@ def kick(db, uid, gid, target):
     return {'ok': True}
 
 
-def post(db, uid, gid, text):
+def post(db, uid, gid, text, reply_to=None):
     require_member(db, gid, uid)
     text = (text or '').strip()
     if not 1 <= len(text) <= MAX_TEXT:
         raise GroupError('消息需要 1–%d 个字' % MAX_TEXT)
     now = time.time()
     mentions = _parse_mentions(db, gid, text, uid)
-    db.execute("INSERT INTO group_messages(group_id,person,kind,text,created,mentions) VALUES(?,?,'text',?,?,?)", (gid, uid, text, now, json.dumps(mentions)))
+    if reply_to is not None:
+        _message(db, gid, reply_to)
+    db.execute("INSERT INTO group_messages(group_id,person,kind,text,created,mentions,reply_to) VALUES(?,?,'text',?,?,?,?)", (gid, uid, text, now, json.dumps(mentions), reply_to))
+    message_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
     _touch(db, gid, uid, now)
-    return {'created': now}
+    return {'id': message_id, 'created': now}
 
 
 def _touch(db, gid, uid, now):
     db.execute('UPDATE group_members SET last_read=? WHERE group_id=? AND user_id=?', (now, gid, uid))
 
 
-def share_trade(db, uid, gid, ticket):
+def share_trade(db, uid, gid, ticket, snapshot=None):
     """把一笔交易发进群：群里留一张卡片，同时给每个成员各写一条 review_shares。"""
     require_member(db, gid, uid)
     ticket = str(ticket or '')
@@ -226,10 +240,11 @@ def share_trade(db, uid, gid, ticket):
     members = [r['user_id'] for r in db.execute('SELECT user_id FROM group_members WHERE group_id=?', (gid,))]
     recipients = [m for m in members if m != uid]
     now = time.time()
-    db.execute("INSERT INTO group_messages(group_id,person,kind,text,ticket,created) VALUES(?,?,'trade','',?,?)", (gid, uid, ticket, now))
+    saved_snapshot = chart.clean_snapshot(snapshot)
+    db.execute("INSERT INTO group_messages(group_id,person,kind,text,ticket,created,snapshot) VALUES(?,?,'trade','',?,?,?)", (gid, uid, ticket, now, saved_snapshot))
     message_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
     if recipients:
-        chart.share(db, uid, ticket, recipients, '', None)
+        chart.share(db, uid, ticket, recipients, '', snapshot)
     _touch(db, gid, uid, now)
     return {'id': message_id, 'created': now, 'sent': len(recipients)}
 
@@ -303,14 +318,16 @@ def messages(db, gid, uid, limit=100):
             'name': row['nickname'],
             'avatar': row['avatar'],
             'kind': 'recalled' if row['recalled'] else row['kind'],
-            'text': row['text'],
-            'ticket': row['ticket'],
+            'text': '' if row['recalled'] else row['text'],
+            'ticket': None if row['recalled'] else row['ticket'],
             'created': row['created'],
-            'mentions': mentioned,
+            'mentions': [] if row['recalled'] else mentioned,
+            'reply': None if row['recalled'] else _reply(db, gid, row['reply_to']),
+            'reactions': [] if row['recalled'] else dm.reactions(db, 'group_reactions', row['id'], uid),
             'mine': row['person'] == uid,
             'recallable': bool(row['person'] == uid and time.time() - row['created'] <= 120),
         }
-        if row['kind'] == 'trade' and row['ticket']:
+        if not row['recalled'] and row['kind'] == 'trade' and row['ticket']:
             share = db.execute(
                 'SELECT id FROM review_shares WHERE owner=? AND ticket=? AND recipient=?',
                 (row['person'], row['ticket'], uid),
@@ -325,13 +342,42 @@ def open_trade(db, gid, uid, message_id):
     """成员点击交易卡片：确保自己有这条 share，返回 share id。"""
     require_member(db, gid, uid)
     row = db.execute('SELECT * FROM group_messages WHERE id=? AND group_id=?', (message_id, gid)).fetchone()
-    if not row or row['kind'] != 'trade' or not row['ticket']:
+    if not row or row['recalled'] or row['kind'] != 'trade' or not row['ticket']:
         raise GroupError('这条消息不是交易', 404)
     share = db.execute('SELECT id FROM review_shares WHERE owner=? AND ticket=? AND recipient=?', (row['person'], row['ticket'], uid)).fetchone()
     if share:
         return {'share': share['id']}
-    chart.share(db, row['person'], row['ticket'], [uid], '', None)
+    chart.share(db, row['person'], row['ticket'], [uid], '', json.loads(row['snapshot']) if row['snapshot'] else None)
     share = db.execute('SELECT id FROM review_shares WHERE owner=? AND ticket=? AND recipient=?', (row['person'], row['ticket'], uid)).fetchone()
     if not share:
         raise GroupError('这笔交易暂时无法打开', 404)
     return {'share': share['id']}
+
+
+def _message(db, gid, message_id, allow_recalled=False):
+ if not isinstance(message_id, int) or isinstance(message_id, bool) or message_id < 1:
+  raise GroupError('消息编号不正确')
+ row = db.execute('SELECT m.*,u.nickname FROM group_messages m JOIN users u ON u.id=m.person WHERE m.id=? AND m.group_id=?', (message_id, gid)).fetchone()
+ if not row or (row['recalled'] and not allow_recalled):
+  raise GroupError('消息不存在或已撤回', 404)
+ return row
+
+
+def _reply(db, gid, message_id):
+ if message_id is None:
+  return None
+ row = _message(db, gid, message_id, True)
+ text = '消息已撤回' if row['recalled'] else row['text'] or '交易复盘'
+ return {'id': row['id'], 'name': row['nickname'], 'text': text}
+
+
+def reaction(db, uid, gid, message_id, emoji, active):
+ require_member(db, gid, uid)
+ _message(db, gid, message_id)
+ if not isinstance(emoji, str) or emoji not in dm.REACTIONS or not isinstance(active, bool):
+  raise GroupError('表情回应不正确')
+ if active:
+  db.execute('INSERT OR IGNORE INTO group_reactions(message_id,user_id,emoji) VALUES(?,?,?)', (message_id, uid, emoji))
+ else:
+  db.execute('DELETE FROM group_reactions WHERE message_id=? AND user_id=? AND emoji=?', (message_id, uid, emoji))
+ return {'reactions': dm.reactions(db, 'group_reactions', message_id, uid)}

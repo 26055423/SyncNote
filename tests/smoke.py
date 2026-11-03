@@ -97,6 +97,7 @@ def main():
    with sqlite3.connect(db) as conn: conn.execute('INSERT OR IGNORE INTO trades(person,ticket,payload) VALUES(?,?,?)',(a['id'],'fixture-dm','{"ticket":"fixture-dm","symbol":"XAUUSD"}'))
    alice.request('/api/reviews/share',{'ticket':'fixture-dm','recipients':[b['id']],'message':'看这单'})
    dm=[m for m in bob.request('/api/dm?with='+a['id'])['messages'] if m['kind']=='share']
+   ensure(bob.request('/api/dm/threads')['unread']==0,'打开私信同时把收到的复盘分享标成已读')
    ensure(dm and dm[0]['message' if False else 'text']=='看这单','复盘分享出现在私信里')
    bob.request('/api/reviews/share/seen',{'id':dm[0]['share']})
    ensure(all(t['unread']==0 for t in bob.request('/api/dm/threads')['threads']),'打开会话后未读清零')
@@ -104,11 +105,37 @@ def main():
    thread=alice.request('/api/dm?with='+b['id'])['messages']
    texts=[m for m in thread if m['kind']=='text']
    ensure(len(texts)==2 and texts[-1]['text']=='看了，没问题','双向对话按时间排序')
+   # Discord 式引用和表情：会话隔离、幂等、当前用户状态。
+   mid=texts[0]['id']
+   reply=bob.request('/api/dm',{'to':a['id'],'text':'引用回复','reply_to':mid})
+   quoted=[m for m in alice.request('/api/dm?with='+b['id'])['messages'] if m['id']==reply['id']][0]
+   ensure(quoted['reply']['id']==mid and quoted['reply']['text']==texts[0]['text'],'私信引用返回原消息预览')
+   ensure(quoted['name']=='bb' and quoted['person']==b['id'],'私信提供作者资料')
+   for _ in range(2):bob.request('/api/dm/reaction',{'to':a['id'],'id':mid,'emoji':'👍','active':True})
+   reaction=alice.request('/api/dm/reaction',{'to':b['id'],'id':mid,'emoji':'👍','active':True})['reactions'][0]
+   ensure(reaction=={'emoji':'👍','count':2,'mine':True},'私信表情按用户幂等并聚合')
+   bob.request('/api/dm/reaction',{'to':a['id'],'id':mid,'emoji':'👍','active':False})
+   reaction=[m for m in bob.request('/api/dm?with='+a['id'])['messages'] if m['id']==mid][0]['reactions'][0]
+   ensure(reaction['count']==1 and not reaction['mine'],'取消回应只删除自己的表情')
+   bob.request('/api/dm/reaction',{'to':a['id'],'id':mid,'emoji':'invalid','active':True},status=400)
+   bob.request('/api/dm/reaction',{'to':a['id'],'id':mid,'emoji':'👍','active':1},status=400)
+   bob.request('/api/dm',{'to':a['id'],'text':'bad','reply_to':True},status=400)
+   cc.request('/api/dm/reaction',{'to':a['id'],'id':mid,'emoji':'👍','active':True},status=403)
+   with sqlite3.connect(db) as conn:
+    stranger=conn.execute("SELECT id FROM users WHERE username='cc'").fetchone()[0]
+    wrong_mid=conn.execute('INSERT INTO direct_messages(sender,recipient,text,created) VALUES(?,?,?,?)',(stranger,a['id'],'private fixture',time.time())).lastrowid
+   bob.request('/api/dm',{'to':a['id'],'text':'cross','reply_to':wrong_mid},status=404)
+   bob.request('/api/dm/reaction',{'to':a['id'],'id':wrong_mid,'emoji':'👍','active':True},status=404)
+   ensure(all(t['peer']['id']!=stranger for t in alice.request('/api/dm/threads')['threads']),'会话列表过滤非好友历史')
+   ensure(isinstance(bob.request('/api/dm/threads')['threads'][0]['peer']['online'],bool),'在线状态来自网站心跳')
    cc.request('/api/dm?with='+a['id'],status=403)
    cc.request('/api/dm',{'to':a['id'],'text':'陌生人'},status=403)
    bob.request('/api/messages',{'text':'friend-only hello'})
    ensure(any(m['text']=='friend-only hello' for m in alice.request('/api/state')['messages']),'好友之间能看到留言')
    bob.request('/api/friends/remove',{'target':a['id']})
+   ensure(not bob.request('/api/dm/threads')['threads'],'删除好友后会话列表不再暴露消息')
+   ensure(not alice.request('/api/dm/threads')['threads'],'被删除方的会话列表也隐藏失效关系')
+   ensure(all(not row['can_chat'] for row in alice.request('/api/profile')['friends'] if row['id']==b['id']),'新会话入口不会把单方保留的好友关系当作可聊天')
    alice.request('/api/history?person='+b['id'],status=403)
    # ---- 微信式：删除 / 拉黑 / 权限（不让看、不看） ----
    alice.request('/api/friends/request',{'target':b['id']})
@@ -261,21 +288,49 @@ def main():
    member.request('/api/groups/recall',{'group':g['id'],'id':mid},status=403)
    alice.request('/api/groups/message',{'group':g['id'],'text':'大家好'})
    ensure(any(m['text']=='大家好' for m in member.request('/api/groups/messages?group='+g['id'])['messages']),'群聊成员可见')
+   reply_mid=alice.request('/api/groups/message',{'group':g['id'],'text':'引用目标'})['id']
+   reply=member.request('/api/groups/message',{'group':g['id'],'text':'群引用回复','reply_to':reply_mid})
+   quoted=[m for m in member.request('/api/groups/messages?group='+g['id'])['messages'] if m['id']==reply['id']][0]
+   ensure(quoted['reply']['text']=='引用目标','群消息返回引用预览')
+   for _ in range(2):member.request('/api/groups/reaction',{'group':g['id'],'id':reply_mid,'emoji':'❤️','active':True})
+   response=alice.request('/api/groups/reaction',{'group':g['id'],'id':reply_mid,'emoji':'❤️','active':True})
+   ensure(response['reactions']==[{'emoji':'❤️','count':2,'mine':True}],'群表情回应聚合且重试幂等')
+   member.request('/api/groups/reaction',{'group':g['id'],'id':reply_mid,'emoji':'❤️','active':False})
+   outsider.request('/api/groups/reaction',{'group':g['id'],'id':reply_mid,'emoji':'❤️','active':True},status=403)
+   outsider.request('/api/groups/message',{'group':g['id'],'text':'越权引用','reply_to':reply_mid},status=403)
+   other=alice.request('/api/groups/create',{'name':'隔离测试群'})
+   foreign_mid=alice.request('/api/groups/message',{'group':other['id'],'text':'跨群私密消息'})['id']
+   alice.request('/api/groups/message',{'group':g['id'],'text':'跨群引用','reply_to':foreign_mid},status=404)
+   alice.request('/api/groups/reaction',{'group':g['id'],'id':foreign_mid,'emoji':'👍','active':True},status=404)
+   alice.request('/api/groups/leave',{'group':other['id']})
+   alice.request('/api/groups/recall',{'group':g['id'],'id':reply_mid})
+   recalled=member.request('/api/groups/messages?group='+g['id'])['messages']
+   ensure([m for m in recalled if m['id']==reply['id']][0]['reply']['text']=='消息已撤回','引用不泄露已撤回原文')
+   ensure([m for m in recalled if m['id']==reply_mid][0]['text']=='','撤回响应移除原文')
+   member.request('/api/groups/reaction',{'group':g['id'],'id':reply_mid,'emoji':'👍','active':True},status=404)
+   member.request('/api/groups/message',{'group':g['id'],'text':'引用撤回','reply_to':reply_mid},status=404)
+   ensure(all(isinstance(m['online'],bool) for m in member.request('/api/groups/members?group='+g['id'])['members']),'群成员在线状态来自网站心跳')
    outsider.request('/api/groups/messages?group='+g['id'],status=403)
    myid=alice.request('/api/me')['user']['id']
    with sqlite3.connect(db) as conn: ticket=conn.execute('SELECT ticket FROM trades WHERE person=? ORDER BY rowid DESC LIMIT 1',(myid,)).fetchone()[0]
    member.request('/api/history?person='+a['id'],status=403)
-   share=alice.request('/api/groups/share',{'group':g['id'],'ticket':ticket})
+   share=alice.request('/api/groups/share',{'group':g['id'],'ticket':ticket,'snapshot':{'anchor_ms':1700000000000,'timeframe':'15m','layout':'1'}})
    ensure(share['sent']>=1,'发进群时给成员各写一条 share')
    card=[m for m in member.request('/api/groups/messages?group='+g['id'])['messages'] if m['kind']=='trade'][0]
    ensure(card['share'],'成员拿到这条交易的 share id')
    entry=member.request('/api/chart/entry?share='+str(card['share']))
    ensure(entry['owner']['id']==a['id'],'非好友也能打开群里分享的这一笔')
+   ensure(entry['share']['anchor_ms']==1700000000000 and entry['share']['timeframe']=='15m','群分享保留图表切片')
    ensure(bool(entry['review']['trade']),'这单的复盘数据完整')
    member.request('/api/history?person='+a['id'],status=403)
    outsider.request('/api/chart/entry?share='+str(card['share']),status=404)
    opened=member.request('/api/groups/open',{'group':g['id'],'id':card['id']})
    ensure(opened['share']==card['share'],'重复打开复用同一条 share')
+   outsider.request('/api/groups/join',{'code':g['code']})
+   late=outsider.request('/api/groups/open',{'group':g['id'],'id':card['id']})
+   late_entry=outsider.request('/api/chart/entry?share='+str(late['share']))
+   ensure(late_entry['share']['anchor_ms']==1700000000000,'后加入成员打开原消息仍保留切片')
+   outsider.request('/api/groups/leave',{'group':g['id']})
    member.request('/api/groups/share',{'group':g['id'],'ticket':ticket},status=403)
    alice.request('/api/groups/leave',{'group':g['id']})
    member.request('/api/groups/leave',{'group':g['id']})

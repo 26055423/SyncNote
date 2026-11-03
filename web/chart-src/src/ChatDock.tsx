@@ -1,336 +1,353 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api, stamp } from './api';
+import { usePrefs } from './ui/prefs';
 
-/**
- * Discord 式的聊天区：左边会话列表（私信 + 群），右边一整块聊天窗。
- * 会话列表里的私信来自 /api/dm/threads，群来自 /api/groups；两条通道各自收发。
- */
-
-interface DmThread {
-  peer: { id: string; nickname: string; avatar?: string };
-  text: string;
-  created: number;
-  mine: boolean;
-  unread: number;
-}
-
+interface Person { id: string; nickname: string; avatar?: string; username?: string; bio?: string; online?: boolean; role?: string; can_chat?: boolean }
+interface DmThread { peer: Person; text: string; created: number; unread: number }
 interface GroupRow {
-  id: string;
-  name: string;
-  members: number;
-  unread: number;
-  mentions?: number;
-  avatar?: string;
-  role: string;
+  id: string; name: string; members: number; unread: number; mentions?: number;
+  avatar?: string; notice?: string; role: string; last?: { text: string; created: number } | null;
 }
-
-interface DmMessage {
-  id: number | string;
-  kind?: 'text' | 'share';
-  mine: boolean;
-  text: string;
-  ticket?: string;
-  share?: number;
-  created: number;
+interface Reaction { emoji: string; count: number; mine: boolean }
+interface Message {
+  id: number | string; person?: string; name?: string; avatar?: string;
+  kind?: 'text' | 'share' | 'trade' | 'recalled'; mine: boolean; text: string;
+  ticket?: string; share?: number; created: number; read?: boolean; recallable?: boolean;
+  mentions?: string[]; reply?: { id: number; name: string; text: string } | null; reactions?: Reaction[];
 }
-
-interface GroupMessage {
-  id: number;
-  person: string;
-  name: string;
-  kind: 'text' | 'trade' | 'recalled';
-  text: string;
-  ticket?: string | null;
-  created: number;
-  mine?: boolean;
-  recallable?: boolean;
-  mentions?: string[];
-  share?: number | null;
-}
-
-type Active = { kind: 'dm'; id: string; name: string } | { kind: 'group'; id: string; name: string } | null;
-
+type Conversation = { kind: 'dm' | 'group'; id: string; name: string; avatar?: string };
 interface Props {
   current?: { ticket: string } | null;
+  getSnapshot?: () => unknown;
   onError?: (message: string) => void;
   onOpenGroupSettings?: () => void;
   onOpenFriendManager?: () => void;
 }
+const EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
+const keyOf = (row: Conversation) => `${row.kind}:${row.id}`;
 
-const api = <T,>(path: string, body?: unknown): Promise<T> =>
-  fetch(path, {
-    method: body === undefined ? 'GET' : 'POST',
-    credentials: 'same-origin',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  }).then(async (response) => {
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error((data as { error?: string }).error ?? '请求失败');
-    return data as T;
-  });
-
-function timeLabel(seconds: number) {
-  const date = new Date(seconds * 1000);
-  const today = new Date();
-  if (date.toDateString() === today.toDateString()) return date.toTimeString().slice(0, 5);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
+function Icon({ name }: { name: 'search' | 'expand' | 'collapse' | 'profile' | 'reply' | 'smile' | 'send' | 'chart' | 'back' | 'close' | 'users' }) {
+  const paths = {
+    search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" /></>,
+    expand: <path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6" />,
+    collapse: <path d="M3 9h6V3m6 0v6h6M9 21v-6H3m18 0h-6v6" />,
+    profile: <><circle cx="12" cy="8" r="4" /><path d="M4 21v-2a8 8 0 0 1 16 0v2" /></>,
+    reply: <path d="m10 5-7 6 7 6v-4c6 0 9 2 11 6 0-9-4-12-11-12Z" />,
+    smile: <><circle cx="12" cy="12" r="9" /><path d="M8 14c2 3 6 3 8 0M8 8h.01M16 8h.01" /></>,
+    send: <path d="m3 3 19 9-19 9 4-9Zm4 9h15" />,
+    chart: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m6 15 4-5 4 3 4-6" /></>,
+    back: <path d="m14 5-7 7 7 7" />,
+    close: <path d="m6 6 12 12M6 18 18 6" />,
+    users: <><circle cx="9" cy="8" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m2 4a5 5 0 0 1 3 5" /></>,
+  };
+  return <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+function Avatar({ name, avatar, size = '' }: { name: string; avatar?: string; size?: string }) {
+  const src = avatar && /^avatar(?:[1-9]|1[0-2])$/.test(avatar) ? `/avatars/${avatar}.svg` : undefined;
+  return <span className={`dc-avatar ${size}`} aria-hidden="true">{src ? <img src={src} alt="" /> : name.slice(0, 2)}</span>;
 }
 
-export function ChatDock({ current, onError, onOpenGroupSettings, onOpenFriendManager }: Props) {
+/** 私信与群聊共用会话、引用回复、表情回应和复盘卡片。 */
+export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, onOpenFriendManager }: Props) {
+  const prefs = usePrefs();
   const [threads, setThreads] = useState<DmThread[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
-  const [active, setActive] = useState<Active>(null);
-  const [dm, setDm] = useState<DmMessage[]>([]);
-  const [groupMessages, setGroupMessages] = useState<GroupMessage[]>([]);
-  const [draft, setDraft] = useState('');
+  const [friends, setFriends] = useState<Person[]>([]);
+  const [me, setMe] = useState<Person | null>(null);
+  const [requests, setRequests] = useState(0);
+  const [active, setActive] = useState<Conversation | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [members, setMembers] = useState<Person[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [replies, setReplies] = useState<Record<string, Message | null>>({});
   const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<'dm' | 'group' | 'unread'>('dm');
   const [busy, setBusy] = useState(false);
-  const endRef = useRef<HTMLDivElement | null>(null);
-
-  const fail = useCallback(
-    (error: unknown) => onError?.(error instanceof Error ? error.message : String(error)),
-    [onError],
-  );
-
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [details, setDetails] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [reactionPicker, setReactionPicker] = useState<number | string | null>(null);
+  const [jumpTarget, setJumpTarget] = useState<number | string | null>(null);
+  const [pendingNew, setPendingNew] = useState(false);
+  const activeRef = useRef<Conversation | null>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const nearBottom = useRef(true);
+  const renderedKey = useRef('');
+  const lastMessage = useRef('');
+  const mounted = useRef(true);
+  const listVersion = useRef(0);
+  const messageVersion = useRef(0);
+  const reactionBusy = useRef(false);
+  const writeBusy = useRef(false);
+  const activeKey = active ? keyOf(active) : '';
+  const draft = drafts[activeKey] ?? '';
+  const reply = replies[activeKey] ?? null;
+  const fail = useCallback((error: unknown) => onError?.(error instanceof Error ? error.message : String(error)), [onError]);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const select = (row: Conversation) => {
+    activeRef.current = row; setActive(row); setMessages([]); setMembers([]);
+    setSearch(''); setEmojiOpen(false); setReactionPicker(null); setPendingNew(false); nearBottom.current = true;
+  };
   const loadLists = useCallback(async () => {
+    const version = ++listVersion.current;
     try {
-      const [dmData, groupData] = await Promise.all([
-        api<{ threads: DmThread[] }>('/api/dm/threads'),
-        api<{ groups: GroupRow[] }>('/api/groups'),
+      const [dmData, groupData, profile] = await Promise.all([
+        api<{ threads: DmThread[] }>('/api/dm/threads'), api<{ groups: GroupRow[] }>('/api/groups'),
+        api<{ user: Person; friends: Person[]; incoming: unknown[] }>('/api/profile'),
       ]);
-      setThreads(dmData.threads ?? []);
-      setGroups(groupData.groups ?? []);
-      setActive((prev) => {
-        if (prev) return prev;
-        const firstDm = dmData.threads?.[0];
-        const firstGroup = groupData.groups?.[0];
-        if (firstDm) return { kind: 'dm', id: firstDm.peer.id, name: firstDm.peer.nickname };
-        if (firstGroup) return { kind: 'group', id: firstGroup.id, name: firstGroup.name };
-        return null;
-      });
-    } catch (error) {
-      fail(error);
-    }
-  }, [fail]);
-
-  const loadActive = useCallback(async () => {
-    if (!active) return;
-    try {
-      if (active.kind === 'dm') {
-        const data = await api<{ messages: DmMessage[] }>(`/api/dm?with=${encodeURIComponent(active.id)}`);
-        setDm(data.messages ?? []);
-      } else {
-        const data = await api<{ messages: GroupMessage[] }>(`/api/groups/messages?group=${encodeURIComponent(active.id)}`);
-        setGroupMessages(data.messages ?? []);
+      if (!mounted.current || version !== listVersion.current) return;
+      const people = (profile.friends ?? []).filter((person) => person.can_chat !== false);
+      setThreads(dmData.threads.filter((row) => people.some((person) => person.id === row.peer.id)));
+      setGroups(groupData.groups ?? []); setFriends(people); setMe(profile.user); setRequests(profile.incoming?.length ?? 0);
+      const selected = activeRef.current;
+      if (selected && !(selected.kind === 'dm' ? people : groupData.groups).some((row) => row.id === selected.id)) {
+        activeRef.current = null; setActive(null); setMessages([]); setMembers([]);
       }
-    } catch (error) {
-      fail(error);
-    }
-  }, [active, fail]);
-
+    } catch (error) { if (mounted.current) fail(error); }
+  }, [fail]);
+  const loadConversation = useCallback(async (conversation: Conversation) => {
+    const key = keyOf(conversation);
+    const version = ++messageVersion.current;
+    try {
+      const result = await api<{ messages: Message[] }>(conversation.kind === 'dm'
+        ? `/api/dm?with=${encodeURIComponent(conversation.id)}`
+        : `/api/groups/messages?group=${encodeURIComponent(conversation.id)}`);
+      if (!mounted.current || !activeRef.current || keyOf(activeRef.current) !== key || version !== messageVersion.current) return;
+      setMessages(result.messages ?? []);
+      if (conversation.kind === 'dm') setThreads((rows) => rows.map((row) => row.peer.id === conversation.id ? { ...row, unread: 0 } : row));
+      else setGroups((rows) => rows.map((row) => row.id === conversation.id ? { ...row, unread: 0, mentions: 0 } : row));
+    } catch (error) { if (mounted.current && activeRef.current && keyOf(activeRef.current) === key) fail(error); }
+    finally { if (mounted.current && activeRef.current && keyOf(activeRef.current) === key) setLoading(false); }
+  }, [fail]);
   useEffect(() => {
     void loadLists();
-    const timer = window.setInterval(() => void loadLists(), 15000);
+    const timer = window.setInterval(() => { if (!document.hidden) void loadLists(); }, 15000);
     return () => window.clearInterval(timer);
   }, [loadLists]);
-
   useEffect(() => {
-    void loadActive();
-    const timer = window.setInterval(() => void loadActive(), 5000);
-    return () => window.clearInterval(timer);
-  }, [loadActive]);
-
-  const visibleCount = useMemo(
-    () => dm.length + groupMessages.length,
-    [dm.length, groupMessages.length],
-  );
-
-  useEffect(() => {
-    if (visibleCount) endRef.current?.scrollIntoView({ block: 'end' });
-  }, [visibleCount]);
-
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || !active || busy) return;
-    setBusy(true);
-    setDraft('');
-    try {
-      if (active.kind === 'dm') await api('/api/dm', { to: active.id, text });
-      else await api('/api/groups/message', { group: active.id, text });
-      await loadActive();
-    } catch (error) {
-      fail(error);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const recall = async (id: number) => {
-    if (!active || active.kind !== 'group') return;
-    try {
-      await api('/api/groups/recall', { group: active.id, id });
-      await loadActive();
-    } catch (error) {
-      fail(error);
-    }
-  };
-
-  const shareTrade = async () => {
-    if (!current?.ticket) return;
     if (!active) return;
-    try {
-      if (active.kind === 'group') {
-        await api('/api/groups/share', { group: active.id, ticket: current.ticket });
-        await loadActive();
-      } else {
-        await api('/api/reviews/share', { ticket: current.ticket, recipients: [active.id], message: '' });
-        await loadActive();
-      }
-    } catch (error) {
-      fail(error);
+    setLoading(true); void loadConversation(active);
+    const refresh = () => { if (!document.hidden) void loadConversation(active); };
+    const timer = window.setInterval(refresh, 4000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
+  }, [active, loadConversation]);
+  useEffect(() => {
+    if (active?.kind !== 'group') return;
+    let alive = true;
+    const load = () => api<{ members: Person[] }>(`/api/groups/members?group=${encodeURIComponent(active.id)}`)
+      .then((data) => { if (alive) setMembers(data.members); }).catch((error) => { if (alive) fail(error); });
+    void load();
+    const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 15000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [active, fail]);
+  useEffect(() => {
+    const latest = messages.at(-1);
+    const last = latest ? `${latest.id}:${latest.created}` : '';
+    if (renderedKey.current !== activeKey || last !== lastMessage.current) {
+      if (nearBottom.current || renderedKey.current !== activeKey) {
+        const box = timelineRef.current; if (box) box.scrollTop = box.scrollHeight; setPendingNew(false);
+      } else if (last) setPendingNew(true);
     }
+    renderedKey.current = activeKey; lastMessage.current = last;
+  }, [messages, activeKey]);
+  useEffect(() => {
+    if (jumpTarget == null) return;
+    const row = document.getElementById(`dc-message-${activeKey}-${jumpTarget}`);
+    if (row) { row.scrollIntoView({ block: 'center', behavior: 'smooth' }); row.focus({ preventScroll: true }); }
+    else fail(new Error('原消息不在当前加载的记录中'));
+    setJumpTarget(null);
+  }, [jumpTarget, activeKey, fail]);
+  const setDraft = (value: string) => setDrafts((all) => ({ ...all, [activeKey]: value.slice(0, 1000) }));
+  const send = async () => {
+    const conversation = activeRef.current;
+    const text = draft.trim();
+    if (!conversation || !text || writeBusy.current) return;
+    const key = keyOf(conversation); writeBusy.current = true; setBusy(true);
+    try {
+      await api(conversation.kind === 'dm' ? '/api/dm' : '/api/groups/message', {
+        ...(conversation.kind === 'dm' ? { to: conversation.id } : { group: conversation.id }),
+        text, ...(reply ? { reply_to: reply.id } : {}),
+      });
+      if (!mounted.current) return;
+      setDrafts((all) => ({ ...all, [key]: all[key] === draft ? '' : all[key] }));
+      setReplies((all) => ({ ...all, [key]: all[key]?.id === reply?.id ? null : all[key] }));
+      if (activeRef.current && keyOf(activeRef.current) === key) nearBottom.current = true;
+      await loadConversation(conversation); await loadLists();
+    } catch (error) { fail(error); }
+    finally { writeBusy.current = false; if (mounted.current) setBusy(false); }
   };
-
-  const matches = (name: string) => !query.trim() || name.toLowerCase().includes(query.trim().toLowerCase());
+  const react = async (message: Message, emoji: string) => {
+    const conversation = activeRef.current;
+    if (!conversation || reactionBusy.current) return;
+    reactionBusy.current = true;
+    try {
+      await api(conversation.kind === 'dm' ? '/api/dm/reaction' : '/api/groups/reaction', {
+        ...(conversation.kind === 'dm' ? { to: conversation.id } : { group: conversation.id }), id: message.id, emoji,
+        active: !message.reactions?.some((item) => item.emoji === emoji && item.mine),
+      });
+      setReactionPicker(null); await loadConversation(conversation);
+    } catch (error) { fail(error); }
+    finally { reactionBusy.current = false; }
+  };
+  const recall = async (message: Message) => {
+    const conversation = activeRef.current;
+    if (!conversation || conversation.kind !== 'group') return;
+    try { await api('/api/groups/recall', { group: conversation.id, id: message.id }); await loadConversation(conversation); }
+    catch (error) { fail(error); }
+  };
+  const shareTrade = async () => {
+    const conversation = activeRef.current;
+    if (!conversation || !current || writeBusy.current) return;
+    writeBusy.current = true; setBusy(true);
+    try {
+      await api(conversation.kind === 'dm' ? '/api/reviews/share' : '/api/groups/share', {
+        ticket: current.ticket, snapshot: getSnapshot?.() ?? null,
+        ...(conversation.kind === 'dm' ? { recipients: [conversation.id], message: '' } : { group: conversation.id }),
+      });
+      await loadConversation(conversation); await loadLists();
+    } catch (error) { fail(error); }
+    finally { writeBusy.current = false; if (mounted.current) setBusy(false); }
+  };
+  const openGroupTrade = async (message: Message) => {
+    const conversation = activeRef.current;
+    if (!conversation || conversation.kind !== 'group') return;
+    // 在点击手势内开新页；原交易台的本机 EA 连接保持运行。
+    const reviewTab = window.open('about:blank', '_blank');
+    if (!reviewTab) { fail(new Error('请允许打开复盘的新标签页')); return; }
+    reviewTab.opener = null;
+    if (message.mine) { reviewTab.location.replace(`/chart?ticket=${encodeURIComponent(message.ticket ?? '')}`); return; }
+    try {
+      const result = await api<{ share: number }>('/api/groups/open', { group: conversation.id, id: message.id });
+      reviewTab.location.replace(`/chart?share=${result.share}`);
+    } catch (error) { reviewTab.close(); fail(error); }
+  };
+  const dmRows = useMemo(() => {
+    const rows = [...threads];
+    for (const person of friends) if (!rows.some((row) => row.peer.id === person.id)) rows.push({ peer: person, text: '开始一段对话', created: 0, unread: 0 });
+    return rows;
+  }, [threads, friends]);
+  const match = (text: string) => text.toLowerCase().includes(query.trim().toLowerCase());
+  const visibleDm = dmRows.filter((row) => match(row.peer.nickname) && (filter !== 'unread' || row.unread > 0));
+  const visibleGroups = groups.filter((row) => match(row.name) && (filter !== 'unread' || row.unread > 0));
+  const visibleMessages = messages.filter((row) => !search.trim() || `${row.text} ${row.name ?? ''} ${row.ticket ?? ''}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const group = groups.find((row) => active?.kind === 'group' && row.id === active.id);
+  const peer = dmRows.find((row) => active?.kind === 'dm' && row.peer.id === active.id)?.peer;
+  const person = friends.find((row) => row.id === peer?.id) ?? peer;
+  const unread = threads.reduce((sum, row) => sum + row.unread, 0) + groups.reduce((sum, row) => sum + row.unread, 0);
+  const name = active?.kind === 'group' ? group?.name ?? active.name : person?.nickname ?? active?.name ?? '';
+  // 订阅显示时区，与图表和其他时间显示同步重绘。
+  void prefs.timezone;
 
   return (
-    <div className="chat-dock">
-      <div className="chat-list">
-        <input
-          className="chat-search"
-          value={query}
-          placeholder="找人 / 找群…"
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <p className="chat-list-title">私信</p>
-        {threads.length ? (
-          threads.filter((row) => matches(row.peer.nickname)).map((row) => (
-            <button
-              type="button"
-              key={'dm-' + row.peer.id}
-              className={`chat-row ${active?.kind === 'dm' && active.id === row.peer.id ? 'is-active' : ''}`}
-              onClick={() => setActive({ kind: 'dm', id: row.peer.id, name: row.peer.nickname })}
-            >
-              <span className="chat-row-name">{row.peer.nickname}</span>
-              <span className="chat-row-time">{timeLabel(row.created)}</span>
-              <span className="chat-row-preview">{row.text || '（复盘分享）'}</span>
-              {row.unread ? <span className="chat-row-badge">{row.unread}</span> : null}
-            </button>
-          ))
-        ) : (
-          <p className="dim chat-empty">还没有私信。到「好友」里点名字开始聊。</p>
-        )}
-        <p className="chat-list-title">群组 {groups.length ? `· ${groups.length}` : ''}</p>
-        {groups.length ? (
-          groups.filter((row) => matches(row.name)).map((row) => (
-            <button
-              type="button"
-              key={'g-' + row.id}
-              className={`chat-row ${active?.kind === 'group' && active.id === row.id ? 'is-active' : ''}`}
-              onClick={() => setActive({ kind: 'group', id: row.id, name: row.name })}
-            >
-              <span className="chat-row-name">{row.name}</span>
-              <span className="chat-row-time">{row.members} 人</span>
-              {row.unread ? <span className="chat-row-badge">{row.unread}</span> : null}
-              {row.mentions ? <span className="chat-row-mention">@{row.mentions}</span> : null}
-            </button>
-          ))
-        ) : (
-          <p className="dim chat-empty">还没有群。到「群组」里建一个。</p>
-        )}
-        <div className="chat-list-foot">
-          <button type="button" className="link" onClick={onOpenFriendManager}>
-            好友管理
-          </button>
-          <button type="button" className="link" onClick={onOpenGroupSettings}>
-            群组管理
-          </button>
+    <section className={`dc-shell ${active ? 'has-active' : ''} ${expanded ? 'is-expanded' : ''} ${details ? 'show-details' : ''}`} aria-label="同频聊天"
+      onKeyDown={(event) => { if (event.key === 'Escape') { if (reactionPicker != null) setReactionPicker(null); else if (emojiOpen) setEmojiOpen(false); else if (reply) setReplies((all) => ({ ...all, [activeKey]: null })); else if (details) setDetails(false); else setExpanded(false); } }}>
+      <aside className="dc-sidebar" aria-label="会话列表">
+        {expanded && <button type="button" className="dc-sidebar-close" onClick={() => setExpanded(false)}><Icon name="collapse" />收起聊天</button>}
+        <div className="dc-search"><Icon name="search" /><input aria-label="搜索好友或群组" placeholder="寻找或开始一段对话" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+        <nav className="dc-nav" aria-label="聊天分类">
+          <button type="button" className={filter === 'dm' ? 'is-active' : ''} onClick={() => setFilter('dm')}><Icon name="profile" />私信</button>
+          <button type="button" className={filter === 'group' ? 'is-active' : ''} onClick={() => setFilter('group')}><Icon name="users" />群聊</button>
+          <button type="button" className={filter === 'unread' ? 'is-active' : ''} onClick={() => setFilter('unread')}>未读{unread ? <span className="dc-badge">{unread}</span> : null}</button>
+        </nav>
+        <div className="dc-conversations">
+          {filter !== 'group' && <><div className="dc-section-title">私信 <button type="button" title="添加好友" aria-label="添加好友" onClick={onOpenFriendManager}>+</button></div>
+            {visibleDm.map((row) => <button type="button" key={row.peer.id} aria-current={active?.kind === 'dm' && active.id === row.peer.id ? 'true' : undefined}
+              className={`dc-conversation ${active?.kind === 'dm' && active.id === row.peer.id ? 'is-active' : ''}`}
+              onClick={() => select({ kind: 'dm', id: row.peer.id, name: row.peer.nickname, avatar: row.peer.avatar })}>
+              <span className="dc-avatar-wrap"><Avatar name={row.peer.nickname} avatar={row.peer.avatar} />{row.peer.online ? <i className="dc-presence is-online" aria-label="在线" /> : null}</span>
+              <span className="dc-conversation-copy"><span className="dc-conversation-name">{row.peer.nickname}</span><span className="dc-preview">{row.text || '复盘分享'}</span></span>
+              {row.unread > 0 && <span className="dc-badge" aria-label={`${row.unread} 条未读`}>{row.unread}</span>}
+            </button>)}
+            {!visibleDm.length && <p className="dc-empty">{filter === 'unread' ? '私信已全部读完' : query ? '没有找到这位好友' : '添加交易伙伴，开始交流。'}</p>}</>}
+          {filter !== 'dm' && <><div className="dc-section-title">群聊 <button type="button" title="创建或加入群组" aria-label="创建或加入群组" onClick={onOpenGroupSettings}>+</button></div>
+            {visibleGroups.map((row) => <button type="button" key={row.id} className={`dc-conversation ${active?.kind === 'group' && active.id === row.id ? 'is-active' : ''}`}
+              aria-current={active?.kind === 'group' && active.id === row.id ? 'true' : undefined} onClick={() => select({ kind: 'group', id: row.id, name: row.name, avatar: row.avatar })}>
+              <Avatar name={row.name} avatar={row.avatar} /><span className="dc-conversation-copy"><span className="dc-conversation-name">{row.name}</span><span className="dc-preview">{row.mentions ? `有人 @ 你 · ${row.mentions} 条` : row.last?.text || `${row.members} 位成员`}</span></span>
+              {row.unread > 0 && <span className="dc-badge">{row.unread}</span>}
+            </button>)}
+            {!visibleGroups.length && <p className="dc-empty">{filter === 'unread' ? '群聊已全部读完' : query ? '没有找到这个群聊' : '创建或加入群组，一起讨论交易。'}</p>}</>}
         </div>
+        <div className="dc-sidebar-foot"><button type="button" onClick={onOpenFriendManager}>好友管理{requests ? ` · ${requests} 个申请` : ''}</button><button type="button" onClick={onOpenGroupSettings}>群组管理</button></div>
+        <a className="dc-self" href="/profile" target="_blank" rel="noopener noreferrer"><Avatar name={me?.nickname ?? '我'} avatar={me?.avatar} size="sm" /><span><b>{me?.nickname ?? '我的账户'}</b><small>个人资料与设置 ↗</small></span></a>
+      </aside>
+      <div className="dc-content">
+        <header className="dc-header">
+          <button type="button" className="dc-icon-button dc-mobile-back" aria-label="返回会话列表" onClick={() => { activeRef.current = null; setActive(null); }}><Icon name="back" /></button>
+          <div className="dc-header-title">{active ? <Avatar name={name} avatar={active.avatar} size="sm" /> : <Icon name="users" />}<b>{name || '同频 · 聊天'}</b><small>{active?.kind === 'group' ? `${group?.members ?? 0} 位成员` : active ? (peer?.online ? '在线' : '私信') : '与交易伙伴保持同频'}</small></div>
+          <div className="dc-header-tools">
+            {active && <label className="dc-message-search"><Icon name="search" /><input aria-label="搜索已加载消息" placeholder="搜索最近消息" value={search} onChange={(event) => setSearch(event.target.value)} /></label>}
+            {active && <button type="button" className="dc-icon-button" title={active.kind === 'dm' ? '查看资料' : '查看成员'} aria-label={active.kind === 'dm' ? '查看资料' : '查看成员'} aria-pressed={details} onClick={() => setDetails((value) => !value)}><Icon name={active.kind === 'dm' ? 'profile' : 'users'} /></button>}
+            <button type="button" className="dc-icon-button" title={expanded ? '收起聊天' : '展开聊天'} aria-label={expanded ? '收起聊天' : '展开聊天'} aria-pressed={expanded} onClick={() => setExpanded((value) => !value)}><Icon name={expanded ? 'collapse' : 'expand'} /></button>
+          </div>
+        </header>
+        {active ? <>
+          <div className="dc-timeline" ref={timelineRef} role="log" aria-label={`${name} 的消息`} aria-busy={loading} onScroll={() => {
+            const box = timelineRef.current; if (!box) return;
+            nearBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+            if (nearBottom.current) setPendingNew(false);
+          }}>
+            <div className="dc-intro"><Avatar name={name} avatar={active.avatar} size="lg" /><h2>{active.kind === 'group' ? '# ' : ''}{name}</h2><p>{active.kind === 'group' ? group?.notice || '交流思路，分享复盘，一起把交易做得更好。' : `这是你与 ${name} 的私信。分享想法，也分享每一次交易的成长。`}</p></div>
+            {loading && !messages.length && <p className="dc-empty" role="status">正在加载消息…</p>}
+            {!loading && !visibleMessages.length && <p className="dc-empty">{search ? '没有找到匹配的消息' : '对话从这里开始，打个招呼吧。'}</p>}
+            {visibleMessages.map((message, index) => {
+              const prev = visibleMessages[index - 1];
+              const author = message.mine ? me?.nickname ?? '我' : message.name ?? name;
+              const avatar = message.mine ? me?.avatar : message.avatar ?? peer?.avatar;
+              const day = stamp(message.created).slice(0, 10);
+              const grouped = prev && day === stamp(prev.created).slice(0, 10) && (prev.person || String(prev.mine)) === (message.person || String(message.mine)) && message.created - prev.created < 300 && !message.reply;
+              const interactive = message.kind !== 'recalled' && typeof message.id === 'number';
+              return <Fragment key={message.id}>
+                {(!prev || day !== stamp(prev.created).slice(0, 10)) && <div className="dc-date-divider"><span>{day}</span></div>}
+                <article tabIndex={-1} id={`dc-message-${activeKey}-${message.id}`} className={`dc-message ${grouped ? 'is-grouped' : ''} ${me && message.mentions?.includes(me.id) ? 'is-mentioned' : ''}`}>
+                  <div className="dc-message-avatar">{!grouped && <Avatar name={author} avatar={avatar} />}</div>
+                  <div className="dc-message-content">
+                    {message.reply && <button type="button" className="dc-reply-preview" onClick={() => { setSearch(''); setJumpTarget(message.reply!.id); }} title="跳转到原消息"><Icon name="reply" /><b>{message.reply.name}</b><span>{message.reply.text || '复盘分享'}</span></button>}
+                    {!grouped && <div className="dc-message-meta"><strong>{author}</strong>{message.mine && <small>我</small>}<time dateTime={new Date(message.created * 1000).toISOString()} title={stamp(message.created)}>{stamp(message.created).slice(11, 16)}</time></div>}
+                    {message.kind === 'recalled' ? <p className="dc-message-text dim">{author} 撤回了一条消息</p> : <>
+                      {message.kind === 'share' && <a className="dc-share-card" href={`/chart?share=${message.share}`} target="_blank" rel="noopener noreferrer"><Icon name="chart" /><span><small>交易复盘</small><b>#{message.ticket}</b><span>查看图表与复盘 ↗</span></span></a>}
+                      {message.kind === 'trade' && <button type="button" className="dc-share-card" onClick={() => void openGroupTrade(message)}><Icon name="chart" /><span><small>交易复盘</small><b>#{message.ticket}</b><span>查看图表与复盘 ↗</span></span></button>}
+                      {message.text && <p className="dc-message-text">{message.text}</p>}
+                      {!!message.reactions?.length && <div className="dc-reactions" aria-label="表情回应">{message.reactions.map((item) => <button type="button" key={item.emoji} className={`dc-reaction ${item.mine ? 'is-mine' : ''}`} aria-label={`${item.emoji}，${item.count} 人回应`} aria-pressed={item.mine} onClick={() => void react(message, item.emoji)}>{item.emoji} <span>{item.count}</span></button>)}</div>}
+                    </>}
+                  </div>
+                  {interactive && <div className="dc-message-actions" aria-label="消息操作">
+                    {EMOJI.slice(0, 3).map((emoji) => <button type="button" className="dc-icon-button" key={emoji} aria-label={`回应 ${emoji}`} title={`回应 ${emoji}`} onClick={() => void react(message, emoji)}>{emoji}</button>)}
+                    <button type="button" className="dc-icon-button" aria-label="更多表情回应" title="更多表情回应" aria-expanded={reactionPicker === message.id} onClick={() => setReactionPicker((value) => value === message.id ? null : message.id)}><Icon name="smile" /></button>
+                    <button type="button" className="dc-icon-button" aria-label={`回复 ${author}`} title="引用回复" onClick={() => { setReplies((all) => ({ ...all, [activeKey]: message })); composerRef.current?.focus(); }}><Icon name="reply" /></button>
+                    {message.recallable && <button type="button" className="dc-icon-button" aria-label="撤回消息" title="撤回消息" onClick={() => void recall(message)}><Icon name="close" /></button>}
+                  </div>}
+                  {interactive && reactionPicker === message.id && <div className="dc-message-reaction-picker" role="group" aria-label="选择表情回应">{EMOJI.map((emoji) => <button type="button" className="dc-icon-button" key={emoji} aria-label={`添加回应 ${emoji}`} onClick={() => void react(message, emoji)}>{emoji}</button>)}</div>}
+                </article>
+              </Fragment>;
+            })}
+          </div>
+          {pendingNew && <button type="button" className="dc-new-messages" onClick={() => { const box = timelineRef.current; if (box) box.scrollTop = box.scrollHeight; setPendingNew(false); nearBottom.current = true; }}>有新消息 · 回到底部 ↓</button>}
+          <div className="dc-composer-wrap">
+            {reply && <div className="dc-reply-bar"><Icon name="reply" /><span>回复 <b>{reply.mine ? me?.nickname : reply.name ?? name}</b>：{reply.text || '复盘分享'}</span><button type="button" className="dc-icon-button" aria-label="取消回复" onClick={() => setReplies((all) => ({ ...all, [activeKey]: null }))}><Icon name="close" /></button></div>}
+            {emojiOpen && <div className="dc-emoji-picker" role="group" aria-label="插入表情">{[...EMOJI, '🙌', '🤝', '📈', '📉', '💡', '🔥'].map((emoji) => <button type="button" key={emoji} aria-label={`插入 ${emoji}`} onClick={() => { setDraft(draft + emoji); setEmojiOpen(false); composerRef.current?.focus(); }}>{emoji}</button>)}</div>}
+            <div className="dc-composer">
+              {current && <button type="button" className="dc-icon-button" title={`分享当前复盘 #${current.ticket}`} aria-label="分享当前复盘" disabled={busy} onClick={() => void shareTrade()}><Icon name="chart" /></button>}
+              <textarea ref={composerRef} aria-label={`发消息给 ${name}`} value={draft} rows={2} maxLength={1000} placeholder={active.kind === 'dm' ? `发消息给 @${name}` : `发送到 # ${name}`} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(); }
+              }} />
+              <div className="dc-composer-tools"><button type="button" className="dc-icon-button" aria-label="插入表情" title="表情" aria-expanded={emojiOpen} onClick={() => setEmojiOpen((value) => !value)}><Icon name="smile" /></button><button type="button" className="dc-icon-button" aria-label="发送消息" title="发送消息" disabled={!draft.trim() || busy} onClick={() => void send()}><Icon name="send" /></button></div>
+            </div>
+            <div className="dc-composer-hint"><span>{busy ? '正在发送…' : 'Enter 发送 · Shift+Enter 换行'}</span><span>{draft.length}/1000</span></div>
+          </div>
+        </> : <div className="dc-empty dc-welcome"><Icon name="users" /><h2>每一次交流，都让交易更进一步</h2><p>从左侧选择好友或群聊，分享你的交易思路。</p><button type="button" onClick={onOpenFriendManager}>寻找交易伙伴</button></div>}
       </div>
-
-      <div className="chat-main">
-        {active ? (
-          <>
-            <div className="chat-main-head">
-              <b>{active.name}</b>
-              <span className="dim">{active.kind === 'dm' ? '私信' : '群聊'}</span>
-              {current?.ticket ? (
-                <button type="button" className="link" onClick={() => void shareTrade()}>
-                  把这笔复盘（#{current.ticket}）发过去
-                </button>
-              ) : null}
-            </div>
-            <div className="chat-main-body">
-              {active.kind === 'dm'
-                ? dm.map((message) => (
-                    <div className={`dm-bubble ${message.mine ? 'is-mine' : ''}`} key={message.id}>
-                      {message.kind === 'share' ? (
-                        <button
-                          type="button"
-                          className="dm-share"
-                          onClick={() => {
-                            if (message.share) location.href = `/chart?share=${message.share}`;
-                          }}
-                        >
-                          复盘 #{message.ticket}
-                        </button>
-                      ) : (
-                        <div className="dm-text">{message.text}</div>
-                      )}
-                      <small className="dim">{new Date(message.created * 1000).toLocaleTimeString()}</small>
-                    </div>
-                  ))
-                : groupMessages.map((message) => (
-                    <div className="group-message" key={message.id}>
-                      <small className="dim">
-                        {message.name} · {new Date(message.created * 1000).toLocaleTimeString()}
-                        {message.recallable ? (
-                          <button type="button" className="link" onClick={() => void recall(message.id)}>
-                            撤回
-                          </button>
-                        ) : null}
-                      </small>
-                      {message.kind === 'recalled' ? (
-                        <div className="dim">{message.name} 撤回了一条消息</div>
-                      ) : message.kind === 'trade' ? (
-                        <button
-                          type="button"
-                          className="group-trade"
-                          onClick={() => {
-                            if (message.share) location.href = `/chart?share=${message.share}`;
-                          }}
-                        >
-                          交易 #{message.ticket} · 点开看这笔复盘
-                        </button>
-                      ) : (
-                        <div>{message.text}</div>
-                      )}
-                    </div>
-                  ))}
-              <div ref={endRef} />
-            </div>
-            <div className="chat-form">
-              <textarea
-                value={draft}
-                rows={2}
-                maxLength={1000}
-                placeholder={`发到 ${active.name}…（Enter 发送，Shift+Enter 换行）`}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    void send();
-                  }
-                }}
-              />
-              <button type="button" className="primary" onClick={() => void send()} disabled={!draft.trim() || busy}>
-                发送
-              </button>
-            </div>
-          </>
-        ) : (
-          <p className="dim chat-empty">左边选一个会话开始聊。</p>
-        )}
-      </div>
-    </div>
+      {active && <aside className="dc-details" aria-label={active.kind === 'dm' ? '好友资料' : '群组资料'}>
+        <div className="dc-profile-banner" />
+        <div className="dc-profile-body"><Avatar name={name} avatar={active.avatar} size="lg" /><h2 className="dc-profile-name">{name}</h2><p className="dc-profile-meta">{active.kind === 'dm' ? (person?.username ? `@${person.username}` : '交易伙伴') : `${group?.members ?? members.length} 位成员`}</p>
+          <div className="dc-profile-card"><h3>{active.kind === 'dm' ? '关于我' : '群公告'}</h3><p>{active.kind === 'dm' ? person?.bio || '这个人还没有填写简介。' : group?.notice || '暂时没有群公告。'}</p></div>
+          {active.kind === 'group' && <div className="dc-members"><h3>成员 · {members.length}</h3>{members.map((member) => <div className="dc-member" key={member.id}><span className="dc-avatar-wrap"><Avatar name={member.nickname} avatar={member.avatar} size="sm" />{member.online && <i className="dc-presence is-online" />}</span><span>{member.nickname}</span><small>{member.role === 'owner' ? '群主' : member.online ? '在线' : ''}</small><button type="button" className="dc-icon-button" aria-label={`提及 ${member.nickname}`} title={`提及 ${member.nickname}`} onClick={() => { setDraft(draft + `@${member.nickname} `); composerRef.current?.focus(); }}>@</button></div>)}</div>}
+          <button type="button" onClick={active.kind === 'dm' ? onOpenFriendManager : onOpenGroupSettings}>{active.kind === 'dm' ? '管理好友' : '管理群组'}</button>
+        </div>
+      </aside>}
+    </section>
   );
 }

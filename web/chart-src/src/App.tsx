@@ -1146,7 +1146,7 @@ export default function App() {
               {([
                 { key: 'review', label: '复盘', Icon: ReviewIcon },
                 { key: 'trade', label: '交易', Icon: TradeIcon },
-                { key: 'friends', label: '好友', Icon: FriendsIcon },
+                { key: 'friends', label: '聊天', Icon: FriendsIcon },
                 { key: 'groups', label: '群组', Icon: GroupsIcon },
               ] as Array<{ key: Tab; label: string; Icon: typeof TradeIcon }>).map(({ key, label, Icon }) => {
                 const fresh = (key === 'friends' && Object.values(dmUnread).reduce((n, v) => n + v, 0) > 0) || (key === 'groups' && groupUnread > 0);
@@ -1303,13 +1303,14 @@ export default function App() {
               ) : null}
 
               {tab === 'friends' ? (
-                <div className="pane pane-wide">
+                <div className={`pane pane-wide ${friendManager ? '' : 'chat-host'}`}>
                   {friendManager ? (
                     <div className="friend-manager">
                       <button type="button" className="link" onClick={() => setFriendManager(false)}>
                         ← 返回聊天
                       </button>
                       <h3>好友管理 <small>{Math.max(0, board.members.length - 1)}</small></h3>
+                      <a className="tool-btn" href="/profile" target="_blank" rel="noopener noreferrer">搜索并添加好友 ↗</a>
                       {friendReq.incoming.length ? (
                         <div className="friend-requests">
                           <p className="dim">好友申请 · {friendReq.incoming.length}</p>
@@ -1350,7 +1351,8 @@ export default function App() {
                     </div>
                   ) : (
                     <ChatDock
-                      current={target?.ticket ? { ticket: target.ticket } : null}
+                      current={target?.ticket && target.person === me?.id && entry && !entry.read_only ? { ticket: target.ticket } : null}
+                      getSnapshot={() => chartRef.current?.view?.() ?? null}
                       onError={setError}
                       onOpenFriendManager={() => setFriendManager(true)}
                       onOpenGroupSettings={() => setTab('groups')}
