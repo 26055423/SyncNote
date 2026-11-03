@@ -9,7 +9,7 @@ import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
-import { FriendChat } from './FriendChat';
+import { ChatDock } from './ChatDock';
 import { GroupsPanel } from './GroupsPanel';
 import { FriendsIcon, GroupsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
@@ -155,7 +155,7 @@ export default function App() {
   const [inbox, setInbox] = useState<ShareRow[]>([]);
   const [following, setFollowing] = useState<Array<{ id: string; name: string }>>([]);
   // 好友申请：别人申请我的（可通过对）/ 我申请的（可取消）。
-  const [dmPeer, setDmPeer] = useState<{ id: string; nickname: string; avatar?: string } | null>(null);
+  const [friendManager, setFriendManager] = useState(false);
   const [dmUnread, setDmUnread] = useState<Record<string, number>>({});
   const [groupUnread, setGroupUnread] = useState(0);
   const [friendReq, setFriendReq] = useState<{ incoming: Array<{ id: string; nickname: string; username: string }>; outgoing: Array<{ id: string; nickname: string; username: string }> }>({ incoming: [], outgoing: [] });
@@ -1141,7 +1141,7 @@ export default function App() {
         </section>
 
         {/* ------------------------------------------------------ 右栏 */}
-        <aside className={railOpen ? "rail" : "rail is-collapsed"}>
+        <aside className={railOpen ? (tab === 'friends' ? "rail is-wide" : "rail") : "rail is-collapsed"}>
             <div className="rail-icons">
               {([
                 { key: 'review', label: '复盘', Icon: ReviewIcon },
@@ -1303,84 +1303,58 @@ export default function App() {
               ) : null}
 
               {tab === 'friends' ? (
-                <div className="pane">
-                  {dmPeer ? (
-                    <FriendChat
-                      peer={dmPeer}
-                      online={Boolean(board.snapshots[dmPeer.id] && board.now - (board.snapshots[dmPeer.id].updated || 0) <= 45)}
-                      onBack={() => setDmPeer(null)}
-                      onError={setError}
-                    />
-                  ) : (
-                    <>
-                  <h3>好友 <small>{Math.max(0, board.members.length - 1)}</small></h3>
-                  {friendReq.incoming.length ? (
-                    <div className="friend-requests">
-                      <p className="dim">好友申请 · {friendReq.incoming.length}</p>
-                      {friendReq.incoming.map((row) => (
-                        <div className="friend-request" key={row.id}>
-                          <b>{row.nickname}</b>
-                          <small className="dim">@{row.username}</small>
-                          <button
-                            type="button"
-                            className="primary"
-                            onClick={() => void answerRequest(row.id, 'accept')}
-                          >
-                            通过
-                          </button>
-                          <button type="button" onClick={() => void answerRequest(row.id, 'reject')}>
-                            拒绝
-                          </button>
+                <div className="pane pane-wide">
+                  {friendManager ? (
+                    <div className="friend-manager">
+                      <button type="button" className="link" onClick={() => setFriendManager(false)}>
+                        ← 返回聊天
+                      </button>
+                      <h3>好友管理 <small>{Math.max(0, board.members.length - 1)}</small></h3>
+                      {friendReq.incoming.length ? (
+                        <div className="friend-requests">
+                          <p className="dim">好友申请 · {friendReq.incoming.length}</p>
+                          {friendReq.incoming.map((row) => (
+                            <div className="friend-request" key={row.id}>
+                              <b>{row.nickname}</b>
+                              <small className="dim">@{row.username}</small>
+                              <button type="button" className="primary" onClick={() => void answerRequest(row.id, 'accept')}>
+                                通过
+                              </button>
+                              <button type="button" onClick={() => void answerRequest(row.id, 'reject')}>
+                                拒绝
+                              </button>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  {friendReq.outgoing.length ? (
-                    <p className="dim">
-                      已申请：{friendReq.outgoing.map((row) => row.nickname).join('、')}（等待对方通过）
-                    </p>
-                  ) : null}
-                  {board.members.filter((m) => m.id !== me?.id).map((member) => {
-                    const snap = board.snapshots[member.id];
-                    const rows: any[] = snap?.data?.history ?? [];
-                    const online = Boolean(snap && board.now - (snap.updated || 0) <= 45 && snap.data.online !== false);
-                    const profit = (snap?.data?.positions ?? []).reduce((n: number, p: any) => n + (p.profit || 0), 0);
-                    return (
-                      <div className="friend" key={member.id}>
-                        <div className="friend-head">
-                          <button
-                            type="button"
-                            className="friend-name"
-                            title={`和 ${member.name} 聊天`}
-                            onClick={() => setDmPeer({ id: member.id, nickname: member.name, avatar: member.avatar })}
-                          >
-                            {member.name}
-                            {dmUnread[member.id] ? <span className="friend-badge">{dmUnread[member.id]}</span> : null}
-                          </button>
-                          <span className={online ? 'link-dot on' : 'link-dot off'}>{online ? '在线' : '离线'}</span>
-                          {snap ? <span className="dim">浮盈 {money(profit)}</span> : null}
-                        </div>
-                        {member.can_view ? (
-                          rows.length ? (
-                            <>
-                              <TradeList
-                                rows={rows.slice(0, 5)}
-                                reviewed={member.reviewed}
-                                canReview={member.can_review !== false}
-                                onPick={(row) => openTicket(member.id, String(row.ticket))}
-                              />
-                              <a className="link friend-all" href={`/history?person=${encodeURIComponent(member.id)}`} target="_blank" rel="noopener noreferrer">
-                                查看全部 {rows.length} 笔交易 ↗
-                              </a>
-                            </>
-                          ) : <p className="dim">暂无可查看的成交</p>
-                        ) : <p className="dim">对方未开放交易数据</p>}
-                        {member.can_view && member.can_review === false ? <p className="dim">对方只开放成交，没有开放复盘。</p> : null}
+                      ) : null}
+                      {friendReq.outgoing.length ? (
+                        <p className="dim">已申请：{friendReq.outgoing.map((row) => row.nickname).join('、')}（等待对方通过）</p>
+                      ) : null}
+                      <div className="friend-list">
+                        {board.members.filter((m) => m.id !== me?.id).map((member) => {
+                          const snap = board.snapshots[member.id];
+                          const online = Boolean(snap && board.now - (snap.updated || 0) <= 45 && snap.data.online !== false);
+                          return (
+                            <div className="friend" key={member.id}>
+                              <div className="friend-head">
+                                <b>{member.name}</b>
+                                <span className={online ? 'link-dot on' : 'link-dot off'}>{online ? '在线' : '离线'}</span>
+                                {dmUnread[member.id] ? <span className="friend-badge">{dmUnread[member.id]}</span> : null}
+                              </div>
+                              <p className="dim">{member.can_view ? '交易数据已开放' : '对方未开放交易数据'}</p>
+                            </div>
+                          );
+                        })}
+                        {board.members.length <= 1 ? <p className="dim">还没有好友。去个人中心搜索交易伙伴，发送好友申请。</p> : null}
                       </div>
-                    );
-                  })}
-                  {board.members.length <= 1 ? <p className="dim">还没有好友。去个人中心搜索交易伙伴，发送好友申请；对方通过后就能互相看到复盘。</p> : null}
-                    </>
+                    </div>
+                  ) : (
+                    <ChatDock
+                      current={target?.ticket ? { ticket: target.ticket } : null}
+                      onError={setError}
+                      onOpenFriendManager={() => setFriendManager(true)}
+                      onOpenGroupSettings={() => setTab('groups')}
+                    />
                   )}
                 </div>
               ) : null}
@@ -1522,30 +1496,3 @@ function nameOf(board: Board, person: string): string {
   return board.members.find((m) => m.id === person)?.name || person;
 }
 
-function TradeList({ rows, reviewed, canReview = true, onPick }: { rows: any[]; reviewed?: string[]; canReview?: boolean; onPick: (row: any) => void }) {
-  if (!rows.length) return <p className="dim">暂无成交</p>;
-  return (
-    <table className="mini">
-      <thead><tr><th>时间</th><th>方向</th><th>开/平</th><th>盈亏</th><th /></tr></thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr key={row.ticket}>
-            <td className="dim">{stamp(row.closed)}</td>
-            <td className={sideClass(row.side)}>{sideText(row.side)}</td>
-            <td>{money(row.open)} / {money(row.close)}</td>
-            <td className={(row.profit || 0) >= 0 ? 'up' : 'down'}>{money(row.profit)}</td>
-            <td>
-              {!canReview ? (
-                <span className="dim">未分享复盘</span>
-              ) : reviewed?.includes(String(row.ticket)) ? (
-                <button type="button" className="link done" onClick={() => onPick(row)}>已复盘</button>
-              ) : (
-                <button type="button" className="link todo" onClick={() => onPick(row)}>未复盘</button>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}

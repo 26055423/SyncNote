@@ -852,3 +852,37 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .dm-bubble.is-mine { align-self: flex-end; background: var(--accent-bg); border-color: var(--accent); color: var(--accent-ink); }
 .dm-bubble small { display: block; margin-top: 4px; font-size: 10px; }
 .dm-text { white-space: pre-wrap; word-break: break-word; }
+
+/* ── Discord 式聊天区 ─────────────────────────────────────── */
+.rail.is-wide { flex: 0 0 780px; width: 780px; max-width: calc(100vw - 120px); }
+.pane-wide { width: 100%; }
+.chat-dock { display: flex; gap: 10px; height: 100%; min-height: 420px; }
+.chat-list {
+  width: 218px; flex: none; display: flex; flex-direction: column; gap: 2px;
+  border-right: 1px solid var(--line); padding-right: 8px; overflow-y: auto;
+}
+.chat-search {
+  padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); margin-bottom: 6px; font-size: 12px;
+}
+.chat-list-title { margin: 8px 0 2px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.chat-row {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start;
+  gap: 1px; padding: 6px 8px; border-radius: 6px; border: 1px solid transparent;
+  background: none; color: var(--text); cursor: pointer; text-align: left; width: 100%;
+}
+.chat-row:hover { background: var(--panel-2); }
+.chat-row.is-active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent-ink); }
+.chat-row-name { font-size: 13px; font-weight: 600; }
+.chat-row-time { position: absolute; right: 8px; top: 6px; font-size: 10px; color: var(--dim); }
+.chat-row-preview { font-size: 11px; color: var(--dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-row-badge {
+  position: absolute; right: 8px; bottom: 6px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: var(--danger, #e05252); color: #fff; font-size: 10px; line-height: 16px; text-align: center;
+}
+.chat-row-mention { position: absolute; right: 30px; bottom: 6px; font-size: 10px; color: var(--accent); }
+.chat-list-foot { margin-top: auto; display: flex; gap: 10px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.chat-main-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.chat-main-body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
+.chat-empty { font-size: 12px; }
