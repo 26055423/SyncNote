@@ -9,6 +9,7 @@ import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
+import { FriendChat } from './FriendChat';
 import { GroupsPanel } from './GroupsPanel';
 import { FriendsIcon, GroupsIcon, MailIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
@@ -154,6 +155,8 @@ export default function App() {
   const [inbox, setInbox] = useState<ShareRow[]>([]);
   const [following, setFollowing] = useState<Array<{ id: string; name: string }>>([]);
   // 好友申请：别人申请我的（可通过对）/ 我申请的（可取消）。
+  const [dmPeer, setDmPeer] = useState<{ id: string; nickname: string; avatar?: string } | null>(null);
+  const [dmUnread, setDmUnread] = useState<Record<string, number>>({});
   const [friendReq, setFriendReq] = useState<{ incoming: Array<{ id: string; nickname: string; username: string }>; outgoing: Array<{ id: string; nickname: string; username: string }> }>({ incoming: [], outgoing: [] });
   const [recipients, setRecipients] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState('');
@@ -476,6 +479,14 @@ export default function App() {
           if (!alive) return;
           setFollowing(r.following);
           setFriendReq({ incoming: r.incoming ?? [], outgoing: r.outgoing ?? [] });
+          void api<{ unread: Record<string, number> | number; threads: Array<{ peer: { id: string }; unread: number }> }>('/api/dm/threads')
+            .then((dm) => {
+              const map: Record<string, number> = {};
+              for (const row of dm.threads ?? []) if (row.unread) map[row.peer.id] = row.unread;
+              if (!alive) return;
+              setDmUnread(map);
+            })
+            .catch(() => undefined);
         })
         .catch(() => undefined);
     };
@@ -1289,6 +1300,15 @@ export default function App() {
 
               {tab === 'friends' ? (
                 <div className="pane">
+                  {dmPeer ? (
+                    <FriendChat
+                      peer={dmPeer}
+                      online={Boolean(board.snapshots[dmPeer.id] && board.now - (board.snapshots[dmPeer.id].updated || 0) <= 45)}
+                      onBack={() => setDmPeer(null)}
+                      onError={setError}
+                    />
+                  ) : (
+                    <>
                   <h3>好友 <small>{Math.max(0, board.members.length - 1)}</small></h3>
                   {friendReq.incoming.length ? (
                     <div className="friend-requests">
@@ -1324,7 +1344,15 @@ export default function App() {
                     return (
                       <div className="friend" key={member.id}>
                         <div className="friend-head">
-                          <b>{member.name}</b>
+                          <button
+                            type="button"
+                            className="friend-name"
+                            title={`和 ${member.name} 聊天`}
+                            onClick={() => setDmPeer({ id: member.id, nickname: member.name, avatar: member.avatar })}
+                          >
+                            {member.name}
+                            {dmUnread[member.id] ? <span className="friend-badge">{dmUnread[member.id]}</span> : null}
+                          </button>
                           <span className={online ? 'link-dot on' : 'link-dot off'}>{online ? '在线' : '离线'}</span>
                           {snap ? <span className="dim">浮盈 {money(profit)}</span> : null}
                         </div>
@@ -1348,6 +1376,8 @@ export default function App() {
                     );
                   })}
                   {board.members.length <= 1 ? <p className="dim">还没有好友。去个人中心搜索交易伙伴，发送好友申请；对方通过后就能互相看到复盘。</p> : null}
+                    </>
+                  )}
                 </div>
               ) : null}
 

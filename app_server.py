@@ -4,6 +4,7 @@ import client_address
 import auth_security
 import bars
 import chart
+import dm
 import groups
 import live
 import local_ea
@@ -95,6 +96,7 @@ with connect() as db:
     market.initialize(db)
     chart.initialize(db)
     groups.initialize(db)
+    dm.initialize(db)
     if os.environ.get('EA_HUB_ENABLE','1')!='0':HUB.start()
     if not db.execute("SELECT 1 FROM security_config WHERE key='sessions-30days'").fetchone():
         db.execute('UPDATE sessions SET expires=? WHERE expires>?',(time.time()+2592000,time.time()))
@@ -514,6 +516,14 @@ class Handler(BaseHTTPRequestHandler):
                         except ValueError:
                             limit=100
                         return self.reply({'messages':groups.messages(db,gid,uid,limit)})
+                    if path=='/api/dm/threads':
+                        return self.reply({'threads':dm.threads(db,uid),'unread':dm.total_unread(db,uid)})
+                    if path=='/api/dm':
+                        peer=str(q.get('with',[''])[0])
+                        if not peer or not are_friends(db,uid,peer):raise Error('你们还不是好友',403)
+                        owner=db.execute('SELECT id,nickname,avatar FROM users WHERE id=?',(peer,)).fetchone()
+                        if not owner:raise Error('用户不存在',404)
+                        return self.reply({'peer':{'id':owner['id'],'nickname':owner['nickname'],'avatar':owner['avatar']},'messages':dm.thread(db,uid,peer)})
                     if path=='/api/groups/members':
                         return self.reply({'members':groups.members(db,str(q.get('group',[''])[0]),uid)})
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
@@ -645,6 +655,7 @@ class Handler(BaseHTTPRequestHandler):
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)
         except groups.GroupError as e:self.reply({'error':e.text},e.code)
+        except dm.DmError as e:self.reply({'error':e.text},e.code)
         except Error as e:self.reply({'error':e.text},e.code)
         except Exception:self.reply({'error':'服务暂时不可用'},500)
     def do_POST(self):
@@ -878,6 +889,9 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/password':
                         if not pw_ok(data.get('current_password'),u['password']):raise Error('当前密码不正确',403)
                         pw=pw_hash(data.get('new_password'));db.execute('DELETE FROM trusted_devices WHERE user_id=?',(uid,));db.execute('DELETE FROM login_pending WHERE user_id=?',(uid,));db.execute('UPDATE users SET password=? WHERE id=?',(pw,uid));db.execute('DELETE FROM sessions WHERE user_id=?',(uid,));cookie=self.session(db,uid)
+                    elif path=='/api/dm':
+                        to=str(data.get('to',''))
+                        result=dm.send(db,uid,to,str(data.get('text','')),bool(to) and are_friends(db,uid,to))
                     elif path=='/api/groups/create':
                         result=groups.create(db,uid,str(data.get('name','')))
                     elif path=='/api/groups/join':
@@ -1008,6 +1022,7 @@ class Handler(BaseHTTPRequestHandler):
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)
         except groups.GroupError as e:self.reply({'error':e.text},e.code)
+        except dm.DmError as e:self.reply({'error':e.text},e.code)
         except Error as e:
             if urlparse(self.path).path=='/api/snapshot':print('Snapshot rejected:',e.code,e.text,flush=True)
             self.reply({'error':e.text},e.code)

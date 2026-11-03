@@ -90,6 +90,17 @@ def main():
    bob.request('/api/friends/accept',{'target':a['id']})
    ensure(alice.request('/api/history?person='+b['id'])['history'] is not None,'通过后 A 能看 B')
    ensure(bob.request('/api/history?person='+a['id'])['history'] is not None,'通过后 B 也能看 A（双向）')
+   # ---- 好友私信：离线也能发、上线补收、已读 ----
+   alice.request('/api/dm',{'to':b['id'],'text':'在吗？看下这单'})
+   inbox=bob.request('/api/dm?with='+a['id'])
+   ensure([m['text'] for m in inbox['messages']]==['在吗？看下这单'],'好友能收到私信')
+   ensure(bob.request('/api/dm/threads')['unread']==0,'打开会话后未读清零')
+   bob.request('/api/dm',{'to':a['id'],'text':'看了，没问题'})
+   thread=alice.request('/api/dm?with='+b['id'])['messages']
+   ensure(len(thread)==2 and thread[-1]['text']=='看了，没问题','双向对话按时间排序')
+   outsider=Client(base);register(outsider,'ff')
+   outsider.request('/api/dm?with='+a['id'],status=403)
+   outsider.request('/api/dm',{'to':a['id'],'text':'陌生人'},status=403)
    bob.request('/api/messages',{'text':'friend-only hello'})
    ensure(any(m['text']=='friend-only hello' for m in alice.request('/api/state')['messages']),'好友之间能看到留言')
    bob.request('/api/friends/remove',{'target':a['id']})

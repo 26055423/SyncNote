@@ -826,3 +826,29 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 }
 .group-avatar-picker button.is-active { border-color: var(--accent); }
 .group-avatar-picker img { width: 28px; height: 28px; border-radius: 50%; display: block; }
+
+/* ── 好友私信 ─────────────────────────────────────────────── */
+.friend-name {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0;
+  border: none; background: none; color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+}
+.friend-name:hover { color: var(--accent); }
+.friend-badge {
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: var(--danger, #e05252); color: #fff; font-size: 10px; line-height: 16px; text-align: center;
+}
+.friend-chat { display: flex; flex-direction: column; height: 100%; }
+.friend-chat-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.friend-chat-tip { font-size: 11px; }
+.friend-chat-body {
+  flex: 1; min-height: 200px; max-height: 460px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px; margin: 10px 0; padding-right: 4px;
+}
+.dm-bubble {
+  max-width: 78%; padding: 8px 10px; border-radius: 10px;
+  background: var(--panel-2); border: 1px solid var(--line-soft);
+  align-self: flex-start; font-size: 13px;
+}
+.dm-bubble.is-mine { align-self: flex-end; background: var(--accent-bg); border-color: var(--accent); color: var(--accent-ink); }
+.dm-bubble small { display: block; margin-top: 4px; font-size: 10px; }
+.dm-text { white-space: pre-wrap; word-break: break-word; }
