@@ -49,7 +49,10 @@ with connect() as db:
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL,avatar TEXT NOT NULL DEFAULT '',bio TEXT NOT NULL DEFAULT '',password TEXT NOT NULL,allow_follow INTEGER NOT NULL DEFAULT 1,share_data INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS follows(follower TEXT NOT NULL REFERENCES users(id),target TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL,PRIMARY KEY(follower,target),CHECK(follower<>target));
-    CREATE TABLE IF NOT EXISTS friend_edges(a TEXT NOT NULL REFERENCES users(id),b TEXT NOT NULL REFERENCES users(id),status TEXT NOT NULL,requested_by TEXT NOT NULL,created REAL NOT NULL,decided REAL,PRIMARY KEY(a,b),CHECK(a<b));
+    CREATE TABLE IF NOT EXISTS friend_edges(a TEXT NOT NULL REFERENCES users(id),b TEXT NOT NULL REFERENCES users(id),status TEXT NOT NULL,requested_by TEXT NOT NULL,created REAL NOT NULL,decided REAL,
+      a_deleted INTEGER NOT NULL DEFAULT 0,b_deleted INTEGER NOT NULL DEFAULT 0,a_blocked INTEGER NOT NULL DEFAULT 0,b_blocked INTEGER NOT NULL DEFAULT 0,
+      a_hide INTEGER NOT NULL DEFAULT 0,b_hide INTEGER NOT NULL DEFAULT 0,a_mute INTEGER NOT NULL DEFAULT 0,b_mute INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(a,b),CHECK(a<b));
     CREATE TABLE IF NOT EXISTS mt5_links(user_id TEXT PRIMARY KEY REFERENCES users(id),token_hash TEXT UNIQUE,account_key TEXT,updated REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS snapshots(person TEXT PRIMARY KEY,payload TEXT NOT NULL,updated REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS trades(person TEXT NOT NULL,ticket TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(person,ticket));
@@ -81,6 +84,9 @@ with connect() as db:
     if 'locked' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0')
 with connect() as db:
     if 'share_reviews' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN share_reviews INTEGER NOT NULL DEFAULT 0')
+    for _col in ('a_deleted','b_deleted','a_blocked','b_blocked','a_hide','b_hide','a_mute','b_mute'):
+        if _col not in [r[1] for r in db.execute('PRAGMA table_info(friend_edges)')]:
+            db.execute('ALTER TABLE friend_edges ADD COLUMN '+_col+' INTEGER NOT NULL DEFAULT 0')
     auth_security.initialize(db)
     journal.initialize(db)
     sync_history.initialize(db)
@@ -140,28 +146,60 @@ def friend_pair(x,y):
 def friend_edge(db,x,y):
     a,b=friend_pair(x,y)
     return db.execute('SELECT * FROM friend_edges WHERE a=? AND b=?',(a,b)).fetchone()
-def are_friends(db,x,y):
-    """是否为「已通过」的双向好友。"""
-    if x==y:return True
-    row=friend_edge(db,x,y)
-    return bool(row and row['status']=='accepted')
-def relation(db,uid,target):
-    """none / friend / incoming（对方申请了我）/ outgoing（我申请了对方）。"""
-    if uid==target:return 'self'
+def edge_state(db,uid,target):
+    """从 uid 视角看这条关系：微信式的单向状态位。没有关系返回 None。"""
     row=friend_edge(db,uid,target)
-    if not row:return 'none'
-    if row['status']=='accepted':return 'friend'
-    if row['status']=='pending':return 'outgoing' if row['requested_by']==uid else 'incoming'
+    if not row:return None
+    side='a' if row['a']==uid else 'b'
+    other='b' if side=='a' else 'a'
+    return {'status':row['status'],'requested_by':row['requested_by'],
+            'i_deleted':bool(row[side+'_deleted']),'they_deleted':bool(row[other+'_deleted']),
+            'i_blocked':bool(row[side+'_blocked']),'they_blocked':bool(row[other+'_blocked']),
+            'i_hide':bool(row[side+'_hide']),'they_hide':bool(row[other+'_hide']),
+            'i_mute':bool(row[side+'_mute']),'they_mute':bool(row[other+'_mute'])}
+def are_friends(db,x,y):
+    """是否还是「好友」：已通过，且双方都没删、没拉黑。"""
+    if x==y:return True
+    st=edge_state(db,x,y)
+    if not st or st['status']!='accepted':return False
+    return not (st['i_deleted'] or st['they_deleted'] or st['i_blocked'] or st['they_blocked'])
+def can_chat(db,x,y):
+    """能不能收发消息：好友 + 没删 + 没拉黑。"""
+    return are_friends(db,x,y)
+def relation(db,uid,target):
+    """none / friend / incoming / outgoing / blocked（我拉黑）/ blocked_me / self。"""
+    if uid==target:return 'self'
+    st=edge_state(db,uid,target)
+    if not st:return 'none'
+    if st['i_blocked']:return 'blocked'
+    if st['they_blocked']:return 'blocked_me'
+    if st['status']=='pending':
+        return 'outgoing' if st['requested_by']==uid else 'incoming'
+    if st['status']=='accepted':
+        if st['i_deleted']:return 'deleted'
+        if st['they_deleted']:return 'deleted_me'
+        return 'friend'
     return 'none'
 def friends_of(db,uid):
-    """所有已通过好友的 user 行。"""
-    return db.execute("SELECT u.* FROM friend_edges f JOIN users u ON u.id=CASE WHEN f.a=? THEN f.b ELSE f.a END WHERE (f.a=? OR f.b=?) AND f.status='accepted' ORDER BY f.decided DESC",(uid,uid,uid)).fetchall()
+    """我的好友列表：微信式——只按「我这侧」的删除/拉黑过滤。
+
+    对方删了我，我这一侧还看得到他（和他的头像），但内容与消息都不可用；
+    我删了对方，我自己列表里就没了。
+    """
+    return db.execute("SELECT u.* FROM friend_edges f JOIN users u ON u.id=CASE WHEN f.a=? THEN f.b ELSE f.a END WHERE (f.a=? OR f.b=?) AND f.status='accepted' AND (CASE WHEN f.a=? THEN f.a_deleted ELSE f.b_deleted END)=0 AND (CASE WHEN f.a=? THEN f.a_blocked ELSE f.b_blocked END)=0 ORDER BY f.decided DESC",(uid,uid,uid,uid,uid)).fetchall()
+def blocked_of(db,uid):
+    """我拉黑的人。"""
+    return db.execute("SELECT u.* FROM friend_edges f JOIN users u ON u.id=CASE WHEN f.a=? THEN f.b ELSE f.a END WHERE (f.a=? OR f.b=?) AND ((f.a=? AND f.a_blocked=1) OR (f.b=? AND f.b_blocked=1)) ORDER BY f.decided DESC",(uid,uid,uid,uid,uid)).fetchall()
 def friend_requests(db,uid):
-    """待通过的好友申请：(incoming, outgoing)，每项是 user 字典 + asked 时间。"""
+    """待通过的申请：(incoming, outgoing)。被对方拉黑/申请方已删的不再展示。"""
     incoming=[];outgoing=[]
-    rows=db.execute("SELECT f.a,f.b,f.requested_by,f.created,CASE WHEN f.a=? THEN f.b ELSE f.a END AS other FROM friend_edges f WHERE f.status='pending' AND (f.a=? OR f.b=?)",(uid,uid,uid)).fetchall()
+    rows=db.execute("SELECT f.*,CASE WHEN f.a=? THEN f.b ELSE f.a END AS other FROM friend_edges f WHERE f.status='pending' AND (f.a=? OR f.b=?)",(uid,uid,uid)).fetchall()
     for r in rows:
-        u=db.execute('SELECT * FROM users WHERE id=?',(r['other'],)).fetchone()
+        other=r['other']
+        st=edge_state(db,uid,other)
+        if not st:continue
+        if st['i_blocked'] or st['they_blocked']:continue
+        u=db.execute('SELECT * FROM users WHERE id=?',(other,)).fetchone()
         if not u:continue
         item={k:u[k] for k in u.keys()};item['asked']=r['created']
         if r['requested_by']==uid:outgoing.append(item)
@@ -182,11 +220,19 @@ def migrate_friends(db):
         moved+=1
     return moved
 def visible(db,uid,target):
-    """能不能看对方的交易数据：本人，或已通过的双向好友，且对方开了「分享交易数据」。"""
+    """能不能看对方的交易数据：本人，或好友且没删没拉黑、对方开了分享、且对方没对我隐藏。"""
     if uid==target:return True
     if not are_friends(db,uid,target):return False
+    st=edge_state(db,uid,target)
+    if st['they_hide']:return False
     row=db.execute('SELECT share_data FROM users WHERE id=?',(target,)).fetchone()
     return bool(row and row['share_data'])
+def review_visible(db,uid,target):
+    """复盘可见性：在 visible 的基础上再加对方「分享复盘」开关。"""
+    if uid==target:return True
+    if not visible(db,uid,target):return False
+    row=db.execute('SELECT share_reviews FROM users WHERE id=?',(target,)).fetchone()
+    return bool(row and row['share_reviews'])
 def numeric(v):
     if isinstance(v,bool) or not isinstance(v,(float,int)) or not math.isfinite(v):raise Error('数值格式不正确')
 def validate(data):
@@ -496,12 +542,12 @@ class Handler(BaseHTTPRequestHandler):
                         last_history=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=?',(uid,)).fetchone()[0]
                         configured=bool(link and (link['token_hash'] or link['account_key']))
                         online=bool(configured and ((snap and time.time()-snap['updated']<=45 and json.loads(snap['payload']).get('online',True)) or (last_history and time.time()-last_history<=90)))
-                        return self.reply({'user':public(u),'following':following,'followers':followers,'friends':following,'incoming':[public(r) for r in incoming],'outgoing':[public(r) for r in outgoing],'mt5':{'configured':configured,'bound':bool(link and link['account_key']),'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'}})
+                        return self.reply({'user':public(u),'following':following,'followers':followers,'friends':following,'incoming':[public(r) for r in incoming],'outgoing':[public(r) for r in outgoing],'blocked':[public(r) for r in blocked_of(db,uid)],'mt5':{'configured':configured,'bound':bool(link and link['account_key']),'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'}})
                     if path=='/api/users':
                         text=q.get('q',[''])[0].strip().lower()
                         if not 2<=len(text)<=40:raise Error('请输入至少 2 个字符查找用户')
                         pattern='%'+text.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-                        rows=db.execute("SELECT * FROM users WHERE id<>? AND (username LIKE ? ESCAPE '\\\\' OR nickname LIKE ? ESCAPE '\\\\') LIMIT 20",(uid,pattern,pattern)).fetchall()
+                        rows=db.execute("SELECT * FROM users WHERE id<>? AND (username LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\') LIMIT 20",(uid,pattern,pattern)).fetchall()
                         return self.reply({'users':[{**public(r),'relation':relation(db,uid,r['id'])} for r in rows]})
                     if path=='/api/history':
                         target=q.get('person',[uid])[0]
@@ -509,7 +555,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'history':history_for(db,target)})
                     if path=='/api/state':
                         db.execute('INSERT INTO presence VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET updated=excluded.updated',(uid,time.time()))
-                        following=list(friends_of(db,uid))
+                        following=[r for r in friends_of(db,uid) if can_chat(db,uid,r['id'])]
                         members=[];snapshots={};allowed=[]
                         for r in [u]+following:
                             can=r['id']==uid or bool(r['share_data']);can_review=can and (r['id']==uid or bool(r['share_reviews']))
@@ -822,26 +868,31 @@ class Handler(BaseHTTPRequestHandler):
                       target=data.get('target')
                       row=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone() if isinstance(target,str) else None
                       if not row or target==uid:raise Error('好友对象不正确')
-                      rel=relation(db,uid,target)
-                      if rel=='friend':result['status']='friend'
-                      elif rel=='outgoing':result['status']='pending'
-                      elif rel=='incoming':
-                        # 对方已经申请过我，我再点一次「加好友」= 直接通过，省一步。
+                      st=edge_state(db,uid,target)
+                      if st and st['i_blocked']:raise Error('你已把对方拉黑，先在黑名单里解除')
+                      if st and st['they_blocked']:raise Error('对方已把你拉黑',403)
+                      if st and st['i_deleted']:
+                        db.execute('UPDATE friend_edges SET '+('a' if friend_pair(uid,target)[0]==uid else 'b')+'_deleted=0 WHERE a=? AND b=?',friend_pair(uid,target))
+                        st=edge_state(db,uid,target)
+                      if st and st['status']=='accepted' and are_friends(db,uid,target):result['status']='friend'
+                      elif st and st['status']=='pending' and st['requested_by']==uid:result['status']='pending'
+                      elif st and st['status']=='pending' and st['requested_by']==target:
                         a,b=friend_pair(uid,target)
-                        db.execute("UPDATE friend_edges SET status='accepted',decided=? WHERE a=? AND b=?",(now,a,b))
+                        db.execute("UPDATE friend_edges SET status='accepted',decided=?,a_deleted=0,b_deleted=0 WHERE a=? AND b=?",(now,a,b))
                         db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
                         result['status']='friend'
                       else:
                         if not row['allow_follow']:raise Error('对方暂不接受好友申请',403)
                         a,b=friend_pair(uid,target)
-                        db.execute("INSERT INTO friend_edges(a,b,status,requested_by,created) VALUES(?,?,'pending',?,?)",(a,b,uid,now))
+                        if st:db.execute("UPDATE friend_edges SET status='pending',requested_by=?,created=?,decided=NULL WHERE a=? AND b=?",(uid,now,a,b))
+                        else:db.execute("INSERT INTO friend_edges(a,b,status,requested_by,created) VALUES(?,?,'pending',?,?)",(a,b,uid,now))
                         db.execute('INSERT INTO social_notifications(recipient,actor,created) VALUES(?,?,?)',(target,uid,now))
                         result['status']='pending'
                     elif path=='/api/friends/accept':
                       target=data.get('target')
                       if relation(db,uid,target)!='incoming':raise Error('没有待通过的好友申请')
                       a,b=friend_pair(uid,target)
-                      db.execute("UPDATE friend_edges SET status='accepted',decided=? WHERE a=? AND b=?",(now,a,b))
+                      db.execute("UPDATE friend_edges SET status='accepted',decided=?,a_deleted=0,b_deleted=0 WHERE a=? AND b=?",(now,a,b))
                       db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
                       result['status']='friend'
                     elif path=='/api/friends/reject':
@@ -852,17 +903,45 @@ class Handler(BaseHTTPRequestHandler):
                       db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
                       result['status']='none'
                     elif path in ('/api/friends/remove','/api/unfollow'):
+                      # 微信式「删除好友」：只在自己这一侧标记，对方列表里还留着你，但他的消息/复盘你看不到、我的也对他不可见。
                       target=data.get('target')
                       if not isinstance(target,str):raise Error('好友对象不正确')
-                      a,b=friend_pair(uid,target)
-                      row=db.execute('SELECT * FROM friend_edges WHERE a=? AND b=?',(a,b)).fetchone()
-                      if row and row['status']=='pending' and row['requested_by']==uid:
-                        db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b))
-                      elif row and row['status']=='accepted':
-                        db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b))
-                      elif row and row['status']=='pending':
+                      st=edge_state(db,uid,target)
+                      if not st:result['status']='none'
+                      elif st['status']=='pending' and st['requested_by']==uid:
+                        a,b=friend_pair(uid,target);db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b));result['status']='none'
+                      elif st['status']=='pending':
                         raise Error('对方已经申请过你，请到「好友申请」里处理')
-                      result['status']='none'
+                      else:
+                        a,b=friend_pair(uid,target)
+                        side='a' if a==uid else 'b'
+                        db.execute('UPDATE friend_edges SET '+side+'_deleted=1 WHERE a=? AND b=?',(a,b))
+                        result['status']='deleted'
+                    elif path in ('/api/friends/block','/api/friends/unblock'):
+                      target=data.get('target')
+                      if not isinstance(target,str):raise Error('好友对象不正确')
+                      if target==uid:raise Error('不能对自己操作')
+                      a,b=friend_pair(uid,target);side='a' if a==uid else 'b'
+                      st=edge_state(db,uid,target)
+                      if path=='/api/friends/block':
+                        if not st:
+                          db.execute('INSERT INTO friend_edges(a,b,status,requested_by,created) VALUES(?,?,?,?,?)',(a,b,'accepted',uid,now))
+                        db.execute('UPDATE friend_edges SET '+side+'_blocked=1, '+side+'_deleted=0 WHERE a=? AND b=?',(a,b))
+                        db.execute('DELETE FROM social_notifications WHERE actor=? AND recipient=?',(uid,target))
+                        result['status']='blocked'
+                      else:
+                        if st:db.execute('UPDATE friend_edges SET '+side+'_blocked=0 WHERE a=? AND b=?',(a,b))
+                        result['status']='unblocked'
+                    elif path in ('/api/friends/hide','/api/friends/mute'):
+                      # 类微信朋友圈权限：不让对方看我的复盘 / 我不看对方的复盘。
+                      target=data.get('target')
+                      if not isinstance(target,str) or not are_friends(db,uid,target):raise Error('好友关系不正确')
+                      on=bool(data.get('on',True))
+                      a,b=friend_pair(uid,target);side='a' if a==uid else 'b'
+                      col=side+('_hide' if path=='/api/friends/hide' else '_mute')
+                      db.execute('UPDATE friend_edges SET '+col+'=? WHERE a=? AND b=?',(1 if on else 0,a,b))
+                      result['status']='ok'
+                    
                     elif path=='/api/mt5/token':
                         token=secrets.token_urlsafe(36);db.execute('INSERT INTO mt5_links(user_id,token_hash,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET token_hash=excluded.token_hash,updated=excluded.updated',(uid,digest(token),now));result['token']=token
                     elif path=='/api/mt5/unlink':
