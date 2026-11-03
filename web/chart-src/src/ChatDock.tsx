@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, stamp } from './api';
 import { usePrefs } from './ui/prefs';
 
@@ -17,6 +17,7 @@ interface Message {
 }
 type Conversation = { kind: 'dm' | 'group'; id: string; name: string; avatar?: string };
 interface Props {
+  visible?: boolean;
   current?: { ticket: string } | null;
   getSnapshot?: () => unknown;
   onError?: (message: string) => void;
@@ -48,7 +49,7 @@ function Avatar({ name, avatar, size = '' }: { name: string; avatar?: string; si
 }
 
 /** 私信与群聊共用会话、引用回复、表情回应和复盘卡片。 */
-export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, onOpenFriendManager }: Props) {
+export function ChatDock({ visible = true, current, getSnapshot, onError, onOpenGroupSettings, onOpenFriendManager }: Props) {
   const prefs = usePrefs();
   const [threads, setThreads] = useState<DmThread[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
@@ -74,12 +75,15 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
   const activeRef = useRef<Conversation | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const selectionRef = useRef({ start: 0, end: 0 });
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const nearBottom = useRef(true);
   const renderedKey = useRef('');
   const lastMessage = useRef('');
   const mounted = useRef(true);
   const listVersion = useRef(0);
-  const messageVersion = useRef(0);
+  const pendingReads = useRef(new Map<string, Promise<void>>());
   const reactionBusy = useRef(false);
   const writeBusy = useRef(false);
   const activeKey = active ? keyOf(active) : '';
@@ -92,13 +96,14 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
     setSearch(''); setEmojiOpen(false); setReactionPicker(null); setPendingNew(false); nearBottom.current = true;
   };
   const loadLists = useCallback(async () => {
+    if (!visibleRef.current || document.hidden) return;
     const version = ++listVersion.current;
     try {
       const [dmData, groupData, profile] = await Promise.all([
         api<{ threads: DmThread[] }>('/api/dm/threads'), api<{ groups: GroupRow[] }>('/api/groups'),
         api<{ user: Person; friends: Person[]; incoming: unknown[] }>('/api/profile'),
       ]);
-      if (!mounted.current || version !== listVersion.current) return;
+      if (!mounted.current || !visibleRef.current || version !== listVersion.current) return;
       const people = (profile.friends ?? []).filter((person) => person.can_chat !== false);
       setThreads(dmData.threads.filter((row) => people.some((person) => person.id === row.peer.id)));
       setGroups(groupData.groups ?? []); setFriends(people); setMe(profile.user); setRequests(profile.incoming?.length ?? 0);
@@ -108,42 +113,53 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
       }
     } catch (error) { if (mounted.current) fail(error); }
   }, [fail]);
-  const loadConversation = useCallback(async (conversation: Conversation) => {
+  const loadConversation = useCallback(async (conversation: Conversation, fresh = false): Promise<void> => {
     const key = keyOf(conversation);
-    const version = ++messageVersion.current;
-    try {
+    const readable = () => mounted.current && visibleRef.current && !document.hidden && activeRef.current && keyOf(activeRef.current) === key;
+    if (!readable()) return;
+    const pending = pendingReads.current.get(key);
+    if (pending) {
+      await pending;
+      if (fresh) await loadConversation(conversation);
+      return;
+    }
+    const request = (async () => { try {
       const result = await api<{ messages: Message[] }>(conversation.kind === 'dm'
         ? `/api/dm?with=${encodeURIComponent(conversation.id)}`
         : `/api/groups/messages?group=${encodeURIComponent(conversation.id)}`);
-      if (!mounted.current || !activeRef.current || keyOf(activeRef.current) !== key || version !== messageVersion.current) return;
+      if (!readable()) return;
       setMessages(result.messages ?? []);
       if (conversation.kind === 'dm') setThreads((rows) => rows.map((row) => row.peer.id === conversation.id ? { ...row, unread: 0 } : row));
       else setGroups((rows) => rows.map((row) => row.id === conversation.id ? { ...row, unread: 0, mentions: 0 } : row));
-    } catch (error) { if (mounted.current && activeRef.current && keyOf(activeRef.current) === key) fail(error); }
-    finally { if (mounted.current && activeRef.current && keyOf(activeRef.current) === key) setLoading(false); }
+    } catch (error) { if (readable()) fail(error); }
+    finally { if (readable()) setLoading(false); } })();
+    pendingReads.current.set(key, request);
+    try { await request; }
+    finally { if (pendingReads.current.get(key) === request) pendingReads.current.delete(key); }
   }, [fail]);
   useEffect(() => {
+    if (!visible) return;
     void loadLists();
     const timer = window.setInterval(() => { if (!document.hidden) void loadLists(); }, 15000);
     return () => window.clearInterval(timer);
-  }, [loadLists]);
+  }, [visible, loadLists]);
   useEffect(() => {
-    if (!active) return;
+    if (!visible || !active) return;
     setLoading(true); void loadConversation(active);
     const refresh = () => { if (!document.hidden) void loadConversation(active); };
     const timer = window.setInterval(refresh, 4000);
     document.addEventListener('visibilitychange', refresh);
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
-  }, [active, loadConversation]);
+  }, [visible, active, loadConversation]);
   useEffect(() => {
-    if (active?.kind !== 'group') return;
+    if (!visible || active?.kind !== 'group') return;
     let alive = true;
     const load = () => api<{ members: Person[] }>(`/api/groups/members?group=${encodeURIComponent(active.id)}`)
       .then((data) => { if (alive) setMembers(data.members); }).catch((error) => { if (alive) fail(error); });
     void load();
     const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 15000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [active, fail]);
+  }, [visible, active, fail]);
   useEffect(() => {
     const latest = messages.at(-1);
     const last = latest ? `${latest.id}:${latest.created}` : '';
@@ -153,7 +169,26 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
       } else if (last) setPendingNew(true);
     }
     renderedKey.current = activeKey; lastMessage.current = last;
-  }, [messages, activeKey]);
+  }, [messages, activeKey, visible, expanded, details]);
+  useEffect(() => {
+    if (!visible) { setEmojiOpen(false); setReactionPicker(null); }
+  }, [visible]);
+  useEffect(() => {
+    const box = timelineRef.current;
+    if (!visible || !box) return;
+    const resize = new ResizeObserver(() => { if (nearBottom.current) box.scrollTop = box.scrollHeight; });
+    resize.observe(box);
+    return () => resize.disconnect();
+  }, [visible, activeKey]);
+  useEffect(() => {
+    if (!visible || (!emojiOpen && reactionPicker == null)) return;
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.dc-emoji-picker, .dc-message-reaction-picker, [data-emoji-trigger]')) { setEmojiOpen(false); setReactionPicker(null); }
+    };
+    document.addEventListener('pointerdown', dismiss);
+    return () => document.removeEventListener('pointerdown', dismiss);
+  }, [visible, emojiOpen, reactionPicker]);
   useEffect(() => {
     if (jumpTarget == null) return;
     const row = document.getElementById(`dc-message-${activeKey}-${jumpTarget}`);
@@ -162,6 +197,21 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
     setJumpTarget(null);
   }, [jumpTarget, activeKey, fail]);
   const setDraft = (value: string) => setDrafts((all) => ({ ...all, [activeKey]: value.slice(0, 1000) }));
+  useLayoutEffect(() => {
+    const input = composerRef.current;
+    if (!visible || !input) return;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+  }, [draft, visible, activeKey]);
+  const insertText = (text: string) => {
+    const { start, end } = selectionRef.current;
+    const insertion = text.slice(0, Math.max(0, 1000 - draft.length + end - start));
+    setDraft(draft.slice(0, start) + insertion + draft.slice(end));
+    const cursor = start + insertion.length;
+    selectionRef.current = { start: cursor, end: cursor };
+    setEmojiOpen(false);
+    window.requestAnimationFrame(() => { composerRef.current?.focus(); composerRef.current?.setSelectionRange(cursor, cursor); });
+  };
   const send = async () => {
     const conversation = activeRef.current;
     const text = draft.trim();
@@ -176,7 +226,7 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
       setDrafts((all) => ({ ...all, [key]: all[key] === draft ? '' : all[key] }));
       setReplies((all) => ({ ...all, [key]: all[key]?.id === reply?.id ? null : all[key] }));
       if (activeRef.current && keyOf(activeRef.current) === key) nearBottom.current = true;
-      await loadConversation(conversation); await loadLists();
+      await loadConversation(conversation, true); await loadLists();
     } catch (error) { fail(error); }
     finally { writeBusy.current = false; if (mounted.current) setBusy(false); }
   };
@@ -189,14 +239,14 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
         ...(conversation.kind === 'dm' ? { to: conversation.id } : { group: conversation.id }), id: message.id, emoji,
         active: !message.reactions?.some((item) => item.emoji === emoji && item.mine),
       });
-      setReactionPicker(null); await loadConversation(conversation);
+      setReactionPicker(null); await loadConversation(conversation, true);
     } catch (error) { fail(error); }
     finally { reactionBusy.current = false; }
   };
   const recall = async (message: Message) => {
     const conversation = activeRef.current;
     if (!conversation || conversation.kind !== 'group') return;
-    try { await api('/api/groups/recall', { group: conversation.id, id: message.id }); await loadConversation(conversation); }
+    try { await api('/api/groups/recall', { group: conversation.id, id: message.id }); await loadConversation(conversation, true); }
     catch (error) { fail(error); }
   };
   const shareTrade = async () => {
@@ -208,7 +258,7 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
         ticket: current.ticket, snapshot: getSnapshot?.() ?? null,
         ...(conversation.kind === 'dm' ? { recipients: [conversation.id], message: '' } : { group: conversation.id }),
       });
-      await loadConversation(conversation); await loadLists();
+      await loadConversation(conversation, true); await loadLists();
     } catch (error) { fail(error); }
     finally { writeBusy.current = false; if (mounted.current) setBusy(false); }
   };
@@ -316,7 +366,7 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
                   </div>
                   {interactive && <div className="dc-message-actions" aria-label="消息操作">
                     {EMOJI.slice(0, 3).map((emoji) => <button type="button" className="dc-icon-button" key={emoji} aria-label={`回应 ${emoji}`} title={`回应 ${emoji}`} onClick={() => void react(message, emoji)}>{emoji}</button>)}
-                    <button type="button" className="dc-icon-button" aria-label="更多表情回应" title="更多表情回应" aria-expanded={reactionPicker === message.id} onClick={() => setReactionPicker((value) => value === message.id ? null : message.id)}><Icon name="smile" /></button>
+                    <button type="button" className="dc-icon-button" data-emoji-trigger aria-label="更多表情回应" title="更多表情回应" aria-expanded={reactionPicker === message.id} onClick={() => { setEmojiOpen(false); setReactionPicker((value) => value === message.id ? null : message.id); }}><Icon name="smile" /></button>
                     <button type="button" className="dc-icon-button" aria-label={`回复 ${author}`} title="引用回复" onClick={() => { setReplies((all) => ({ ...all, [activeKey]: message })); composerRef.current?.focus(); }}><Icon name="reply" /></button>
                     {message.recallable && <button type="button" className="dc-icon-button" aria-label="撤回消息" title="撤回消息" onClick={() => void recall(message)}><Icon name="close" /></button>}
                   </div>}
@@ -325,23 +375,23 @@ export function ChatDock({ current, getSnapshot, onError, onOpenGroupSettings, o
               </Fragment>;
             })}
           </div>
-          {pendingNew && <button type="button" className="dc-new-messages" onClick={() => { const box = timelineRef.current; if (box) box.scrollTop = box.scrollHeight; setPendingNew(false); nearBottom.current = true; }}>有新消息 · 回到底部 ↓</button>}
           <div className="dc-composer-wrap">
+            {pendingNew && <button type="button" className="dc-new-messages" onClick={() => { const box = timelineRef.current; if (box) box.scrollTop = box.scrollHeight; setPendingNew(false); nearBottom.current = true; }}>有新消息 · 回到底部 ↓</button>}
             {reply && <div className="dc-reply-bar"><Icon name="reply" /><span>回复 <b>{reply.mine ? me?.nickname : reply.name ?? name}</b>：{reply.text || '复盘分享'}</span><button type="button" className="dc-icon-button" aria-label="取消回复" onClick={() => setReplies((all) => ({ ...all, [activeKey]: null }))}><Icon name="close" /></button></div>}
-            {emojiOpen && <div className="dc-emoji-picker" role="group" aria-label="插入表情">{[...EMOJI, '🙌', '🤝', '📈', '📉', '💡', '🔥'].map((emoji) => <button type="button" key={emoji} aria-label={`插入 ${emoji}`} onClick={() => { setDraft(draft + emoji); setEmojiOpen(false); composerRef.current?.focus(); }}>{emoji}</button>)}</div>}
+            {emojiOpen && <div className="dc-emoji-picker" role="group" aria-label="插入表情">{[...EMOJI, '🙌', '🤝', '📈', '📉', '💡', '🔥'].map((emoji) => <button type="button" key={emoji} aria-label={`插入 ${emoji}`} onClick={() => insertText(emoji)}>{emoji}</button>)}</div>}
             <div className="dc-composer">
               {current && <button type="button" className="dc-icon-button" title={`分享当前复盘 #${current.ticket}`} aria-label="分享当前复盘" disabled={busy} onClick={() => void shareTrade()}><Icon name="chart" /></button>}
-              <textarea ref={composerRef} aria-label={`发消息给 ${name}`} value={draft} rows={2} maxLength={1000} placeholder={active.kind === 'dm' ? `发消息给 @${name}` : `发送到 # ${name}`} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
+              <textarea ref={composerRef} aria-label={`发消息给 ${name}`} value={draft} rows={1} maxLength={1000} placeholder={active.kind === 'dm' ? `发消息给 @${name}` : `发送到 # ${name}`} onSelect={(event) => { selectionRef.current = { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }; }} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(); }
               }} />
-              <div className="dc-composer-tools"><button type="button" className="dc-icon-button" aria-label="插入表情" title="表情" aria-expanded={emojiOpen} onClick={() => setEmojiOpen((value) => !value)}><Icon name="smile" /></button><button type="button" className="dc-icon-button" aria-label="发送消息" title="发送消息" disabled={!draft.trim() || busy} onClick={() => void send()}><Icon name="send" /></button></div>
+              <div className="dc-composer-tools"><button type="button" className="dc-icon-button" data-emoji-trigger aria-label="插入表情" title="表情" aria-expanded={emojiOpen} onClick={() => { setReactionPicker(null); setEmojiOpen((value) => !value); }}><Icon name="smile" /></button><button type="button" className="dc-icon-button" aria-label="发送消息" title="发送消息" disabled={!draft.trim() || busy} onClick={() => void send()}><Icon name="send" /></button></div>
             </div>
             <div className="dc-composer-hint"><span>{busy ? '正在发送…' : 'Enter 发送 · Shift+Enter 换行'}</span><span>{draft.length}/1000</span></div>
           </div>
         </> : <div className="dc-empty dc-welcome"><Icon name="users" /><h2>每一次交流，都让交易更进一步</h2><p>从左侧选择好友或群聊，分享你的交易思路。</p><button type="button" onClick={onOpenFriendManager}>寻找交易伙伴</button></div>}
       </div>
       {active && <aside className="dc-details" aria-label={active.kind === 'dm' ? '好友资料' : '群组资料'}>
-        <div className="dc-profile-banner" />
+        <div className="dc-profile-banner"><button type="button" className="dc-icon-button dc-details-close" aria-label="关闭资料栏" onClick={() => setDetails(false)}><Icon name="close" /></button></div>
         <div className="dc-profile-body"><Avatar name={name} avatar={active.avatar} size="lg" /><h2 className="dc-profile-name">{name}</h2><p className="dc-profile-meta">{active.kind === 'dm' ? (person?.username ? `@${person.username}` : '交易伙伴') : `${group?.members ?? members.length} 位成员`}</p>
           <div className="dc-profile-card"><h3>{active.kind === 'dm' ? '关于我' : '群公告'}</h3><p>{active.kind === 'dm' ? person?.bio || '这个人还没有填写简介。' : group?.notice || '暂时没有群公告。'}</p></div>
           {active.kind === 'group' && <div className="dc-members"><h3>成员 · {members.length}</h3>{members.map((member) => <div className="dc-member" key={member.id}><span className="dc-avatar-wrap"><Avatar name={member.nickname} avatar={member.avatar} size="sm" />{member.online && <i className="dc-presence is-online" />}</span><span>{member.nickname}</span><small>{member.role === 'owner' ? '群主' : member.online ? '在线' : ''}</small><button type="button" className="dc-icon-button" aria-label={`提及 ${member.nickname}`} title={`提及 ${member.nickname}`} onClick={() => { setDraft(draft + `@${member.nickname} `); composerRef.current?.focus(); }}>@</button></div>)}</div>}

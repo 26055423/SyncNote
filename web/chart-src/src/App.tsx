@@ -1003,10 +1003,10 @@ export default function App() {
             <i aria-hidden="true" />
             {localConnected ? '本机直连' : mt5Online ? '云端同步 · 只读' : 'MT5 未连接'}
           </span>
-          <span className="sep" aria-hidden="true" />
-          <span className="stat"><span className="stat-k">{reviewingOther ? '我的净值' : '净值'}</span><b className="stat-v">{money(displayedAccount?.equity)}</b></span>
-          <span className="stat"><span className="stat-k">{reviewingOther ? '我的余额' : '余额'}</span><b className="stat-v">{money(displayedAccount?.balance)}</b></span>
-          <span className="stat"><span className="stat-k">{reviewingOther ? '我的浮盈' : '浮盈'}</span><b className={floating >= 0 ? 'stat-v up' : 'stat-v down'}>{money(floating)}</b></span>
+          <span className="sep account-stat" aria-hidden="true" />
+          <span className="stat account-stat"><span className="stat-k">{reviewingOther ? '我的净值' : '净值'}</span><b className="stat-v">{money(displayedAccount?.equity)}</b></span>
+          <span className="stat account-stat"><span className="stat-k">{reviewingOther ? '我的余额' : '余额'}</span><b className="stat-v">{money(displayedAccount?.balance)}</b></span>
+          <span className="stat account-stat"><span className="stat-k">{reviewingOther ? '我的浮盈' : '浮盈'}</span><b className={floating >= 0 ? 'stat-v up' : 'stat-v down'}>{money(floating)}</b></span>
         </div>
         <nav className="top-actions">
           <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>
@@ -1302,9 +1302,8 @@ export default function App() {
                 <GroupsPanel current={target?.ticket ? { ticket: target.ticket, person: target.person } : null} onError={setError} />
               ) : null}
 
-              {tab === 'friends' ? (
-                <div className={`pane pane-wide ${friendManager ? '' : 'chat-host'}`}>
-                  {friendManager ? (
+              {tab === 'friends' && friendManager ? (
+                <div className="pane pane-wide">
                     <div className="friend-manager">
                       <button type="button" className="link" onClick={() => setFriendManager(false)}>
                         ← 返回聊天
@@ -1349,17 +1348,19 @@ export default function App() {
                         {board.members.length <= 1 ? <p className="dim">还没有好友。去个人中心搜索交易伙伴，发送好友申请。</p> : null}
                       </div>
                     </div>
-                  ) : (
-                    <ChatDock
-                      current={target?.ticket && target.person === me?.id && entry && !entry.read_only ? { ticket: target.ticket } : null}
-                      getSnapshot={() => chartRef.current?.view?.() ?? null}
-                      onError={setError}
-                      onOpenFriendManager={() => setFriendManager(true)}
-                      onOpenGroupSettings={() => setTab('groups')}
-                    />
-                  )}
                 </div>
               ) : null}
+
+              <div className="pane pane-wide chat-host" hidden={tab !== 'friends' || friendManager}>
+                <ChatDock
+                  visible={railOpen && tab === 'friends' && !friendManager}
+                  current={target?.ticket && target.person === me?.id && entry && !entry.read_only ? { ticket: target.ticket } : null}
+                  getSnapshot={() => chartRef.current?.view?.() ?? null}
+                  onError={setError}
+                  onOpenFriendManager={() => setFriendManager(true)}
+                  onOpenGroupSettings={() => setTab('groups')}
+                />
+              </div>
 
               {tab === 'review' ? (
                 <div className="pane">

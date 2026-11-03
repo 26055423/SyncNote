@@ -286,6 +286,25 @@ def main():
    alice.request('/api/groups/recall',{'group':g['id'],'id':mid})
    ensure(any(m['kind']=='recalled' for m in member.request('/api/groups/messages?group='+g['id'])['messages']),'撤回后显示为已撤回')
    member.request('/api/groups/recall',{'group':g['id'],'id':mid},status=403)
+   # 撤回按钮能力必须与执行权限一致：群主不受作者和 2 分钟窗口限制。
+   owner_old=alice.request('/api/groups/message',{'group':g['id'],'text':'群主旧消息'})['id']
+   member_old=member.request('/api/groups/message',{'group':g['id'],'text':'成员旧消息'})['id']
+   member_recent=member.request('/api/groups/message',{'group':g['id'],'text':'成员新消息'})['id']
+   with sqlite3.connect(db) as conn:
+    conn.execute('UPDATE group_messages SET created=? WHERE id IN (?,?)',(time.time()-300,owner_old,member_old))
+   owner_view={m['id']:m for m in alice.request('/api/groups/messages?group='+g['id'])['messages']}
+   member_view={m['id']:m for m in member.request('/api/groups/messages?group='+g['id'])['messages']}
+   ensure(owner_view[owner_old]['recallable'] and owner_view[member_old]['recallable'],'群主可撤回自己及其他成员的旧消息')
+   ensure(not member_view[member_old]['recallable'],'普通作者超过 2 分钟不显示撤回')
+   ensure(not member_view[owner_old]['recallable'],'普通成员不显示他人消息撤回')
+   ensure(member_view[member_recent]['recallable'],'普通作者 2 分钟内仍显示撤回')
+   member.request('/api/groups/recall',{'group':g['id'],'id':member_old},status=403)
+   member.request('/api/groups/recall',{'group':g['id'],'id':owner_old},status=403)
+   alice.request('/api/groups/recall',{'group':g['id'],'id':member_old})
+   alice.request('/api/groups/recall',{'group':g['id'],'id':owner_old})
+   owner_view={m['id']:m for m in alice.request('/api/groups/messages?group='+g['id'])['messages']}
+   member_view={m['id']:m for m in member.request('/api/groups/messages?group='+g['id'])['messages']}
+   ensure(all(not owner_view[i]['recallable'] and not member_view[i]['recallable'] for i in (mid,member_old,owner_old)),'已撤回消息对群主和普通成员都不再提供撤回按钮')
    alice.request('/api/groups/message',{'group':g['id'],'text':'大家好'})
    ensure(any(m['text']=='大家好' for m in member.request('/api/groups/messages?group='+g['id'])['messages']),'群聊成员可见')
    reply_mid=alice.request('/api/groups/message',{'group':g['id'],'text':'引用目标'})['id']

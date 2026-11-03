@@ -301,7 +301,7 @@ def rename(db, uid, gid, name=None, avatar=None):
 
 
 def messages(db, gid, uid, limit=100):
-    require_member(db, gid, uid)
+    group = require_member(db, gid, uid)
     rows = db.execute(
         'SELECT m.*,u.nickname,u.avatar FROM group_messages m JOIN users u ON u.id=m.person WHERE m.group_id=? ORDER BY m.id DESC LIMIT ?',
         (gid, max(1, min(limit, 200))),
@@ -325,7 +325,7 @@ def messages(db, gid, uid, limit=100):
             'reply': None if row['recalled'] else _reply(db, gid, row['reply_to']),
             'reactions': [] if row['recalled'] else dm.reactions(db, 'group_reactions', row['id'], uid),
             'mine': row['person'] == uid,
-            'recallable': bool(row['person'] == uid and time.time() - row['created'] <= 120),
+            'recallable': bool(not row['recalled'] and (group['owner'] == uid or (row['person'] == uid and time.time() - row['created'] <= 120))),
         }
         if not row['recalled'] and row['kind'] == 'trade' and row['ticket']:
             share = db.execute(
