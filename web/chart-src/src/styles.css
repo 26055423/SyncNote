@@ -814,3 +814,15 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   background: var(--bg); color: var(--text); font-size: 12px;
 }
 .group-mention { background: var(--accent-bg); color: var(--accent-ink); border-radius: 4px; padding: 0 3px; }
+
+.group-avatar-btn { padding: 0; border: none; background: none; cursor: pointer; }
+.group-avatar-picker {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px;
+  margin: 8px 0; padding: 8px; border-radius: 8px;
+  border: 1px solid var(--line-soft); background: var(--panel-2);
+}
+.group-avatar-picker button {
+  padding: 2px; border-radius: 50%; border: 2px solid transparent; background: none; cursor: pointer;
+}
+.group-avatar-picker button.is-active { border-color: var(--accent); }
+.group-avatar-picker img { width: 28px; height: 28px; border-radius: 50%; display: block; }

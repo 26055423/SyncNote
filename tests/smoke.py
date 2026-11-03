@@ -232,6 +232,9 @@ def main():
    # 群资料 / @ / 撤回
    alice.request('/api/groups/rename',{'group':g['id'],'name':'改名后的群'})
    ensure(alice.request('/api/groups')['groups'][0]['name']=='改名后的群','群主能改群名')
+   alice.request('/api/groups/rename',{'group':g['id'],'avatar':'avatar3'})
+   ensure(alice.request('/api/groups')['groups'][0]['avatar']=='avatar3','群主能换群头像')
+   alice.request('/api/groups/rename',{'group':g['id'],'avatar':'nope'},status=400)
    member.request('/api/groups/rename',{'group':g['id'],'name':'越权改名'},status=403)
    alice.request('/api/groups/message',{'group':g['id'],'text':'@gg 看一下这单'})
    msgs=member.request('/api/groups/messages?group='+g['id'])['messages']

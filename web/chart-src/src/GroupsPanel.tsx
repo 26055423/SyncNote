@@ -85,6 +85,7 @@ export function GroupsPanel({ current, onError }: Props) {
   const [showMembers, setShowMembers] = useState(false);
   const [noticeDraft, setNoticeDraft] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [showAvatars, setShowAvatars] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const fail = useCallback(
@@ -250,6 +251,17 @@ export function GroupsPanel({ current, onError }: Props) {
     }
   };
 
+  const pickAvatar = async (avatar: string) => {
+    if (!active || !group) return;
+    try {
+      await api('/api/groups/rename', { group: active, avatar });
+      setShowAvatars(false);
+      await loadGroups();
+    } catch (error) {
+      fail(error);
+    }
+  };
+
   const copyInvite = async () => {
     if (!group?.code) return;
     const link = `${location.origin}/chart?group=${encodeURIComponent(group.code)}`;
@@ -327,7 +339,20 @@ export function GroupsPanel({ current, onError }: Props) {
       {group ? (
         <div className="group-chat">
           <div className="group-head">
-            {group.avatar ? (
+            {group.role === 'owner' ? (
+              <button
+                type="button"
+                className="group-avatar-btn"
+                title="换群头像"
+                onClick={() => setShowAvatars((v) => !v)}
+              >
+                {group.avatar ? (
+                  <img className="group-avatar" src={`/avatars/${group.avatar}.svg`} alt="" />
+                ) : (
+                  <span className="group-avatar">{group.name.slice(0, 1)}</span>
+                )}
+              </button>
+            ) : group.avatar ? (
               <img className="group-avatar" src={`/avatars/${group.avatar}.svg`} alt="" />
             ) : (
               <span className="group-avatar">{group.name.slice(0, 1)}</span>
@@ -363,6 +388,24 @@ export function GroupsPanel({ current, onError }: Props) {
               退出
             </button>
           </div>
+          {showAvatars && group.role === 'owner' ? (
+            <div className="group-avatar-picker">
+              {Array.from({ length: 12 }, (_, index) => {
+                const avatar = `avatar${index + 1}`;
+                return (
+                  <button
+                    type="button"
+                    key={avatar}
+                    className={group.avatar === avatar ? 'is-active' : ''}
+                    onClick={() => void pickAvatar(avatar)}
+                    title={avatar}
+                  >
+                    <img src={`/avatars/${avatar}.svg`} alt="" />
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
           <div className="group-notice">
             <b>群公告</b>
             {noticeDraft === null ? (
