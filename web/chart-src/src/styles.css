@@ -803,3 +803,14 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   padding: 4px 8px; border-radius: 6px; background: var(--panel-2);
 }
 .group-member .link { margin-left: auto; }
+
+.group-avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 50%; font-size: 12px;
+  background: var(--accent-bg); color: var(--accent-ink); object-fit: cover;
+}
+.group-rename {
+  padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text); font-size: 12px;
+}
+.group-mention { background: var(--accent-bg); color: var(--accent-ink); border-radius: 4px; padding: 0 3px; }

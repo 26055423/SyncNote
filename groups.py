@@ -8,6 +8,8 @@
 - 群成员之间**不**因此获得「看全部交易」的权限：整份历史仍然要求互为好友。
 """
 
+import json
+import re
 import secrets
 import time
 
@@ -34,7 +36,8 @@ def initialize(db):
             owner TEXT NOT NULL REFERENCES users(id),
             code TEXT NOT NULL UNIQUE,
             created REAL NOT NULL,
-            notice TEXT NOT NULL DEFAULT ''
+            notice TEXT NOT NULL DEFAULT '',
+            avatar TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS group_members(
             group_id TEXT NOT NULL REFERENCES groups(id),
@@ -51,14 +54,24 @@ def initialize(db):
             kind TEXT NOT NULL DEFAULT 'text',
             text TEXT NOT NULL DEFAULT '',
             ticket TEXT,
-            created REAL NOT NULL
+            created REAL NOT NULL,
+            mentions TEXT NOT NULL DEFAULT '[]',
+            recalled INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages(group_id,id);
         '''
     )
-    # 老库补 notice 列
-    if 'notice' not in [r[1] for r in db.execute('PRAGMA table_info(groups)')]:
+    # 老库补列
+    group_cols = {r[1] for r in db.execute('PRAGMA table_info(groups)')}
+    if 'notice' not in group_cols:
         db.execute("ALTER TABLE groups ADD COLUMN notice TEXT NOT NULL DEFAULT ''")
+    if 'avatar' not in group_cols:
+        db.execute("ALTER TABLE groups ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
+    message_cols = {r[1] for r in db.execute('PRAGMA table_info(group_messages)')}
+    if 'mentions' not in message_cols:
+        db.execute("ALTER TABLE group_messages ADD COLUMN mentions TEXT NOT NULL DEFAULT '[]'")
+    if 'recalled' not in message_cols:
+        db.execute("ALTER TABLE group_messages ADD COLUMN recalled INTEGER NOT NULL DEFAULT 0")
 
 
 def _member(db, gid, uid):
@@ -79,8 +92,15 @@ def _payload(db, row, uid):
     last = db.execute('SELECT person,kind,text,created FROM group_messages WHERE group_id=? ORDER BY id DESC LIMIT 1', (row['id'],)).fetchone()
     mine = _member(db, row['id'], uid)
     unread = 0
+    mentions = 0
     if mine:
-        unread = db.execute('SELECT count(*) FROM group_messages WHERE group_id=? AND id>0 AND created>? AND person<>?', (row['id'], mine['last_read'], uid)).fetchone()[0]
+        unread = db.execute('SELECT count(*) FROM group_messages WHERE group_id=? AND created>? AND person<>? AND recalled=0', (row['id'], mine['last_read'], uid)).fetchone()[0]
+        for r in db.execute('SELECT mentions FROM group_messages WHERE group_id=? AND created>? AND person<>? AND recalled=0', (row['id'], mine['last_read'], uid)):
+            try:
+                if uid in json.loads(r['mentions'] or '[]'):
+                    mentions += 1
+            except ValueError:
+                pass
     return {
         'id': row['id'],
         'name': row['name'],
@@ -88,6 +108,8 @@ def _payload(db, row, uid):
         'code': row['code'] if row['owner'] == uid else '',
         'members': members,
         'notice': row['notice'] if 'notice' in row.keys() else '',
+        'avatar': (row['avatar'] if 'avatar' in row.keys() else '') or '',
+        'mentions': mentions,
         'role': mine['role'] if mine else 'guest',
         'unread': unread,
         'last': ({'person': last['person'], 'kind': last['kind'], 'text': last['text'], 'created': last['created']} if last else None),
@@ -184,7 +206,8 @@ def post(db, uid, gid, text):
     if not 1 <= len(text) <= MAX_TEXT:
         raise GroupError('消息需要 1–%d 个字' % MAX_TEXT)
     now = time.time()
-    db.execute("INSERT INTO group_messages(group_id,person,kind,text,created) VALUES(?,?,'text',?,?)", (gid, uid, text, now))
+    mentions = _parse_mentions(db, gid, text, uid)
+    db.execute("INSERT INTO group_messages(group_id,person,kind,text,created,mentions) VALUES(?,?,'text',?,?,?)", (gid, uid, text, now, json.dumps(mentions)))
     _touch(db, gid, uid, now)
     return {'created': now}
 
@@ -211,6 +234,57 @@ def share_trade(db, uid, gid, ticket):
     return {'id': message_id, 'created': now, 'sent': len(recipients)}
 
 
+def _parse_mentions(db, gid, text, author):
+    """把消息里的 @昵称 解析成成员 id；@所有人 则展开成全部成员（不含自己）。"""
+    rows = db.execute('SELECT u.id,u.nickname FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=?', (gid,)).fetchall()
+    found = []
+    if '@所有人' in text or '@all' in text:
+        found = [r['id'] for r in rows if r['id'] != author]
+    else:
+        for r in rows:
+            name = (r['nickname'] or '').strip()
+            if name and name != author and ('@' + name) in text and r['id'] not in found:
+                found.append(r['id'])
+    return found
+
+
+def recall(db, gid, uid, message_id):
+    """撤回：作者 2 分钟内可撤，群主随时可撤。"""
+    require_member(db, gid, uid)
+    row = db.execute('SELECT * FROM group_messages WHERE id=? AND group_id=?', (message_id, gid)).fetchone()
+    if not row:
+        raise GroupError('消息不存在', 404)
+    group = db.execute('SELECT owner FROM groups WHERE id=?', (gid,)).fetchone()
+    is_owner = bool(group and group['owner'] == uid)
+    if row['person'] != uid and not is_owner:
+        raise GroupError('只能撤回自己的消息', 403)
+    if row['recalled']:
+        return {'ok': True}
+    if row['person'] == uid and not is_owner and time.time() - row['created'] > 120:
+        raise GroupError('超过 2 分钟，不能撤回', 403)
+    db.execute('UPDATE group_messages SET recalled=1 WHERE id=?', (message_id,))
+    return {'ok': True}
+
+
+def rename(db, uid, gid, name=None, avatar=None):
+    """群主改群名 / 群头像。"""
+    group = require_member(db, gid, uid)
+    if group['owner'] != uid:
+        raise GroupError('只有群主可以修改群资料', 403)
+    if name is not None:
+        name = str(name).strip()
+        if not 1 <= len(name) <= MAX_NAME:
+            raise GroupError('群名需要 1–%d 个字' % MAX_NAME)
+        db.execute('UPDATE groups SET name=? WHERE id=?', (name, gid))
+    if avatar is not None:
+        avatar = str(avatar).strip()
+        if avatar and not re.fullmatch(r'avatar(?:[1-9]|1[0-2])', avatar):
+            raise GroupError('群头像不正确')
+        db.execute('UPDATE groups SET avatar=? WHERE id=?', (avatar, gid))
+    row = db.execute('SELECT * FROM groups WHERE id=?', (gid,)).fetchone()
+    return {'name': row['name'], 'avatar': row['avatar']}
+
+
 def messages(db, gid, uid, limit=100):
     require_member(db, gid, uid)
     rows = db.execute(
@@ -219,15 +293,22 @@ def messages(db, gid, uid, limit=100):
     ).fetchall()
     out = []
     for row in reversed(rows):
+        try:
+            mentioned = json.loads(row['mentions'] or '[]')
+        except ValueError:
+            mentioned = []
         item = {
             'id': row['id'],
             'person': row['person'],
             'name': row['nickname'],
             'avatar': row['avatar'],
-            'kind': row['kind'],
+            'kind': 'recalled' if row['recalled'] else row['kind'],
             'text': row['text'],
             'ticket': row['ticket'],
             'created': row['created'],
+            'mentions': mentioned,
+            'mine': row['person'] == uid,
+            'recallable': bool(row['person'] == uid and time.time() - row['created'] <= 120),
         }
         if row['kind'] == 'trade' and row['ticket']:
             share = db.execute(

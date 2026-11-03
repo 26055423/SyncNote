@@ -10,6 +10,8 @@ interface GroupRow {
   members: number;
   role: string;
   notice?: string;
+  avatar?: string;
+  mentions?: number;
   unread: number;
   last?: { person: string; kind: string; text: string; created: number } | null;
 }
@@ -26,10 +28,13 @@ interface GroupMessage {
   person: string;
   name: string;
   avatar: string;
-  kind: 'text' | 'trade';
+  kind: 'text' | 'trade' | 'recalled';
   text: string;
   ticket?: string | null;
   created: number;
+  mentions?: string[];
+  mine?: boolean;
+  recallable?: boolean;
   share?: number | null;
 }
 
@@ -51,6 +56,23 @@ const api = <T,>(path: string, body?: unknown): Promise<T> =>
     return data as T;
   });
 
+/** 把 @昵称 高亮成标签。 */
+function renderMentions(text: string, mentions: string[]) {
+  if (!text.includes('@')) return text;
+  // mentions 里是被 @ 到的用户 id；这里只按文本切分做高亮，数量用于提示。
+  void mentions;
+  const parts = text.split(/(@[\u4e00-\u9fa5A-Za-z0-9_]+)/g);
+  return parts.map((part, index) =>
+    part.startsWith('@') ? (
+      <mark className="group-mention" key={index}>
+        {part}
+      </mark>
+    ) : (
+      <span key={index}>{part}</span>
+    ),
+  );
+}
+
 export function GroupsPanel({ current, onError }: Props) {
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -62,6 +84,7 @@ export function GroupsPanel({ current, onError }: Props) {
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [showMembers, setShowMembers] = useState(false);
   const [noticeDraft, setNoticeDraft] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const fail = useCallback(
@@ -205,6 +228,38 @@ export function GroupsPanel({ current, onError }: Props) {
     }
   };
 
+  const recall = async (id: number) => {
+    if (!active) return;
+    if (!window.confirm('撤回这条消息？')) return;
+    try {
+      await api('/api/groups/recall', { group: active, id });
+      await loadMessages(active);
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const rename = async () => {
+    if (!active || nameDraft === null) return;
+    try {
+      await api('/api/groups/rename', { group: active, name: nameDraft });
+      setNameDraft(null);
+      await loadGroups();
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const copyInvite = async () => {
+    if (!group?.code) return;
+    const link = `${location.origin}/chart?group=${encodeURIComponent(group.code)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      window.prompt('复制这个邀请链接', link);
+    }
+  };
+
   const saveNotice = async () => {
     if (!active || noticeDraft === null) return;
     try {
@@ -260,6 +315,7 @@ export function GroupsPanel({ current, onError }: Props) {
               <small>
                 {row.members} 人{row.role === 'owner' ? ' · 我是群主' : ''}
                 {row.unread ? ` · ${row.unread} 条新消息` : ''}
+                {row.mentions ? ` · ${row.mentions} 条 @你` : ''}
               </small>
             </button>
           ))}
@@ -271,9 +327,38 @@ export function GroupsPanel({ current, onError }: Props) {
       {group ? (
         <div className="group-chat">
           <div className="group-head">
-            <b>{group.name}</b>
+            {group.avatar ? (
+              <img className="group-avatar" src={`/avatars/${group.avatar}.svg`} alt="" />
+            ) : (
+              <span className="group-avatar">{group.name.slice(0, 1)}</span>
+            )}
+            {nameDraft === null ? (
+              <b>{group.name}</b>
+            ) : (
+              <input className="group-rename" value={nameDraft} maxLength={40} onChange={(e) => setNameDraft(e.target.value)} />
+            )}
             <span className="dim">{group.members} 人</span>
-            {group.code ? <code className="dim">邀请码 {group.code}</code> : null}
+            {group.code ? (
+              <button type="button" className="link" onClick={() => void copyInvite()} title={group.code}>
+                复制邀请链接
+              </button>
+            ) : null}
+            {group.role === 'owner' ? (
+              nameDraft === null ? (
+                <button type="button" className="link" onClick={() => setNameDraft(group.name)}>
+                  改名
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="primary" onClick={() => void rename()}>
+                    保存
+                  </button>
+                  <button type="button" className="link" onClick={() => setNameDraft(null)}>
+                    取消
+                  </button>
+                </>
+              )
+            ) : null}
             <button type="button" className="link" onClick={() => void leave()}>
               退出
             </button>
@@ -331,13 +416,22 @@ export function GroupsPanel({ current, onError }: Props) {
                 <div className={`group-message ${message.kind === 'trade' ? 'is-trade' : ''}`} key={message.id}>
                   <small className="dim">
                     {message.name} · {new Date(message.created * 1000).toLocaleString()}
+                    {message.recallable ? (
+                      <button type="button" className="link" onClick={() => void recall(message.id)}>
+                        撤回
+                      </button>
+                    ) : null}
                   </small>
-                  {message.kind === 'trade' ? (
+                  {message.kind === 'recalled' ? (
+                    <div className="dim">{message.name} 撤回了一条消息</div>
+                  ) : message.kind === 'trade' ? (
                     <button type="button" className="group-trade" onClick={() => void openTrade(message)}>
                       交易 #{message.ticket} · 点开看这笔复盘
                     </button>
                   ) : (
-                    <div>{message.text}</div>
+                    <div>
+                      {renderMentions(message.text, message.mentions ?? [])}
+                    </div>
                   )}
                 </div>
               ))

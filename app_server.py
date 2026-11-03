@@ -884,6 +884,12 @@ class Handler(BaseHTTPRequestHandler):
                         result=groups.join(db,uid,str(data.get('code','')))
                     elif path=='/api/groups/leave':
                         result=groups.leave(db,uid,str(data.get('group','')))
+                    elif path=='/api/groups/recall':
+                        mid=data.get('id')
+                        if not isinstance(mid,int) or isinstance(mid,bool):raise Error('消息编号不正确')
+                        result=groups.recall(db,str(data.get('group','')),uid,mid)
+                    elif path=='/api/groups/rename':
+                        result=groups.rename(db,uid,str(data.get('group','')),data.get('name'),data.get('avatar'))
                     elif path=='/api/groups/notice':
                         result=groups.set_notice(db,uid,str(data.get('group','')),str(data.get('notice','')))
                     elif path=='/api/groups/kick':

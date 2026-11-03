@@ -129,6 +129,7 @@ export default function App() {
   const local = useLocalTerminal();
   const localConnected = local.phase === 'connected';
   const params = useMemo(() => new URLSearchParams(location.search), []);
+
   const [board, setBoard] = useState<Board | null>(null);
   const [entry, setEntry] = useState<Entry | null>(null);
   const [target, setTarget] = useState<{ person: string; ticket: string; t?: number } | null>(null);
@@ -440,6 +441,20 @@ export default function App() {
       alive = false;
     };
   }, [mode, liveBars, localConnected]);
+
+  // 邀请链接：/chart?group=<邀请码> 直接入群并切到「群组」。
+  useEffect(() => {
+    const code = params.get('group');
+    if (!code || !board?.user.id) return;
+    void api('/api/groups/join', { code })
+      .then(() => {
+        setTab('groups');
+        const next = new URLSearchParams(location.search);
+        next.delete('group');
+        history.replaceState(null, '', location.pathname + (next.toString() ? '?' + next.toString() : ''));
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [board?.user.id]);
 
   /* ------------------------------------------------- 会话：消息 / 关注 */
 
