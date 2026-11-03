@@ -751,3 +751,39 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .status-chip i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .8; }
 .status-chip.on { color: var(--good-ink); border-color: var(--good-line); background: var(--good-bg); }
 .status-chip.sync { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-soft); }
+
+/* ── 群组面板 ─────────────────────────────────────────────── */
+.group-create { display: flex; gap: 6px; margin: 8px 0; }
+.group-create input {
+  flex: 1; min-width: 0; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+}
+.group-create button {
+  padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); cursor: pointer;
+}
+.group-create button:disabled { opacity: 0.5; cursor: default; }
+.group-list { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.group-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-soft);
+  background: var(--panel-2); color: var(--text); cursor: pointer; text-align: left;
+}
+.group-row.is-active { border-color: var(--accent); background: var(--accent-bg); }
+.group-row small { color: var(--dim); }
+.group-chat { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.group-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.group-head code { font-size: 11px; }
+.group-head .link { margin-left: auto; }
+.group-messages {
+  max-height: 320px; overflow-y: auto; display: flex; flex-direction: column;
+  gap: 8px; margin: 8px 0; padding-right: 4px;
+}
+.group-message { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.group-message.is-trade { border-left: 2px solid var(--accent); padding-left: 8px; }
+.group-trade {
+  align-self: flex-start; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--accent); background: var(--accent-bg); color: var(--accent-ink);
+  cursor: pointer; font-size: 12px;
+}
+.group-share { margin-top: 6px; width: 100%; }

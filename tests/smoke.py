@@ -211,6 +211,35 @@ def main():
    alice.request('/api/mt5/history-sync',tampered,status=400,extra=history_bearer)
    anon.request('/api/mt5/history-sync',history_body('batch-0004'),status=401)
    ensure(any(str(row.get('ticket','')).startswith('deal:') for row in alice.request('/api/history')['history']),'imported trades show up in the site history')
+
+   # ---- 群：建群 / 邀请码加入 / 群聊 / 把一笔交易发进群 ----
+   member=Client(base);register(member,'gg')
+   outsider=Client(base);register(outsider,'hh')
+   g=alice.request('/api/groups/create',{'name':'验收群'})
+   ensure(bool(g['code']) and g['role']=='owner','群主拿到邀请码')
+   member.request('/api/groups/join',{'code':g['code']})
+   ensure(alice.request('/api/groups/messages?group='+g['id'])['messages']==[],'新群没有消息')
+   alice.request('/api/groups/message',{'group':g['id'],'text':'大家好'})
+   ensure(any(m['text']=='大家好' for m in member.request('/api/groups/messages?group='+g['id'])['messages']),'群聊成员可见')
+   outsider.request('/api/groups/messages?group='+g['id'],status=403)
+   myid=alice.request('/api/me')['user']['id']
+   with sqlite3.connect(db) as conn: ticket=conn.execute('SELECT ticket FROM trades WHERE person=? ORDER BY rowid DESC LIMIT 1',(myid,)).fetchone()[0]
+   member.request('/api/history?person='+a['id'],status=403)
+   share=alice.request('/api/groups/share',{'group':g['id'],'ticket':ticket})
+   ensure(share['sent']>=1,'发进群时给成员各写一条 share')
+   card=[m for m in member.request('/api/groups/messages?group='+g['id'])['messages'] if m['kind']=='trade'][0]
+   ensure(card['share'],'成员拿到这条交易的 share id')
+   entry=member.request('/api/chart/entry?share='+str(card['share']))
+   ensure(entry['owner']['id']==a['id'],'非好友也能打开群里分享的这一笔')
+   ensure(bool(entry['review']['trade']),'这单的复盘数据完整')
+   member.request('/api/history?person='+a['id'],status=403)
+   outsider.request('/api/chart/entry?share='+str(card['share']),status=404)
+   opened=member.request('/api/groups/open',{'group':g['id'],'id':card['id']})
+   ensure(opened['share']==card['share'],'重复打开复用同一条 share')
+   member.request('/api/groups/share',{'group':g['id'],'ticket':ticket},status=403)
+   alice.request('/api/groups/leave',{'group':g['id']})
+   member.request('/api/groups/leave',{'group':g['id']})
+   member.request('/api/groups/messages?group='+g['id'],status=404)
    ensure(alice.request('/api/profile')['mt5']['mode']=='history','profile reports history-only mode')
    imported=history_body('batch-0005');imported['website_user_id']=a['id']
    ensure(alice.request('/api/mt5/history-import',imported)['ok'],'browser-proxied import uses the same ingest')

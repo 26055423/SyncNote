@@ -67,3 +67,12 @@ export function ReviewIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function GroupsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 6.5h16v9.2H9.6L5.4 19v-3.3H4z" />
+      <path d="M8 10.4h8M8 13.1h5" />
+    </svg>
+  );
+}

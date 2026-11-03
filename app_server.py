@@ -4,6 +4,7 @@ import client_address
 import auth_security
 import bars
 import chart
+import groups
 import live
 import local_ea
 import sync_history
@@ -93,6 +94,7 @@ with connect() as db:
     bars.initialize(db)
     market.initialize(db)
     chart.initialize(db)
+    groups.initialize(db)
     if os.environ.get('EA_HUB_ENABLE','1')!='0':HUB.start()
     if not db.execute("SELECT 1 FROM security_config WHERE key='sessions-30days'").fetchone():
         db.execute('UPDATE sessions SET expires=? WHERE expires>?',(time.time()+2592000,time.time()))
@@ -503,6 +505,15 @@ class Handler(BaseHTTPRequestHandler):
                                 'can_review':True,
                             })
                         return self.reply({'sources':rows,'personal':mine})
+                    if path=='/api/groups':
+                        return self.reply({'groups':groups.groups_of(db,uid)})
+                    if path=='/api/groups/messages':
+                        gid=str(q.get('group',[''])[0])
+                        try:
+                            limit=int(q.get('limit',['100'])[0])
+                        except ValueError:
+                            limit=100
+                        return self.reply({'messages':groups.messages(db,gid,uid,limit)})
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
@@ -631,6 +642,7 @@ class Handler(BaseHTTPRequestHandler):
         except sync_history.HistoryError as e:self.reply({'error':e.text},e.code)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)
+        except groups.GroupError as e:self.reply({'error':e.text},e.code)
         except Error as e:self.reply({'error':e.text},e.code)
         except Exception:self.reply({'error':'服务暂时不可用'},500)
     def do_POST(self):
@@ -864,84 +876,111 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/password':
                         if not pw_ok(data.get('current_password'),u['password']):raise Error('当前密码不正确',403)
                         pw=pw_hash(data.get('new_password'));db.execute('DELETE FROM trusted_devices WHERE user_id=?',(uid,));db.execute('DELETE FROM login_pending WHERE user_id=?',(uid,));db.execute('UPDATE users SET password=? WHERE id=?',(pw,uid));db.execute('DELETE FROM sessions WHERE user_id=?',(uid,));cookie=self.session(db,uid)
+                    elif path=='/api/groups/create':
+                        result=groups.create(db,uid,str(data.get('name','')))
+                    elif path=='/api/groups/join':
+                        result=groups.join(db,uid,str(data.get('code','')))
+                    elif path=='/api/groups/leave':
+                        result=groups.leave(db,uid,str(data.get('group','')))
+                    elif path=='/api/groups/kick':
+                        result=groups.kick(db,uid,str(data.get('group','')),str(data.get('target','')))
+                    elif path=='/api/groups/message':
+                        result=groups.post(db,uid,str(data.get('group','')),str(data.get('text','')))
+                    elif path=='/api/groups/share':
+                        try:
+                            result=groups.share_trade(db,uid,str(data.get('group','')),str(data.get('ticket','')))
+                        except groups.GroupError:
+                            raise
+                        except Exception as _e:
+                            raise Error('分享失败: '+type(_e).__name__+' '+str(_e)[:160])
+                    elif path=='/api/groups/open':
+                        mid=data.get('id')
+                        if not isinstance(mid,int) or isinstance(mid,bool):raise Error('消息编号不正确')
+                        result=groups.open_trade(db,str(data.get('group','')),uid,mid)
                     elif path in ('/api/friends/request','/api/follow'):
-                      target=data.get('target')
-                      row=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone() if isinstance(target,str) else None
-                      if not row or target==uid:raise Error('好友对象不正确')
-                      st=edge_state(db,uid,target)
-                      if st and st['i_blocked']:raise Error('你已把对方拉黑，先在黑名单里解除')
-                      if st and st['they_blocked']:raise Error('对方已把你拉黑',403)
-                      if st and st['i_deleted']:
-                        db.execute('UPDATE friend_edges SET '+('a' if friend_pair(uid,target)[0]==uid else 'b')+'_deleted=0 WHERE a=? AND b=?',friend_pair(uid,target))
+                        target=data.get('target')
+                        row=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone() if isinstance(target,str) else None
+                        if not row or target==uid:raise Error('好友对象不正确')
                         st=edge_state(db,uid,target)
-                      if st and st['status']=='accepted' and are_friends(db,uid,target):result['status']='friend'
-                      elif st and st['status']=='pending' and st['requested_by']==uid:result['status']='pending'
-                      elif st and st['status']=='pending' and st['requested_by']==target:
+                        if st and st['i_blocked']:raise Error('你已把对方拉黑，先在黑名单里解除')
+                        if st and st['they_blocked']:raise Error('对方已把你拉黑',403)
+                        if st and st['i_deleted']:
+                            a,b=friend_pair(uid,target)
+                            side='a' if a==uid else 'b'
+                            db.execute('UPDATE friend_edges SET '+side+'_deleted=0 WHERE a=? AND b=?',(a,b))
+                            st=edge_state(db,uid,target)
+                        if st and st['status']=='accepted' and are_friends(db,uid,target):
+                            result['status']='friend'
+                        elif st and st['status']=='pending' and st['requested_by']==uid:
+                            result['status']='pending'
+                        elif st and st['status']=='pending' and st['requested_by']==target:
+                            a,b=friend_pair(uid,target)
+                            db.execute("UPDATE friend_edges SET status='accepted',decided=?,a_deleted=0,b_deleted=0 WHERE a=? AND b=?",(now,a,b))
+                            db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
+                            result['status']='friend'
+                        else:
+                            if not row['allow_follow']:raise Error('对方暂不接受好友申请',403)
+                            a,b=friend_pair(uid,target)
+                            if st:db.execute("UPDATE friend_edges SET status='pending',requested_by=?,created=?,decided=NULL WHERE a=? AND b=?",(uid,now,a,b))
+                            else:db.execute("INSERT INTO friend_edges(a,b,status,requested_by,created) VALUES(?,?,'pending',?,?)",(a,b,uid,now))
+                            db.execute('INSERT INTO social_notifications(recipient,actor,created) VALUES(?,?,?)',(target,uid,now))
+                            result['status']='pending'
+                    elif path=='/api/friends/accept':
+                        target=data.get('target')
+                        if relation(db,uid,target)!='incoming':raise Error('没有待通过的好友申请')
                         a,b=friend_pair(uid,target)
                         db.execute("UPDATE friend_edges SET status='accepted',decided=?,a_deleted=0,b_deleted=0 WHERE a=? AND b=?",(now,a,b))
                         db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
                         result['status']='friend'
-                      else:
-                        if not row['allow_follow']:raise Error('对方暂不接受好友申请',403)
-                        a,b=friend_pair(uid,target)
-                        if st:db.execute("UPDATE friend_edges SET status='pending',requested_by=?,created=?,decided=NULL WHERE a=? AND b=?",(uid,now,a,b))
-                        else:db.execute("INSERT INTO friend_edges(a,b,status,requested_by,created) VALUES(?,?,'pending',?,?)",(a,b,uid,now))
-                        db.execute('INSERT INTO social_notifications(recipient,actor,created) VALUES(?,?,?)',(target,uid,now))
-                        result['status']='pending'
-                    elif path=='/api/friends/accept':
-                      target=data.get('target')
-                      if relation(db,uid,target)!='incoming':raise Error('没有待通过的好友申请')
-                      a,b=friend_pair(uid,target)
-                      db.execute("UPDATE friend_edges SET status='accepted',decided=?,a_deleted=0,b_deleted=0 WHERE a=? AND b=?",(now,a,b))
-                      db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
-                      result['status']='friend'
                     elif path=='/api/friends/reject':
-                      target=data.get('target')
-                      if relation(db,uid,target)!='incoming':raise Error('没有待通过的好友申请')
-                      a,b=friend_pair(uid,target)
-                      db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b))
-                      db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
-                      result['status']='none'
+                        target=data.get('target')
+                        if relation(db,uid,target)!='incoming':raise Error('没有待通过的好友申请')
+                        a,b=friend_pair(uid,target)
+                        db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b))
+                        db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
+                        result['status']='none'
                     elif path in ('/api/friends/remove','/api/unfollow'):
-                      # 微信式「删除好友」：只在自己这一侧标记，对方列表里还留着你，但他的消息/复盘你看不到、我的也对他不可见。
-                      target=data.get('target')
-                      if not isinstance(target,str):raise Error('好友对象不正确')
-                      st=edge_state(db,uid,target)
-                      if not st:result['status']='none'
-                      elif st['status']=='pending' and st['requested_by']==uid:
-                        a,b=friend_pair(uid,target);db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b));result['status']='none'
-                      elif st['status']=='pending':
-                        raise Error('对方已经申请过你，请到「好友申请」里处理')
-                      else:
+                        target=data.get('target')
+                        if not isinstance(target,str):raise Error('好友对象不正确')
+                        st=edge_state(db,uid,target)
+                        if not st:result['status']='none'
+                        elif st['status']=='pending' and st['requested_by']==uid:
+                            a,b=friend_pair(uid,target)
+                            db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b))
+                            result['status']='none'
+                        elif st['status']=='pending':
+                            raise Error('对方已经申请过你，请到「好友申请」里处理')
+                        else:
+                            a,b=friend_pair(uid,target)
+                            side='a' if a==uid else 'b'
+                            db.execute('UPDATE friend_edges SET '+side+'_deleted=1 WHERE a=? AND b=?',(a,b))
+                            result['status']='deleted'
+                    elif path in ('/api/friends/block','/api/friends/unblock'):
+                        target=data.get('target')
+                        if not isinstance(target,str):raise Error('好友对象不正确')
+                        if target==uid:raise Error('不能对自己操作')
                         a,b=friend_pair(uid,target)
                         side='a' if a==uid else 'b'
-                        db.execute('UPDATE friend_edges SET '+side+'_deleted=1 WHERE a=? AND b=?',(a,b))
-                        result['status']='deleted'
-                    elif path in ('/api/friends/block','/api/friends/unblock'):
-                      target=data.get('target')
-                      if not isinstance(target,str):raise Error('好友对象不正确')
-                      if target==uid:raise Error('不能对自己操作')
-                      a,b=friend_pair(uid,target);side='a' if a==uid else 'b'
-                      st=edge_state(db,uid,target)
-                      if path=='/api/friends/block':
-                        if not st:
-                          db.execute('INSERT INTO friend_edges(a,b,status,requested_by,created) VALUES(?,?,?,?,?)',(a,b,'accepted',uid,now))
-                        db.execute('UPDATE friend_edges SET '+side+'_blocked=1, '+side+'_deleted=0 WHERE a=? AND b=?',(a,b))
-                        db.execute('DELETE FROM social_notifications WHERE actor=? AND recipient=?',(uid,target))
-                        result['status']='blocked'
-                      else:
-                        if st:db.execute('UPDATE friend_edges SET '+side+'_blocked=0 WHERE a=? AND b=?',(a,b))
-                        result['status']='unblocked'
+                        st=edge_state(db,uid,target)
+                        if path=='/api/friends/block':
+                            if not st:
+                                db.execute('INSERT INTO friend_edges(a,b,status,requested_by,created) VALUES(?,?,?,?,?)',(a,b,'accepted',uid,now))
+                            db.execute('UPDATE friend_edges SET '+side+'_blocked=1, '+side+'_deleted=0 WHERE a=? AND b=?',(a,b))
+                            db.execute('DELETE FROM social_notifications WHERE actor=? AND recipient=?',(uid,target))
+                            result['status']='blocked'
+                        else:
+                            if st:db.execute('UPDATE friend_edges SET '+side+'_blocked=0 WHERE a=? AND b=?',(a,b))
+                            result['status']='unblocked'
                     elif path in ('/api/friends/hide','/api/friends/mute'):
-                      # 类微信朋友圈权限：不让对方看我的复盘 / 我不看对方的复盘。
-                      target=data.get('target')
-                      if not isinstance(target,str) or not are_friends(db,uid,target):raise Error('好友关系不正确')
-                      on=bool(data.get('on',True))
-                      a,b=friend_pair(uid,target);side='a' if a==uid else 'b'
-                      col=side+('_hide' if path=='/api/friends/hide' else '_mute')
-                      db.execute('UPDATE friend_edges SET '+col+'=? WHERE a=? AND b=?',(1 if on else 0,a,b))
-                      result['status']='ok'
-                    
+                        target=data.get('target')
+                        if not isinstance(target,str) or not are_friends(db,uid,target):raise Error('好友关系不正确')
+                        on=bool(data.get('on',True))
+                        a,b=friend_pair(uid,target)
+                        side='a' if a==uid else 'b'
+                        col=side+('_hide' if path=='/api/friends/hide' else '_mute')
+                        db.execute('UPDATE friend_edges SET '+col+'=? WHERE a=? AND b=?',(1 if on else 0,a,b))
+                        result['status']='ok'
+
                     elif path=='/api/mt5/token':
                         token=secrets.token_urlsafe(36);db.execute('INSERT INTO mt5_links(user_id,token_hash,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET token_hash=excluded.token_hash,updated=excluded.updated',(uid,digest(token),now));result['token']=token
                     elif path=='/api/mt5/unlink':
@@ -958,6 +997,7 @@ class Handler(BaseHTTPRequestHandler):
         except sync_history.HistoryError as e:self.reply({'error':e.text},e.code)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)
+        except groups.GroupError as e:self.reply({'error':e.text},e.code)
         except Error as e:
             if urlparse(self.path).path=='/api/snapshot':print('Snapshot rejected:',e.code,e.text,flush=True)
             self.reply({'error':e.text},e.code)

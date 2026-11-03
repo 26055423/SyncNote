@@ -1,0 +1,281 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+/** 群组面板：建群 / 邀请码加入 / 群聊 / 把当前复盘发进群。 */
+
+interface GroupRow {
+  id: string;
+  name: string;
+  owner: string;
+  code: string;
+  members: number;
+  role: string;
+  unread: number;
+  last?: { person: string; kind: string; text: string; created: number } | null;
+}
+
+interface GroupMessage {
+  id: number;
+  person: string;
+  name: string;
+  avatar: string;
+  kind: 'text' | 'trade';
+  text: string;
+  ticket?: string | null;
+  created: number;
+  share?: number | null;
+}
+
+interface Props {
+  /** 当前正在看的复盘（有的话），用于「发到群」。 */
+  current?: { ticket: string; person?: string } | null;
+  onError?: (message: string) => void;
+}
+
+const api = <T,>(path: string, body?: unknown): Promise<T> =>
+  fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    credentials: 'same-origin',
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }).then(async (response) => {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error((data as { error?: string }).error ?? '请求失败');
+    return data as T;
+  });
+
+export function GroupsPanel({ current, onError }: Props) {
+  const [groups, setGroups] = useState<GroupRow[]>([]);
+  const [active, setActive] = useState<string | null>(null);
+  const [messages, setMessages] = useState<GroupMessage[]>([]);
+  const [draft, setDraft] = useState('');
+  const [name, setName] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  const fail = useCallback(
+    (error: unknown) => {
+      const text = error instanceof Error ? error.message : String(error);
+      onError?.(text);
+    },
+    [onError],
+  );
+
+  const loadGroups = useCallback(async () => {
+    try {
+      const data = await api<{ groups: GroupRow[] }>('/api/groups');
+      setGroups(data.groups);
+      setActive((prev) => prev ?? data.groups[0]?.id ?? null);
+    } catch (error) {
+      fail(error);
+    }
+  }, [fail]);
+
+  const loadMessages = useCallback(
+    async (gid: string) => {
+      try {
+        const data = await api<{ messages: GroupMessage[] }>(`/api/groups/messages?group=${encodeURIComponent(gid)}`);
+        setMessages(data.messages);
+      } catch (error) {
+        fail(error);
+      }
+    },
+    [fail],
+  );
+
+  useEffect(() => {
+    void loadGroups();
+    const timer = window.setInterval(() => void loadGroups(), 15000);
+    return () => window.clearInterval(timer);
+  }, [loadGroups]);
+
+  useEffect(() => {
+    if (!active) return;
+    void loadMessages(active);
+    const timer = window.setInterval(() => void loadMessages(active), 5000);
+    return () => window.clearInterval(timer);
+  }, [active, loadMessages]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  const group = useMemo(() => groups.find((row) => row.id === active) ?? null, [groups, active]);
+
+  const create = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    try {
+      const row = await api<GroupRow>('/api/groups/create', { name: name.trim() });
+      setName('');
+      await loadGroups();
+      setActive(row.id);
+    } catch (error) {
+      fail(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const join = async () => {
+    if (!code.trim() || busy) return;
+    setBusy(true);
+    try {
+      const row = await api<GroupRow>('/api/groups/join', { code: code.trim() });
+      setCode('');
+      await loadGroups();
+      setActive(row.id);
+    } catch (error) {
+      fail(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || !active || busy) return;
+    setDraft('');
+    try {
+      await api('/api/groups/message', { group: active, text });
+      await loadMessages(active);
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const shareTrade = async () => {
+    if (!active || !current?.ticket || busy) return;
+    setBusy(true);
+    try {
+      await api('/api/groups/share', { group: active, ticket: current.ticket });
+      await loadMessages(active);
+    } catch (error) {
+      fail(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openTrade = async (message: GroupMessage) => {
+    if (!active) return;
+    try {
+      const row = await api<{ share: number }>('/api/groups/open', { group: active, id: message.id });
+      location.href = `/chart?share=${row.share}`;
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const leave = async () => {
+    if (!active) return;
+    if (!window.confirm('退出这个群？')) return;
+    try {
+      await api('/api/groups/leave', { group: active });
+      setActive(null);
+      setMessages([]);
+      await loadGroups();
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  return (
+    <div className="pane">
+      <h3>
+        群组 <small>{groups.length}</small>
+      </h3>
+      <div className="group-create">
+        <input value={name} maxLength={40} placeholder="新建群（群名）" onChange={(e) => setName(e.target.value)} />
+        <button type="button" onClick={() => void create()} disabled={!name.trim() || busy}>
+          建群
+        </button>
+      </div>
+      <div className="group-create">
+        <input value={code} maxLength={12} placeholder="邀请码加入" onChange={(e) => setCode(e.target.value)} />
+        <button type="button" onClick={() => void join()} disabled={!code.trim() || busy}>
+          加入
+        </button>
+      </div>
+
+      {groups.length ? (
+        <div className="group-list">
+          {groups.map((row) => (
+            <button
+              type="button"
+              key={row.id}
+              className={`group-row ${row.id === active ? 'is-active' : ''}`}
+              onClick={() => setActive(row.id)}
+            >
+              <b>{row.name}</b>
+              <small>
+                {row.members} 人{row.role === 'owner' ? ' · 我是群主' : ''}
+                {row.unread ? ` · ${row.unread} 条新消息` : ''}
+              </small>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="dim">还没有群。建一个，或用别人给的邀请码加入。</p>
+      )}
+
+      {group ? (
+        <div className="group-chat">
+          <div className="group-head">
+            <b>{group.name}</b>
+            <span className="dim">{group.members} 人</span>
+            {group.code ? <code className="dim">邀请码 {group.code}</code> : null}
+            <button type="button" className="link" onClick={() => void leave()}>
+              退出
+            </button>
+          </div>
+          <div className="group-messages">
+            {messages.length ? (
+              messages.map((message) => (
+                <div className={`group-message ${message.kind === 'trade' ? 'is-trade' : ''}`} key={message.id}>
+                  <small className="dim">
+                    {message.name} · {new Date(message.created * 1000).toLocaleString()}
+                  </small>
+                  {message.kind === 'trade' ? (
+                    <button type="button" className="group-trade" onClick={() => void openTrade(message)}>
+                      交易 #{message.ticket} · 点开看这笔复盘
+                    </button>
+                  ) : (
+                    <div>{message.text}</div>
+                  )}
+                </div>
+              ))
+            ) : (
+              <p className="dim">还没有消息。</p>
+            )}
+            <div ref={endRef} />
+          </div>
+          <p className="chat-hint">群里能看到分享的那笔交易；完整交易列表仍然只有好友能看。</p>
+          <div className="chat-form">
+            <textarea
+              value={draft}
+              rows={2}
+              maxLength={1000}
+              placeholder="在群里说点什么…"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            <button type="button" className="primary" onClick={() => void send()} disabled={!draft.trim()}>
+              发送
+            </button>
+          </div>
+          {current?.ticket ? (
+            <button type="button" className="tool-btn group-share" onClick={() => void shareTrade()} disabled={busy}>
+              把这笔复盘（#{current.ticket}）发到群
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}

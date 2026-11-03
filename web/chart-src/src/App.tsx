@@ -9,7 +9,8 @@ import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
-import { FriendsIcon, MailIcon, ReviewIcon, TradeIcon } from './ui/icons';
+import { GroupsPanel } from './GroupsPanel';
+import { FriendsIcon, GroupsIcon, MailIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
 import { localHistorySync } from './localHistorySync';
@@ -75,7 +76,7 @@ interface ShareRow {
   trade: any;
 }
 
-type Tab = 'trade' | 'friends' | 'review' | 'inbox';
+type Tab = 'trade' | 'friends' | 'groups' | 'review' | 'inbox';
 
 /* 复盘图一次抓多宽的行情：按锚点往前/往后取多少天（每个基础周期各自独立）。 */
 const REVIEW_BASE_TFS = ['M1', 'M5', 'M15', 'H1'] as const;
@@ -1117,6 +1118,7 @@ export default function App() {
                 { key: 'trade', label: '交易', Icon: TradeIcon },
                 { key: 'inbox', label: '消息', Icon: MailIcon },
                 { key: 'friends', label: '好友', Icon: FriendsIcon },
+                { key: 'groups', label: '群组', Icon: GroupsIcon },
               ] as Array<{ key: Tab; label: string; Icon: typeof TradeIcon }>).map(({ key, label, Icon }) => {
                 const fresh = key === 'inbox' && unseen > 0;
                 return (
@@ -1264,6 +1266,10 @@ export default function App() {
                     <button type="button" className="primary" onClick={() => void sendChat()} disabled={!chat.trim()}>发送</button>
                   </div>
                 </div>
+              ) : null}
+
+              {tab === 'groups' ? (
+                <GroupsPanel current={target?.ticket ? { ticket: target.ticket, person: target.person } : null} onError={setError} />
               ) : null}
 
               {tab === 'friends' ? (
