@@ -49,6 +49,7 @@ with connect() as db:
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL,avatar TEXT NOT NULL DEFAULT '',bio TEXT NOT NULL DEFAULT '',password TEXT NOT NULL,allow_follow INTEGER NOT NULL DEFAULT 1,share_data INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS follows(follower TEXT NOT NULL REFERENCES users(id),target TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL,PRIMARY KEY(follower,target),CHECK(follower<>target));
+    CREATE TABLE IF NOT EXISTS friend_edges(a TEXT NOT NULL REFERENCES users(id),b TEXT NOT NULL REFERENCES users(id),status TEXT NOT NULL,requested_by TEXT NOT NULL,created REAL NOT NULL,decided REAL,PRIMARY KEY(a,b),CHECK(a<b));
     CREATE TABLE IF NOT EXISTS mt5_links(user_id TEXT PRIMARY KEY REFERENCES users(id),token_hash TEXT UNIQUE,account_key TEXT,updated REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS snapshots(person TEXT PRIMARY KEY,payload TEXT NOT NULL,updated REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS trades(person TEXT NOT NULL,ticket TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(person,ticket));
@@ -80,6 +81,11 @@ with connect() as db:
     if 'locked' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0')
 with connect() as db:
     if 'share_reviews' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN share_reviews INTEGER NOT NULL DEFAULT 0')
+    # 老的「单向关注」升级成好友关系：互关→已通过，单向→待对方通过（幂等）。
+    try:
+        migrate_friends(db)
+    except Exception:
+        pass
     auth_security.initialize(db)
     journal.initialize(db)
     sync_history.initialize(db)
@@ -133,8 +139,59 @@ def is_admin(u):
 
 
 def public(u):return {**{k:u[k] for k in ('id','username','nickname','avatar','bio','allow_follow','share_data','share_reviews','onboarding_step')},'role':'admin' if u['username']==ADMIN_USERNAME else 'user'}
+def friend_pair(x,y):
+    """好友关系用无序对存：字典序小的当 a，保证 (A,B) 只有一行。"""
+    return (x,y) if x<y else (y,x)
+def friend_edge(db,x,y):
+    a,b=friend_pair(x,y)
+    return db.execute('SELECT * FROM friend_edges WHERE a=? AND b=?',(a,b)).fetchone()
+def are_friends(db,x,y):
+    """是否为「已通过」的双向好友。"""
+    if x==y:return True
+    row=friend_edge(db,x,y)
+    return bool(row and row['status']=='accepted')
+def relation(db,uid,target):
+    """none / friend / incoming（对方申请了我）/ outgoing（我申请了对方）。"""
+    if uid==target:return 'self'
+    row=friend_edge(db,uid,target)
+    if not row:return 'none'
+    if row['status']=='accepted':return 'friend'
+    if row['status']=='pending':return 'outgoing' if row['requested_by']==uid else 'incoming'
+    return 'none'
+def friends_of(db,uid):
+    """所有已通过好友的 user 行。"""
+    return db.execute("SELECT u.* FROM friend_edges f JOIN users u ON u.id=CASE WHEN f.a=? THEN f.b ELSE f.a END WHERE (f.a=? OR f.b=?) AND f.status='accepted' ORDER BY f.decided DESC",(uid,uid,uid)).fetchall()
+def friend_requests(db,uid):
+    """待通过的好友申请：(incoming, outgoing)，每项是 user 字典 + asked 时间。"""
+    incoming=[];outgoing=[]
+    rows=db.execute("SELECT f.a,f.b,f.requested_by,f.created,CASE WHEN f.a=? THEN f.b ELSE f.a END AS other FROM friend_edges f WHERE f.status='pending' AND (f.a=? OR f.b=?)",(uid,uid,uid)).fetchall()
+    for r in rows:
+        u=db.execute('SELECT * FROM users WHERE id=?',(r['other'],)).fetchone()
+        if not u:continue
+        item={k:u[k] for k in u.keys()};item['asked']=r['created']
+        if r['requested_by']==uid:outgoing.append(item)
+        else:incoming.append(item)
+    return incoming,outgoing
+def migrate_friends(db):
+    """老 follows 关系搬进 friend_edges：互关→好友，单向→待对方通过。幂等。"""
+    rows=db.execute('SELECT follower,target,created FROM follows').fetchall()
+    pairs={}
+    for r in rows:pairs.setdefault(friend_pair(r['follower'],r['target']),[]).append((r['follower'],r['created']))
+    moved=0
+    for (a,b),edges in pairs.items():
+        if db.execute('SELECT 1 FROM friend_edges WHERE a=? AND b=?',(a,b)).fetchone():continue
+        mutual=len(edges)>=2
+        stamp=min(e[1] for e in edges)
+        db.execute('INSERT INTO friend_edges(a,b,status,requested_by,created,decided) VALUES(?,?,?,?,?,?)',
+                   (a,b,'accepted' if mutual else 'pending',edges[0][0],stamp,stamp if mutual else None))
+        moved+=1
+    return moved
 def visible(db,uid,target):
-    return uid==target or bool(db.execute('SELECT 1 FROM follows JOIN users ON users.id=follows.target WHERE follower=? AND target=? AND share_data=1',(uid,target)).fetchone())
+    """能不能看对方的交易数据：本人，或已通过的双向好友，且对方开了「分享交易数据」。"""
+    if uid==target:return True
+    if not are_friends(db,uid,target):return False
+    row=db.execute('SELECT share_data FROM users WHERE id=?',(target,)).fetchone()
+    return bool(row and row['share_data'])
 def numeric(v):
     if isinstance(v,bool) or not isinstance(v,(float,int)) or not math.isfinite(v):raise Error('数值格式不正确')
 def validate(data):
@@ -280,7 +337,7 @@ class Handler(BaseHTTPRequestHandler):
                             row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
                         owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
                         if not owner:raise Error('用户不存在',404)
-                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
+                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
                         review=journal.review(db,target,ticket,db.execute('SELECT * FROM broker_clocks WHERE person=?',(target,)).fetchone(),utc_trade)
                         note=journal.notes(db,target)['notes'].get(str(ticket)) if (target==uid or row or owner['share_reviews']) else None
                         # 分享切片优先：收件人看到的是分享人当时那个窗口，而不是他后来改过的存档。
@@ -304,7 +361,7 @@ class Handler(BaseHTTPRequestHandler):
                             row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
                         owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
                         if not owner:raise Error('用户不存在',404)
-                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
+                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
                         trade=journal.trade(db,target,ticket)
                         source=bars.source_of_trade(trade)
                         if not source:
@@ -331,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
                             row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
                         owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
                         if not owner:raise Error('用户不存在',404)
-                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
+                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
                         trade=journal.trade(db,target,ticket)
                         source=bars.source_of_trade(trade)
                         if not source:
@@ -402,7 +459,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({**(journal.notes(db,target) if can else {'categories':journal.DEFAULT_TAGS,'notes':{}}),'can_view':can,'editable':target==uid})
                     if path=='/api/trade-review':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
-                        if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
+                        if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
                         return self.reply(journal.review(db,target,q.get('ticket',[''])[0],db.execute('SELECT * FROM broker_clocks WHERE person=?',(target,)).fetchone(),utc_trade))
                     if path=='/api/sessions':
                         cookies=SimpleCookie();cookies.load(self.headers.get('Cookie',''));current=digest(cookies['tongpin_session'].value)
@@ -427,26 +484,28 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'invites':items,'sudo_until':self.sudo_until(db)})
                     if path=='/api/me':return self.reply({'user':public(u)})
                     if path=='/api/profile':
-                        following=[public(r) for r in db.execute('SELECT users.* FROM follows JOIN users ON users.id=follows.target WHERE follower=? ORDER BY follows.created DESC',(uid,))]
-                        followers=[public(r) for r in db.execute('SELECT users.* FROM follows JOIN users ON users.id=follows.follower WHERE target=? ORDER BY follows.created DESC',(uid,))]
+                        # following / followers 保留旧字段名给老页面用，语义统一成「好友」。
+                        incoming,outgoing=friend_requests(db,uid)
+                        following=[public(r) for r in friends_of(db,uid)]
+                        followers=following
                         link=db.execute('SELECT * FROM mt5_links WHERE user_id=?',(uid,)).fetchone();snap=db.execute('SELECT * FROM snapshots WHERE person=?',(uid,)).fetchone()
                         last_history=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=?',(uid,)).fetchone()[0]
                         configured=bool(link and (link['token_hash'] or link['account_key']))
                         online=bool(configured and ((snap and time.time()-snap['updated']<=45 and json.loads(snap['payload']).get('online',True)) or (last_history and time.time()-last_history<=90)))
-                        return self.reply({'user':public(u),'following':following,'followers':followers,'mt5':{'configured':configured,'bound':bool(link and link['account_key']),'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'}})
+                        return self.reply({'user':public(u),'following':following,'followers':followers,'friends':following,'incoming':[public(r) for r in incoming],'outgoing':[public(r) for r in outgoing],'mt5':{'configured':configured,'bound':bool(link and link['account_key']),'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'}})
                     if path=='/api/users':
                         text=q.get('q',[''])[0].strip().lower()
                         if not 2<=len(text)<=40:raise Error('请输入至少 2 个字符查找用户')
                         pattern='%'+text.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-                        rows=db.execute("SELECT * FROM users WHERE id<>? AND (username LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\') LIMIT 20",(uid,pattern,pattern)).fetchall();targets={r[0] for r in db.execute('SELECT target FROM follows WHERE follower=?',(uid,))}
-                        return self.reply({'users':[{**public(r),'followed':r['id'] in targets} for r in rows]})
+                        rows=db.execute("SELECT * FROM users WHERE id<>? AND (username LIKE ? ESCAPE '\\\\' OR nickname LIKE ? ESCAPE '\\\\') LIMIT 20",(uid,pattern,pattern)).fetchall()
+                        return self.reply({'users':[{**public(r),'relation':relation(db,uid,r['id'])} for r in rows]})
                     if path=='/api/history':
                         target=q.get('person',[uid])[0]
-                        if not visible(db,uid,target):raise Error('对方未开放交易数据，或你尚未关注对方',403)
+                        if not visible(db,uid,target):raise Error('对方未开放交易数据，或你们还不是好友',403)
                         return self.reply({'history':history_for(db,target)})
                     if path=='/api/state':
                         db.execute('INSERT INTO presence VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET updated=excluded.updated',(uid,time.time()))
-                        following=list(db.execute('SELECT users.* FROM follows JOIN users ON users.id=follows.target WHERE follower=? ORDER BY follows.created',(uid,)))
+                        following=list(friends_of(db,uid))
                         members=[];snapshots={};allowed=[]
                         for r in [u]+following:
                             can=r['id']==uid or bool(r['share_data']);can_review=can and (r['id']==uid or bool(r['share_reviews']))
@@ -464,7 +523,7 @@ class Handler(BaseHTTPRequestHandler):
                                 history=history_for(db,r['id'])
                                 if history:snapshots[r['id']]={'data':{'history':history,'source':'history-only','online':False,'positions':[]},'updated':max((t.get('closed') or 0 for t in history),default=0)}
                         marks=','.join('?' for _ in allowed);events=[dict(r) for r in db.execute(f'SELECT * FROM events WHERE person IN ({marks}) ORDER BY id DESC LIMIT 100',allowed)]
-                        mutual=[r[0] for r in db.execute('SELECT a.target FROM follows a JOIN follows b ON b.follower=a.target AND b.target=a.follower WHERE a.follower=?',(uid,))];chat=[uid]+mutual;cm=','.join('?' for _ in chat)
+                        mutual=[r['id'] for r in following];chat=[uid]+mutual;cm=','.join('?' for _ in chat)
                         messages=[dict(r) for r in db.execute(f'SELECT * FROM messages WHERE person IN ({cm}) ORDER BY id DESC LIMIT 100',chat)][::-1];names={r['id']:r['nickname'] for r in [u]+following}
                         for m in messages:m['name']=names.get(m['person'],'')
                         return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))],'reviewed':journal.reviewed(db,uid)})
@@ -707,7 +766,7 @@ class Handler(BaseHTTPRequestHandler):
                         result=chart.mark_seen(db,uid,share_id)
                     elif path=='/api/trade-review/request':
                         target=data.get('person',uid);owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
-                        if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你没有交易数据权限',403)
+                        if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
                         result=journal.request(db,target,data)
                     elif path=='/api/trusted/revoke':
                         db.execute('DELETE FROM trusted_devices WHERE user_id=?',(uid,));result={'ok':True}
@@ -755,14 +814,51 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/password':
                         if not pw_ok(data.get('current_password'),u['password']):raise Error('当前密码不正确',403)
                         pw=pw_hash(data.get('new_password'));db.execute('DELETE FROM trusted_devices WHERE user_id=?',(uid,));db.execute('DELETE FROM login_pending WHERE user_id=?',(uid,));db.execute('UPDATE users SET password=? WHERE id=?',(pw,uid));db.execute('DELETE FROM sessions WHERE user_id=?',(uid,));cookie=self.session(db,uid)
-                    elif path in ('/api/follow','/api/unfollow'):
-                        target=data.get('target');row=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone() if isinstance(target,str) else None
-                        if not row or target==uid:raise Error('关注对象不正确')
-                        if path=='/api/unfollow':db.execute('DELETE FROM follows WHERE follower=? AND target=?',(uid,target))
-                        else:
-                            if not row['allow_follow'] and not db.execute('SELECT 1 FROM follows WHERE follower=? AND target=?',(uid,target)).fetchone():raise Error('对方暂不接受新关注',403)
-                            added=db.execute('INSERT OR IGNORE INTO follows VALUES(?,?,?)',(uid,target,now)).rowcount
-                            if added:db.execute('INSERT INTO social_notifications(recipient,actor,created) VALUES(?,?,?)',(target,uid,now))
+                    elif path in ('/api/friends/request','/api/follow'):
+                      target=data.get('target')
+                      row=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone() if isinstance(target,str) else None
+                      if not row or target==uid:raise Error('好友对象不正确')
+                      rel=relation(db,uid,target)
+                      if rel=='friend':result['status']='friend'
+                      elif rel=='outgoing':result['status']='pending'
+                      elif rel=='incoming':
+                        # 对方已经申请过我，我再点一次「加好友」= 直接通过，省一步。
+                        a,b=friend_pair(uid,target)
+                        db.execute("UPDATE friend_edges SET status='accepted',decided=? WHERE a=? AND b=?",(now,a,b))
+                        db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
+                        result['status']='friend'
+                      else:
+                        if not row['allow_follow']:raise Error('对方暂不接受好友申请',403)
+                        a,b=friend_pair(uid,target)
+                        db.execute("INSERT INTO friend_edges(a,b,status,requested_by,created) VALUES(?,?,'pending',?,?)",(a,b,uid,now))
+                        db.execute('INSERT INTO social_notifications(recipient,actor,created) VALUES(?,?,?)',(target,uid,now))
+                        result['status']='pending'
+                    elif path=='/api/friends/accept':
+                      target=data.get('target')
+                      if relation(db,uid,target)!='incoming':raise Error('没有待通过的好友申请')
+                      a,b=friend_pair(uid,target)
+                      db.execute("UPDATE friend_edges SET status='accepted',decided=? WHERE a=? AND b=?",(now,a,b))
+                      db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
+                      result['status']='friend'
+                    elif path=='/api/friends/reject':
+                      target=data.get('target')
+                      if relation(db,uid,target)!='incoming':raise Error('没有待通过的好友申请')
+                      a,b=friend_pair(uid,target)
+                      db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b))
+                      db.execute('DELETE FROM social_notifications WHERE recipient=? AND actor=?',(uid,target))
+                      result['status']='none'
+                    elif path in ('/api/friends/remove','/api/unfollow'):
+                      target=data.get('target')
+                      if not isinstance(target,str):raise Error('好友对象不正确')
+                      a,b=friend_pair(uid,target)
+                      row=db.execute('SELECT * FROM friend_edges WHERE a=? AND b=?',(a,b)).fetchone()
+                      if row and row['status']=='pending' and row['requested_by']==uid:
+                        db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b))
+                      elif row and row['status']=='accepted':
+                        db.execute('DELETE FROM friend_edges WHERE a=? AND b=?',(a,b))
+                      elif row and row['status']=='pending':
+                        raise Error('对方已经申请过你，请到「好友申请」里处理')
+                      result['status']='none'
                     elif path=='/api/mt5/token':
                         token=secrets.token_urlsafe(36);db.execute('INSERT INTO mt5_links(user_id,token_hash,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET token_hash=excluded.token_hash,updated=excluded.updated',(uid,digest(token),now));result['token']=token
                     elif path=='/api/mt5/unlink':

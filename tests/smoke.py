@@ -79,6 +79,20 @@ def main():
    admin.request('/api/admin/invites/revoke',{'id':0},status=404)
    ensure(len(admin.request('/api/admin/users')['users'])==4,'new accounts only')
    alice.request('/api/journal',{'person':b['id'],'ticket':'fixture','text':'cross-user attempt'},status=404)
+   # ---- 好友：申请 → 通过 → 互相可见；删除后失效 ----
+   bob.request('/api/settings',{'allow_follow':True,'share_data':True,'share_reviews':True})
+   alice.request('/api/history?person='+b['id'],status=403)
+   ensure(alice.request('/api/friends/request',{'target':b['id']})['status']=='pending','好友申请是待通过状态')
+   alice.request('/api/history?person='+b['id'],status=403)
+   incoming=bob.request('/api/profile')['incoming']
+   ensure([row['id'] for row in incoming]==[a['id']],'对方能在好友申请里看到我')
+   bob.request('/api/friends/accept',{'target':a['id']})
+   ensure(alice.request('/api/history?person='+b['id'])['history'] is not None,'通过后 A 能看 B')
+   ensure(bob.request('/api/history?person='+a['id'])['history'] is not None,'通过后 B 也能看 A（双向）')
+   bob.request('/api/messages',{'text':'friend-only hello'})
+   ensure(any(m['text']=='friend-only hello' for m in alice.request('/api/state')['messages']),'好友之间能看到留言')
+   bob.request('/api/friends/remove',{'target':a['id']})
+   alice.request('/api/history?person='+b['id'],status=403)
    # 复盘图表页：静态资源、画线存档、作业分享与只读边界。
    page=anon.request('/chart');ensure('交易台'.encode() in page,'chart page served')
    with anon.opener.open(base+'/chart',timeout=15) as response:

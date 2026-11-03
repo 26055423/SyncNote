@@ -151,6 +151,8 @@ export default function App() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [inbox, setInbox] = useState<ShareRow[]>([]);
   const [following, setFollowing] = useState<Array<{ id: string; name: string }>>([]);
+  // 好友申请：别人申请我的（可通过对）/ 我申请的（可取消）。
+  const [friendReq, setFriendReq] = useState<{ incoming: Array<{ id: string; nickname: string; username: string }>; outgoing: Array<{ id: string; nickname: string; username: string }> }>({ incoming: [], outgoing: [] });
   const [recipients, setRecipients] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState('');
   const [shareState, setShareState] = useState('');
@@ -452,9 +454,17 @@ export default function App() {
       }
     };
     void loadInbox();
-    void api<{ following: Array<{ id: string; name: string }> }>('/api/profile')
-      .then((r) => { if (alive) setFollowing(r.following); })
-      .catch(() => undefined);
+    const loadProfile = () => {
+      void api<{ following: Array<{ id: string; name: string }>; incoming?: any[]; outgoing?: any[] }>('/api/profile')
+        .then((r) => {
+          if (!alive) return;
+          setFollowing(r.following);
+          setFriendReq({ incoming: r.incoming ?? [], outgoing: r.outgoing ?? [] });
+        })
+        .catch(() => undefined);
+    };
+    loadProfile();
+    const profileTimer = window.setInterval(loadProfile, 15000);
     // 分享是社交入口：交易台开着时也要能看到新消息，不能只在刷新页面时更新。
     const timer = window.setInterval(loadInbox, 15000);
     const onVisible = () => { if (document.visibilityState === 'visible') void loadInbox(); };
@@ -462,6 +472,7 @@ export default function App() {
     return () => {
       alive = false;
       window.clearInterval(timer);
+      window.clearInterval(profileTimer);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [board?.user.id]);
@@ -654,6 +665,19 @@ export default function App() {
       setMessage('');
     } catch (err) {
       setShareState(err instanceof Error ? err.message : '发送失败');
+    }
+  };
+
+  /** 通过 / 拒绝好友申请：处理完把面板和看板一起刷新。 */
+  const answerRequest = async (id: string, action: 'accept' | 'reject') => {
+    try {
+      await api('/api/friends/' + action, { target: id });
+      const r = await api<{ following?: Array<{ id: string; name: string }>; incoming?: any[]; outgoing?: any[] }>('/api/profile');
+      setFollowing(r.following ?? []);
+      setFriendReq({ incoming: r.incoming ?? [], outgoing: r.outgoing ?? [] });
+      setBoard(await api<Board>('/api/state?view=board'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -1234,7 +1258,7 @@ export default function App() {
                     ) : null}
                     <div ref={chatEnd} />
                   </div>
-                  <p className="chat-hint">留言只在你和互相关注的人之间可见；复盘分享发给被你关注的人。</p>
+                  <p className="chat-hint">留言只在你和好友之间可见；复盘分享也只会发给好友。</p>
                   <div className="chat-form">
                     <textarea value={chat} maxLength={1000} rows={2} placeholder="说点什么…（Enter 发送，Shift+Enter 换行）" onChange={(e) => setChat(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendChat(); } }} />
                     <button type="button" className="primary" onClick={() => void sendChat()} disabled={!chat.trim()}>发送</button>
@@ -1245,6 +1269,32 @@ export default function App() {
               {tab === 'friends' ? (
                 <div className="pane">
                   <h3>好友 <small>{Math.max(0, board.members.length - 1)}</small></h3>
+                  {friendReq.incoming.length ? (
+                    <div className="friend-requests">
+                      <p className="dim">好友申请 · {friendReq.incoming.length}</p>
+                      {friendReq.incoming.map((row) => (
+                        <div className="friend-request" key={row.id}>
+                          <b>{row.nickname}</b>
+                          <small className="dim">@{row.username}</small>
+                          <button
+                            type="button"
+                            className="primary"
+                            onClick={() => void answerRequest(row.id, 'accept')}
+                          >
+                            通过
+                          </button>
+                          <button type="button" onClick={() => void answerRequest(row.id, 'reject')}>
+                            拒绝
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {friendReq.outgoing.length ? (
+                    <p className="dim">
+                      已申请：{friendReq.outgoing.map((row) => row.nickname).join('、')}（等待对方通过）
+                    </p>
+                  ) : null}
                   {board.members.filter((m) => m.id !== me?.id).map((member) => {
                     const snap = board.snapshots[member.id];
                     const rows: any[] = snap?.data?.history ?? [];
@@ -1276,7 +1326,7 @@ export default function App() {
                       </div>
                     );
                   })}
-                  {board.members.length <= 1 ? <p className="dim">还没有好友，去个人中心关注交易伙伴。</p> : null}
+                  {board.members.length <= 1 ? <p className="dim">还没有好友。去个人中心搜索交易伙伴，发送好友申请；对方通过后就能互相看到复盘。</p> : null}
                 </div>
               ) : null}
 
