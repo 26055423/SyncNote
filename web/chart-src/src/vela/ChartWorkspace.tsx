@@ -123,10 +123,41 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   // 分享时要把开平仓标注剔掉，`stripMarks` 定义在初始化闭包里，用 ref 传出来。
   const stripRef = useRef<((document: unknown) => unknown) | null>(null);
-  // 自动配对 bigwolf 主图 + MACD 副图时防止自我递归。
-  const pairingRef = useRef(false);
   /** 每格自动配对的 MACD 副图 handle：删主图时用它连带删除。 */
   const companionRef = useRef<Map<string, { remove?: () => void }>>(new Map());
+  /** 每格是否已经有主图指标：用来判断"主图重新出现"才配对。 */
+  const pairStateRef = useRef<Map<string, { hadMain: boolean }>>(new Map());
+
+  /**
+   * bigwolf 主图 + MACD 副图的配对。用轮询状态机而不是事件，避免事件时序问题：
+   *   主图从无到有 → 自动补副图；
+   *   主图从有到无 → 连带删掉我们自动加的副图；
+   *   用户手动删掉副图（主图还在）→ 不会再加回来。
+   */
+  const reconcilePairing = (cell: any) => {
+    const chart = cell?.chart;
+    if (!chart?.presentNativeIndicators) return;
+    const present = new Set<string>(chart.presentNativeIndicators() as string[]);
+    const hasMain = present.has('bigwolf');
+    const hasMacd = present.has('bigwolf-macd');
+    const state = pairStateRef.current.get(cell.id) ?? { hadMain: false };
+    if (hasMain && !state.hadMain && !hasMacd) {
+      const handle = chart.addNativeIndicator?.('bigwolf-macd');
+      companionRef.current.set(cell.id, handle);
+    } else if (!hasMain && state.hadMain) {
+      const handle = companionRef.current.get(cell.id);
+      companionRef.current.delete(cell.id);
+      if (handle && hasMacd) {
+        try {
+          handle.remove?.();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    state.hadMain = hasMain;
+    pairStateRef.current.set(cell.id, state);
+  };
   // 「时间轴同步」= 点击跳到同一时刻（像 TradingView），不是缩放同步。
   // 存在本机，刷新后仍然生效。
   const timeSyncRef = useRef<boolean>((() => {
@@ -560,12 +591,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
-          // bigwolf 主图 + MACD 副图 = 一个功能两块窗格：
-          //   · 选择列表里只出现「主图」，副图由代码配对，用户看不到第二个选项；
-          //   · 加主图 → 自动加副图；手动删副图 → 不会再被加回来；
-          //   · 删主图 → 连带删副图。
+          // 选择列表过滤：bigwolf 的 MACD 副图由代码配对，不从清单里让用户单独加。
           try {
-            // 选择列表过滤：把 MACD 副图从可添加清单里摘掉。
             const original = cell.chart?.availableNativeIndicators?.bind(cell.chart);
             if (original && !cell.__tpFiltered) {
               cell.__tpFiltered = true;
@@ -574,33 +601,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
                 return rows.filter((row: { type: string }) => row.type !== 'bigwolf-macd');
               };
             }
-            cell.chart?.on?.('indicator:added', () => {
-              if (pairingRef.current) return;
-              const present = new Set<string>(cell.chart?.presentNativeIndicators?.() ?? []);
-              if (!present.has('bigwolf') || present.has('bigwolf-macd')) return;
-              pairingRef.current = true;
-              try {
-                const handle = cell.chart?.addNativeIndicator?.('bigwolf-macd');
-                companionRef.current.set(cell.id, handle);
-              } finally {
-                pairingRef.current = false;
-              }
-            });
-            cell.chart?.on?.('indicator:removed', () => {
-              const present = new Set<string>(cell.chart?.presentNativeIndicators?.() ?? []);
-              if (present.has('bigwolf')) return;
-              const handle = companionRef.current.get(cell.id);
-              companionRef.current.delete(cell.id);
-              if (!handle || !present.has('bigwolf-macd')) return;
-              try {
-                handle.remove?.();
-              } catch {
-                /* ignore */
-              }
-            });
           } catch {
             /* 没有原生指标 API 时忽略 */
-          }          cell.chart?.on?.('load:end', () => {
+          }
+          cell.chart?.on?.('load:end', () => {
             focusOne(cell);
             lockDrawings(cell);
             annotate(cell);
@@ -734,6 +738,21 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       /* ignore */
     }
   }, [anchorMs, ready]);
+
+  // 配对轮询：主图出现就补副图，主图消失就删副图（手动删副图不会被补回）。
+  useEffect(() => {
+    if (!ready) return;
+    const timer = window.setInterval(() => {
+      for (const cell of wsRef.current?.cells?.() ?? []) {
+        try {
+          reconcilePairing(cell);
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [ready]);
 
   return (
     <div className="chart-shell">
