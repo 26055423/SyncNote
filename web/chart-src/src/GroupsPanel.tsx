@@ -9,8 +9,16 @@ interface GroupRow {
   code: string;
   members: number;
   role: string;
+  notice?: string;
   unread: number;
   last?: { person: string; kind: string; text: string; created: number } | null;
+}
+
+interface GroupMember {
+  id: string;
+  nickname: string;
+  avatar: string;
+  role: string;
 }
 
 interface GroupMessage {
@@ -51,6 +59,9 @@ export function GroupsPanel({ current, onError }: Props) {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
+  const [members, setMembers] = useState<GroupMember[]>([]);
+  const [showMembers, setShowMembers] = useState(false);
+  const [noticeDraft, setNoticeDraft] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const fail = useCallback(
@@ -88,6 +99,21 @@ export function GroupsPanel({ current, onError }: Props) {
     const timer = window.setInterval(() => void loadGroups(), 15000);
     return () => window.clearInterval(timer);
   }, [loadGroups]);
+
+  const loadMembers = useCallback(async (gid: string) => {
+    try {
+      const data = await api<{ members: GroupMember[] }>(`/api/groups/members?group=${encodeURIComponent(gid)}`);
+      setMembers(data.members);
+    } catch {
+      setMembers([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!active) return;
+    void loadMembers(active);
+    setShowMembers(false);
+  }, [active, loadMembers]);
 
   useEffect(() => {
     if (!active) return;
@@ -167,6 +193,29 @@ export function GroupsPanel({ current, onError }: Props) {
     }
   };
 
+  const kick = async (id: string) => {
+    if (!active) return;
+    if (!window.confirm('把这个成员移出群？')) return;
+    try {
+      await api('/api/groups/kick', { group: active, target: id });
+      await loadMembers(active);
+      await loadGroups();
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const saveNotice = async () => {
+    if (!active || noticeDraft === null) return;
+    try {
+      await api('/api/groups/notice', { group: active, notice: noticeDraft });
+      setNoticeDraft(null);
+      await loadGroups();
+    } catch (error) {
+      fail(error);
+    }
+  };
+
   const leave = async () => {
     if (!active) return;
     if (!window.confirm('退出这个群？')) return;
@@ -229,6 +278,53 @@ export function GroupsPanel({ current, onError }: Props) {
               退出
             </button>
           </div>
+          <div className="group-notice">
+            <b>群公告</b>
+            {noticeDraft === null ? (
+              <span className="dim">{group.notice || '暂无公告'}</span>
+            ) : (
+              <textarea
+                value={noticeDraft}
+                rows={2}
+                maxLength={500}
+                onChange={(e) => setNoticeDraft(e.target.value)}
+              />
+            )}
+            {group.role === 'owner' ? (
+              noticeDraft === null ? (
+                <button type="button" className="link" onClick={() => setNoticeDraft(group.notice ?? '')}>
+                  编辑
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="primary" onClick={() => void saveNotice()}>
+                    保存
+                  </button>
+                  <button type="button" className="link" onClick={() => setNoticeDraft(null)}>
+                    取消
+                  </button>
+                </>
+              )
+            ) : null}
+          </div>
+          <button type="button" className="link group-members-toggle" onClick={() => setShowMembers((v) => !v)}>
+            {showMembers ? '收起成员' : `查看成员（${group.members}）`}
+          </button>
+          {showMembers ? (
+            <div className="group-members">
+              {members.map((row) => (
+                <div className="group-member" key={row.id}>
+                  <span>{row.nickname}</span>
+                  {row.role === 'owner' ? <small className="dim">群主</small> : null}
+                  {group.role === 'owner' && row.role !== 'owner' ? (
+                    <button type="button" className="link" onClick={() => void kick(row.id)}>
+                      移除
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="group-messages">
             {messages.length ? (
               messages.map((message) => (

@@ -787,3 +787,19 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   cursor: pointer; font-size: 12px;
 }
 .group-share { margin-top: 6px; width: 100%; }
+.group-notice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 8px 0; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line-soft); background: var(--panel-2); font-size: 12px;
+}
+.group-notice textarea {
+  flex: 1 1 100%; resize: vertical; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+.group-members-toggle { margin: 2px 0 6px; }
+.group-members { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.group-member {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  padding: 4px 8px; border-radius: 6px; background: var(--panel-2);
+}
+.group-member .link { margin-left: auto; }

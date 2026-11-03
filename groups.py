@@ -33,7 +33,8 @@ def initialize(db):
             name TEXT NOT NULL,
             owner TEXT NOT NULL REFERENCES users(id),
             code TEXT NOT NULL UNIQUE,
-            created REAL NOT NULL
+            created REAL NOT NULL,
+            notice TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS group_members(
             group_id TEXT NOT NULL REFERENCES groups(id),
@@ -55,6 +56,9 @@ def initialize(db):
         CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages(group_id,id);
         '''
     )
+    # 老库补 notice 列
+    if 'notice' not in [r[1] for r in db.execute('PRAGMA table_info(groups)')]:
+        db.execute("ALTER TABLE groups ADD COLUMN notice TEXT NOT NULL DEFAULT ''")
 
 
 def _member(db, gid, uid):
@@ -83,6 +87,7 @@ def _payload(db, row, uid):
         'owner': row['owner'],
         'code': row['code'] if row['owner'] == uid else '',
         'members': members,
+        'notice': row['notice'] if 'notice' in row.keys() else '',
         'role': mine['role'] if mine else 'guest',
         'unread': unread,
         'last': ({'person': last['person'], 'kind': last['kind'], 'text': last['text'], 'created': last['created']} if last else None),
@@ -139,12 +144,36 @@ def leave(db, uid, gid):
     return {'ok': True}
 
 
+def members(db, gid, uid):
+    """群成员列表：昵称、头像、角色、加入时间。"""
+    require_member(db, gid, uid)
+    rows = db.execute(
+        'SELECT u.id,u.nickname,u.avatar,m.role,m.joined FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=? ORDER BY (m.role=\'owner\') DESC,m.joined',
+        (gid,),
+    ).fetchall()
+    return [{'id': r['id'], 'nickname': r['nickname'], 'avatar': r['avatar'], 'role': r['role'], 'joined': r['joined']} for r in rows]
+
+
+def set_notice(db, uid, gid, text):
+    """只有群主能改群公告。"""
+    group = require_member(db, gid, uid)
+    if group['owner'] != uid:
+        raise GroupError('只有群主可以修改群公告', 403)
+    text = (text or '').strip()
+    if len(text) > 500:
+        raise GroupError('群公告最多 500 字')
+    db.execute('UPDATE groups SET notice=? WHERE id=?', (text, gid))
+    return {'notice': text}
+
+
 def kick(db, uid, gid, target):
     group = require_member(db, gid, uid)
     if group['owner'] != uid:
         raise GroupError('只有群主可以移除成员', 403)
     if target == uid:
         raise GroupError('群主不能移除自己')
+    if not _member(db, gid, target):
+        raise GroupError('这个人不在群里', 404)
     db.execute('DELETE FROM group_members WHERE group_id=? AND user_id=?', (gid, target))
     return {'ok': True}
 

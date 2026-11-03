@@ -514,6 +514,8 @@ class Handler(BaseHTTPRequestHandler):
                         except ValueError:
                             limit=100
                         return self.reply({'messages':groups.messages(db,gid,uid,limit)})
+                    if path=='/api/groups/members':
+                        return self.reply({'members':groups.members(db,str(q.get('group',[''])[0]),uid)})
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
@@ -882,6 +884,8 @@ class Handler(BaseHTTPRequestHandler):
                         result=groups.join(db,uid,str(data.get('code','')))
                     elif path=='/api/groups/leave':
                         result=groups.leave(db,uid,str(data.get('group','')))
+                    elif path=='/api/groups/notice':
+                        result=groups.set_notice(db,uid,str(data.get('group','')),str(data.get('notice','')))
                     elif path=='/api/groups/kick':
                         result=groups.kick(db,uid,str(data.get('group','')),str(data.get('target','')))
                     elif path=='/api/groups/message':

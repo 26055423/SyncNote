@@ -218,6 +218,16 @@ def main():
    g=alice.request('/api/groups/create',{'name':'验收群'})
    ensure(bool(g['code']) and g['role']=='owner','群主拿到邀请码')
    member.request('/api/groups/join',{'code':g['code']})
+   alice.request('/api/groups/notice',{'group':g['id'],'notice':'本周只做伦敦盘'})
+   ensure(alice.request('/api/groups')['groups'][0]['notice']=='本周只做伦敦盘','群主能改群公告')
+   member.request('/api/groups/notice',{'group':g['id'],'notice':'越权'},status=403)
+   names=[m['nickname'] for m in member.request('/api/groups/members?group='+g['id'])['members']]
+   ensure(len(names)==2 and 'gg' in names,'成员列表包含群主和自己')
+   myid=member.request('/api/me')['user']['id']
+   alice.request('/api/groups/kick',{'group':g['id'],'target':myid})
+   member.request('/api/groups/messages?group='+g['id'],status=403)
+   member.request('/api/groups/join',{'code':g['code']})
+   ensure(len(member.request('/api/groups/members?group='+g['id'])['members'])==2,'被移除后能重新加入')
    ensure(alice.request('/api/groups/messages?group='+g['id'])['messages']==[],'新群没有消息')
    alice.request('/api/groups/message',{'group':g['id'],'text':'大家好'})
    ensure(any(m['text']=='大家好' for m in member.request('/api/groups/messages?group='+g['id'])['messages']),'群聊成员可见')
