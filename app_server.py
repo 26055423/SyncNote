@@ -800,16 +800,6 @@ class Handler(BaseHTTPRequestHandler):
                     try:summary=bars.ingest(db,bars.source_for(server),key,symbol,series,now)
                     except (bars.BarsError,ValueError,TypeError) as e:raise Error('回填入库失败：'+str(e))
                     result={'ok':True,'tf':tf,'summary':(summary.get('series') or {}).get(tf) if isinstance(summary,dict) else None}
-                    symbol=str(data.get('symbol') or '')
-                    tf=bars.normalize_tf(str(data.get('tf') or ''))
-                    rows=data.get('bars')
-                    if not tf:raise Error('周期不正确')
-                    if not isinstance(rows,list):raise Error('K 线数据格式不正确')
-                    begin,end=data.get('from_server'),data.get('to_server')
-                    series={tf:{'bars':rows,'complete':True,'from_server':begin,'to_server':end}}
-                    try:summary=bars.ingest(db,bars.source_for(server),key,symbol,series,now)
-                    except (bars.BarsError,ValueError,TypeError) as e:raise Error('回填入库失败：'+str(e))
-                    result={'ok':True,'tf':tf,'summary':(summary.get('series') or {}).get(tf) if isinstance(summary,dict) else None}
                 elif path=='/api/market/coverage':
                     # POST 版(SyncNote EA 用连接码查缺口;SNPost 固定发 POST）。GET 版见 do_GET,走会话。
                     account,server,key=sync_history.identity(data)
