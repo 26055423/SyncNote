@@ -1027,7 +1027,7 @@ export default function App() {
         <a className="brand" href="/">
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
-        <div className="status-row" title={reviewingOther ? '我的账户；正在复盘的是别人的交易' : '我的账户'}>
+        <div className="status-row" title={reviewingOther ? '正在复盘的是别人的交易；账户数字已隐藏，避免和对方混淆' : '我的账户'}>
           <span className="stat"><b className="stat-v">{mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'}</b></span>
           <span className="sep" aria-hidden="true" />
           <span className="stat">
@@ -1038,10 +1038,14 @@ export default function App() {
             <i aria-hidden="true" />
             {localConnected ? '本机直连' : mt5Online ? '云端同步 · 只读' : 'MT5 未连接'}
           </span>
-          <span className="sep account-stat" aria-hidden="true" />
-          <span className="stat account-stat"><span className="stat-k">{reviewingOther ? '我的净值' : '净值'}</span><b className="stat-v">{money(displayedAccount?.equity)}</b></span>
-          <span className="stat account-stat"><span className="stat-k">{reviewingOther ? '我的余额' : '余额'}</span><b className="stat-v">{money(displayedAccount?.balance)}</b></span>
-          <span className="stat account-stat"><span className="stat-k">{reviewingOther ? '我的浮盈' : '浮盈'}</span><b className={floating >= 0 ? 'stat-v up' : 'stat-v down'}>{money(floating)}</b></span>
+          {reviewingOther ? null : (
+            <>
+              <span className="sep account-stat" aria-hidden="true" />
+              <span className="stat account-stat"><span className="stat-k">净值</span><b className="stat-v">{money(displayedAccount?.equity)}</b></span>
+              <span className="stat account-stat"><span className="stat-k">余额</span><b className="stat-v">{money(displayedAccount?.balance)}</b></span>
+              <span className="stat account-stat"><span className="stat-k">浮盈</span><b className={floating >= 0 ? 'stat-v up' : 'stat-v down'}>{money(floating)}</b></span>
+            </>
+          )}
         </div>
         <nav className="top-actions">
           <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>
@@ -1080,14 +1084,6 @@ export default function App() {
             </span>
           </div>
 
-          {entry?.read_only ? (
-            <div className="context-banner" role="status">
-              <b>只读回放</b>
-              <span>{entry.owner.name} 的复盘 · 画线与笔记不可修改</span>
-              {myHistory.length ? <button type="button" className="link" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>回到我的最近一笔</button> : null}
-            </div>
-          ) : null}
-
           {backfill.locked ? (
             <div className="context-banner" role="status" aria-live="polite">
               <b>正在准备行情数据</b>
@@ -1096,6 +1092,12 @@ export default function App() {
                 {backfill.segments ? ` · 已处理 ${backfill.segments} 段` : ''}
                 {backfill.reachedServer ? ` · 已回溯到 ${new Date(backfill.reachedServer * 1000).toISOString().slice(0, 10)}` : ''}
               </span>
+            </div>
+          ) : entry?.read_only ? (
+            <div className="context-banner" role="status">
+              <b>只读回放</b>
+              <span>{entry.owner.name} 的复盘 · 画线与笔记不可修改</span>
+              {myHistory.length ? <button type="button" className="link" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>回到我的最近一笔</button> : null}
             </div>
           ) : backfill.phase === 'partial_ready' ? (
             <div className="context-banner" role="status">

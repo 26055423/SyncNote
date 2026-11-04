@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { money, quotePrice, stamp } from './api';
 
 /**
@@ -22,6 +22,11 @@ export interface BottomDockProps {
 
 const sideText = (side: string) => (side === 'sell' ? '卖出' : '买入');
 
+/** dock-body 高度范围：太矮看不到行，太高压掉图表。 */
+const DOCK_MIN = 120;
+const DOCK_MAX = 600;
+const clampHeight = (h: number) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, h));
+
 export function BottomDock({ connected, localPositions, localOrders, cloudPositions, history, reviewed, onReview, tracksSlot }: BottomDockProps) {
   const [tab, setTab] = useState<Tab>('positions');
   const [open, setOpen] = useState(() => {
@@ -34,6 +39,14 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
   });
   const [sortDesc, setSortDesc] = useState(true);
   const [limit, setLimit] = useState(200);
+  const [height, setHeight] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem('sn-dock-height'));
+      if (Number.isFinite(saved) && saved > 0) return clampHeight(saved);
+    } catch { /* 忽略 */ }
+    return 190;
+  });
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
 
   const positions = connected ? localPositions : cloudPositions;
   const orders = localOrders;
@@ -44,8 +57,53 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
     try { localStorage.setItem('sn-dock-open', next ? '1' : '0'); } catch { /* 忽略 */ }
   };
 
+  // 从顶部手柄拖动改高度：向上拖变高、向下拖变矮。指针事件兼顾鼠标和触摸。
+  const onHandleDown = (event: React.PointerEvent) => {
+    if (!open) return;
+    event.preventDefault();
+    dragRef.current = { startY: event.clientY, startH: height };
+    const onMove = (e: PointerEvent) => {
+      if (!dragRef.current) return;
+      setHeight(clampHeight(dragRef.current.startH + (dragRef.current.startY - e.clientY)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      // 用函数式 setter 读最新高度再存：onUp 闭包捕获的 height 是按下那刻的旧值，
+      // 直接存会把拖拽结果丢掉（刷新后回到拖动前）。
+      setHeight((h) => { try { localStorage.setItem('sn-dock-height', String(h)); } catch { /* 忽略 */ } return h; });
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+  // 键盘可达：聚焦手柄后用上下箭头以 24px 步进调整，PageUp/PageDown 以 96px 调整。
+  const onHandleKey = (event: React.KeyboardEvent) => {
+    const step = event.key === 'PageUp' || event.key === 'PageDown' ? 96 : 24;
+    let next = height;
+    if (event.key === 'ArrowUp' || event.key === 'PageUp') next = clampHeight(height + step);
+    else if (event.key === 'ArrowDown' || event.key === 'PageDown') next = clampHeight(height - step);
+    else return;
+    event.preventDefault();
+    setHeight(next);
+    try { localStorage.setItem('sn-dock-height', String(next)); } catch { /* 忽略 */ }
+  };
+
   return (
     <section className={`dock ${open ? 'is-open' : ''}`}>
+      {open ? (
+        <div
+          className="dock-resize"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="拖动调整底部面板高度"
+          tabIndex={0}
+          onPointerDown={onHandleDown}
+          onKeyDown={onHandleKey}
+          onDoubleClick={() => { setHeight(190); try { localStorage.setItem('sn-dock-height', '190'); } catch { /* 忽略 */ } }}
+          title="拖动调整高度，双击复位"
+        />
+      ) : null}
       <header className="dock-head">
         <nav className="dock-tabs">
           {([
@@ -70,7 +128,7 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
       </header>
 
       {open ? (
-        <div className="dock-body">
+        <div className="dock-body" style={{ maxHeight: height, height }}>
           {tab === 'positions' ? (
             positions.length ? (
               <table className="grid-table">

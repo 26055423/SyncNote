@@ -200,7 +200,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
 
       <div className="seg">
         {(['market', 'limit', 'stop'] as OrderAction[]).map((a) => (
-          <button key={a} type="button" className={cls('seg-btn', action === a && 'is-active')} disabled={!allowedActions.includes(a)} title={!allowedActions.includes(a) ? 'EA 未授权此下单类型' : undefined} onClick={() => pickAction(a)}>
+          <button key={a} type="button" className={cls('seg-btn', action === a && 'is-active')} disabled={!allowedActions.includes(a)} title={!allowedActions.includes(a) ? (a === 'market' ? 'EA 未授权此下单类型' : '本机 EA 首版暂仅支持市价单，挂单开发中') : undefined} onClick={() => pickAction(a)}>
             {a === 'market' ? '市价' : a === 'limit' ? '限价' : '止损'}
           </button>
         ))}
