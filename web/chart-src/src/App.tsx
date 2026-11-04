@@ -1013,8 +1013,17 @@ export default function App() {
     };
     livePagingRef.current.add(base);
     try {
-      // ① 先问服务器（共享数据轨道）：不依赖 MT5 本地历史深度，能翻到回填过的更早数据。
+      // ① 先问本机 MT5：用户终端里往往有几个月的历史，比服务器回填得更早。
       const earliest = rows[0][0];
+      let got = false;
+      try {
+        const older = await localTerminal.loadOlderBars(eaTf[base], earliest);
+        if (older.length > 50) got = merge(older);
+      } catch (error) {
+        console.warn('[live-paging] EA 取更早 K 线失败', base, error);
+      }
+      if (got) return;
+      // ② MT5 给不出（或本地历史也到头）→ 问服务器共享轨道（回填过的历史，最长 5 年）。
       const want = 3000;
       const to = earliest - 1;
       const from = to - (want - 1) * period;
@@ -1022,18 +1031,11 @@ export default function App() {
         const data = await api<{ bars: number[][] }>(
           `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${eaTf[base]}&from=${from}&to=${to}`,
         );
-        if (Array.isArray(data?.bars) && data.bars.length > 20) {
-          merge(data.bars);
-          return;
-        }
-      } catch {
-        /* 服务器没有这一段就退回问 EA */
+        if (Array.isArray(data?.bars) && data.bars.length > 20 && merge(data.bars)) return;
+      } catch (error) {
+        console.warn('[live-paging] 服务器取更早 K 线失败', base, error);
       }
-      // ② 服务器也没有 → 问本机 MT5（受 SERIES_FIRSTDATE 限制）。
-      const older = await localTerminal.loadOlderBars(eaTf[base], earliest);
-      if (!merge(older)) {
-        liveFloorRef.current[base] = Date.now() + 5 * 60_000;
-      }
+      liveFloorRef.current[base] = Date.now() + 5 * 60_000;
     } catch {
       // 忙/超时只短暂退避。
       liveFloorRef.current[base] = Date.now() + 60_000;
@@ -1225,7 +1227,10 @@ export default function App() {
               title={
                 mode === 'live'
                   ? liveBars
-                    ? `实时行情：来自本机 EA 推送，随 tick 更新${liveLag.latest ? `；最新一根 ${new Date(liveLag.latest * 1000).toLocaleString()}` : ''}`
+                    ? `实时行情：来自本机 EA 推送，随 tick 更新${liveLag.latest ? `；最新一根 ${new Date(liveLag.latest * 1000).toLocaleString()}` : ''}${Object.entries(liveBars ?? {})
+                        .filter(([, rows]) => rows?.length)
+                        .map(([tf, rows]) => `${tf}:${rows.length} 根`)
+                        .join(' · ')}`
                     : '实时行情未就绪：本机 EA 还没推送 K 线，当前显示的是服务器历史行情'
                   : '复盘回放：这是那笔交易发生时的历史切片，不是实时行情'
               }
