@@ -1,11 +1,11 @@
 // SyncTrade (SyncNote Pro) - local trading and read-only history export.
 // Windows 8+ MT5 only; system Ws2_32.dll + bcrypt.dll + kernel32.dll; no custom DLL.
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
-// Trading is OFF by default; live trading requires separate local consent and durable caps.
+// Trading requires local pairing consent and durable journals; account-type and quota gates are disabled.
 #property copyright "SyncTrade"
-#property version "1.103"
+#property version "1.105"
 #property strict
-#property description "Windows localhost EA. Default read-only; live trading needs explicit opt-in and caps."
+#property description "Windows localhost EA. Local pairing consent required; no account-type or quota gates."
 
 #include "SyncNoteLocalJson.mqh"
 #include "SyncNoteLocalSocket.mqh"
@@ -38,7 +38,9 @@ input int InpTickPushMs=100;                           // Tick push interval (50
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.104"
+#define LOCAL_VERSION "1.105"
+// Only account-type and volume/exposure/daily quotas are removed. Other protections remain.
+#define LOCAL_NO_QUOTAS true
 #define JOURNAL_MAX 10000
 #define PAIR_TTL_MS 120000
 
@@ -123,7 +125,7 @@ bool LocalCanTrade()
    if(margin!=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING && margin!=ACCOUNT_MARGIN_MODE_RETAIL_NETTING && margin!=ACCOUNT_MARGIN_MODE_EXCHANGE) return false;
    // 对冲、净额都允许开新仓；净额下 close/modify 的归属无法证明，另由 LocalManageAllowed 把关。
    // 无限制模式：配对成功后不再看 InpAllowTrading / InpAllowRealTrading / 任何额度上限。
-   if(InpUnrestricted) return true;
+   if(LOCAL_NO_QUOTAS || InpUnrestricted) return true;
    if(!InpAllowTrading) return false;
    if(LocalDemo()) return true;
    // 实盘：必须单独开关 + 单笔/每日上限都有效，否则一律只读。
@@ -139,7 +141,7 @@ string BlockReason()
    if(!g_risk_ok || !g_risk.Healthy()) return "risk";
    long margin=AccountInfoInteger(ACCOUNT_MARGIN_MODE);
    if(margin!=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING && margin!=ACCOUNT_MARGIN_MODE_RETAIL_NETTING && margin!=ACCOUNT_MARGIN_MODE_EXCHANGE) return "margin_mode";
-   if(InpUnrestricted) return "";
+   if(LOCAL_NO_QUOTAS || InpUnrestricted) return "";
    if(!InpAllowTrading) return "allow_trading";
    if(LocalDemo()) return "";
    if(InpRealNoCaps) return InpAllowRealTrading?"":"real_not_allowed";
@@ -177,8 +179,8 @@ bool PendingSideValid(const string action,const bool buy,const double price,cons
 string IdentityFields()
 {
    return "\"product\":\"SyncTrade\",\"features\":[\"history\"],\"instance_id\":"+JStr(g_instance)+",\"account_id\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+",\"epoch\":"+JStr(g_epoch)+
-      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging()) +",\"netting_manage\":"+JsonBool(InpAllowNettingManage) +",\"real_no_caps\":"+JsonBool(InpRealNoCaps) +",\"unrestricted\":"+JsonBool(InpUnrestricted) +",\"block_reason\":JStr(BlockReason()) +",\"real_trading\":"+JsonBool(LocalReal() && LocalCanTrade())+
-      ",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
+      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging()) +",\"netting_manage\":"+JsonBool(InpAllowNettingManage) +",\"real_no_caps\":"+JsonBool(InpRealNoCaps) +",\"unrestricted\":"+JsonBool(InpUnrestricted) +",\"block_reason\":"+JStr(BlockReason()) +",\"real_trading\":"+JsonBool(LocalReal() && LocalCanTrade())+
+      ",\"quota_unrestricted\":"+JsonBool(LOCAL_NO_QUOTAS)+",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
 }
 void LocalError(const int peer,const string code,const string message,const string request_id="")
 {
@@ -285,7 +287,7 @@ void MakeButton(const string name,const string label,const int x)
 }
 void PaintStatus()
 {
-   string mode=!LocalCanTrade() ? "READ ONLY / 只读" : (LocalReal() ? "REAL trading enabled (caps active) / 实盘交易已开启（有上限）" : "DEMO trading enabled / 模拟交易已开启");
+   string mode=!LocalCanTrade() ? "READ ONLY / 只读: "+BlockReason() : (g_token=="" ? "等待本机配对授权 / 无账户类型及额度门槛" : "已获本机授权 / 无账户类型及额度门槛");
    string lines[12];
    int n=0;
    lines[n]="SyncTrade 本机 EA "+LOCAL_VERSION;n++;
@@ -633,7 +635,7 @@ bool Authenticated(const int peer,const string js)
 bool VolumeValid(const double volume)
 {
    double minv=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_MIN),maxv=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_MAX),step=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_STEP);
-   double lot_cap=((LocalReal()&&InpRealNoCaps)||InpUnrestricted)?maxv:InpMaxOrderLots;
+   double lot_cap=(LOCAL_NO_QUOTAS||(LocalReal()&&InpRealNoCaps)||InpUnrestricted)?maxv:InpMaxOrderLots;
    if(!MathIsValidNumber(volume)||step<=0 || volume<minv-1e-9 || volume>maxv+1e-9 || volume>lot_cap+1e-9) return false;
    return MathAbs(volume/step-MathRound(volume/step))<1e-6;
 }
@@ -727,7 +729,7 @@ bool OpeningAllowed(const string action,const double volume,string &error)
    if(!NewOrderAction(action)) return true;
    if(!NettingOrderAllowed(action,error)) return false;
    // 无限制模式：手数、品种总敞口、每日已实现亏损都不检查（配对授权与日志仍然必需）。
-   if(InpUnrestricted) return true;
+   if(LOCAL_NO_QUOTAS || InpUnrestricted) return true;
    if(!ExposureAllowed(volume,error)) return false;
    if(LocalReal() && !InpRealNoCaps && (InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9))
    {error="Real account lot cap exceeded";return false;}
@@ -758,7 +760,7 @@ void HandleTradeCommand(const int peer,const string js)
    }
    string error="";
    if(fingerprint=="") error="Cryptographic hash failed";
-   else if(!LocalCanTrade()) error="READ_ONLY: trading needs EA opt-in and healthy journal (real accounts also need InpAllowRealTrading and caps)";
+   else if(!LocalCanTrade()) error="READ_ONLY: "+BlockReason();
    else if(!TerminalInfoInteger(TERMINAL_CONNECTED)||!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)||!MQLInfoInteger(MQL_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_EXPERT)) error="MT5 trading permissions or connection unavailable";
    else if(!LocalDeadlineValid(expires,received_utc)) error="Command expired or deadline is more than 30s ahead; check computer clock";
    else if(GetTickCount64()-g_last_command<500) error="Local command rate limit: wait 500ms";
@@ -859,7 +861,7 @@ void HandleTradeCommand(const int peer,const string js)
    if(LocalReal() && NewOrderAction(action))
    {
       long broker_day=(long)TimeTradeServer()/86400;
-      if(!g_risk.Reserve(id,broker_day,(InpUnrestricted||InpRealNoCaps)?1000000:InpRealMaxOrdersPerDay,error))
+      if(!g_risk.Reserve(id,broker_day,(LOCAL_NO_QUOTAS||InpUnrestricted||InpRealNoCaps)?0:InpRealMaxOrdersPerDay,error))
       {
          g_risk_ok=g_risk.Healthy();g_commands[index].state="rejected";
          g_commands[index].result=CommandResult(id,"rejected",error);
@@ -1003,9 +1005,10 @@ int OnInit()
    if(!MQLInfoInteger(MQL_DLLS_ALLOWED)) {Print("SyncTrade: allow system DLL imports in EA settings");return INIT_FAILED;}
    if(StringFind(InpAllowedOrigin,"https://")!=0 || StringFind(InpAllowedOrigin,"/",8)>=0 || StringFind(InpAllowedOrigin," ")>=0 || StringFind(InpAllowedOrigin,"*")>=0)
    {Print("SyncTrade: allowed origin must be one exact https origin without path/wildcards");return INIT_PARAMETERS_INCORRECT;}
-   if(!MathIsValidNumber(InpMaxOrderLots) || !MathIsValidNumber(InpMaxSymbolLots) || !MathIsValidNumber(InpRealMaxLots) ||
-      !MathIsValidNumber(InpMaxDailyLoss) || !MathIsValidNumber(InpMaxPendingDeviationPct) || InpRealMaxLots<0 || InpRealMaxOrdersPerDay<0 ||
-      InpMaxDailyLoss<0 || InpMaxPendingDeviationPct<0 || (InpMaxOrderLots<=0 && !InpUnrestricted) || (InpMaxSymbolLots<InpMaxOrderLots && !InpUnrestricted) ||
+   if((!LOCAL_NO_QUOTAS && (!MathIsValidNumber(InpMaxOrderLots) || !MathIsValidNumber(InpMaxSymbolLots) || !MathIsValidNumber(InpRealMaxLots) ||
+      !MathIsValidNumber(InpMaxDailyLoss) || InpRealMaxLots<0 || InpRealMaxOrdersPerDay<0 || InpMaxDailyLoss<0 ||
+      (InpMaxOrderLots<=0 && !InpUnrestricted) || (InpMaxSymbolLots<InpMaxOrderLots && !InpUnrestricted))) ||
+      !MathIsValidNumber(InpMaxPendingDeviationPct) || InpMaxPendingDeviationPct<0 ||
       InpMaxDeviationPoints<0 || InpMaxSpreadPoints<0 || InpMagic<0 || !SymbolSelect(InpSymbol,true)) return INIT_PARAMETERS_INCORRECT;
    g_digits=(int)SymbolInfoInteger(InpSymbol,SYMBOL_DIGITS);
    g_bar_push_ms=(int)MathMax(50,MathMin(1000,InpBarPushMs));

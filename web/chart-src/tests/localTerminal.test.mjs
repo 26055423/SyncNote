@@ -57,7 +57,7 @@ function fixture(secure = true) {
     socket.emit({ type: 'paired', token: 'test-session-only', instance_id: 'instance', account_id: account, server: 'Demo-Server', epoch: 'epoch1', symbol: 'XAUUSD', read_only: false, demo: true, hedging: true, capabilities: ['market', 'close', 'cancel', 'modify'], ...extra });
     return socket;
   }
-  return { client, connect, Socket, timers };
+  return { client, connect, Socket, timers, access: exports.localTradeAccess };
 }
 
 test('HTTP production is blocked before a local connection is opened', () => {
@@ -206,6 +206,113 @@ test('snapshot permission updates revoke real trading and concrete action capabi
   assert.equal(client.getSnapshot().netting_manage, false);
   client.command('limit', { symbol: 'XAUUSD', side: 'buy', volume: 0.01, price: 2400 });
   assert.equal(socket.sent.filter((message) => message.type === 'command').length, 1);
+});
+
+test('unrestricted authorization permits real-account opening and netting management without legacy flags', () => {
+  const { client, connect, access } = fixture();
+  const socket = connect('2002', { demo: false, real_trading: false, unrestricted: true, hedging: false, netting_manage: false,
+    capabilities: ['market', 'close', 'modify'] });
+  const permission = access(client.getSnapshot());
+  assert.equal(permission.enabled, true);
+  assert.equal(permission.canManage, true);
+  assert.equal(permission.realTrading, true);
+  assert.equal(permission.lockedReason, '');
+  for (const action of ['market', 'close', 'modify']) {
+    const id = client.command(action, { symbol: 'XAUUSD', side: 'buy', volume: 2, position_ticket: '7', ticket: '7' });
+    assert.equal(socket.sent.at(-1).action, action);
+    assert.equal(socket.sent.at(-1).token, 'test-session-only');
+    socket.emit({ type: 'command_result', command_id: id, state: 'completed' });
+  }
+  assert.equal(socket.sent.filter((message) => message.type === 'command').length, 3);
+});
+
+test('unrestricted requires a boolean grant and still respects read-only and concrete capabilities', () => {
+  for (const extra of [{ unrestricted: 'true' }, { unrestricted: 1 }, { unrestricted: false },
+    { unrestricted: true, read_only: true }, { unrestricted: true, capabilities: [] }]) {
+    const { client, connect } = fixture();
+    const socket = connect('2002', { demo: false, real_trading: false, ...extra });
+    assert.throws(() => client.command('market', { volume: 2 }), /未授权/);
+    assert.equal(socket.sent.filter((message) => message.type === 'command').length, 0);
+  }
+});
+
+test('quota-unrestricted trading removes account and lot gates without granting netting management', () => {
+  const { client, connect, access } = fixture();
+  const socket = connect('2002', { demo: false, real_trading: false, unrestricted: false, quota_unrestricted: true,
+    hedging: false, netting_manage: false, capabilities: ['market', 'close', 'modify'] });
+  assert.equal(access(client.getSnapshot()).enabled, true);
+  assert.equal(access(client.getSnapshot()).lockedReason, '');
+  assert.equal(access(client.getSnapshot()).canManage, false);
+  const id = client.command('market', { symbol: 'XAUUSD', side: 'buy', volume: 2 });
+  assert.equal(socket.sent.at(-1).volume, 2);
+  socket.emit({ type: 'command_result', command_id: id, state: 'completed' });
+  assert.throws(() => client.command('close', { position_ticket: '7', volume: 0 }), /持仓管理/);
+  assert.throws(() => client.command('modify', { ticket: '7', sl: 2300 }), /持仓管理/);
+  socket.emit({ type: 'snapshot', netting_manage: true });
+  client.command('close', { position_ticket: '7', volume: 0 });
+  assert.equal(socket.sent.at(-1).action, 'close');
+});
+
+test('quota permission is explicit, updates with snapshots and never overrides read-only or unresolved commands', () => {
+  for (const quota_unrestricted of [undefined, false, 'true', 1]) {
+    const { client, connect } = fixture();
+    connect('2002', { demo: false, real_trading: false, quota_unrestricted });
+    assert.throws(() => client.command('market', { volume: 2 }), /未授权/);
+  }
+  const { client, connect, access } = fixture();
+  const socket = connect('2002', { demo: false, real_trading: false });
+  socket.emit({ type: 'snapshot', quota_unrestricted: true });
+  assert.equal(client.getSnapshot().quota_unrestricted, true);
+  socket.emit({ type: 'snapshot', positions: [] });
+  assert.equal(client.getSnapshot().quota_unrestricted, true);
+  const id = client.command('market', { volume: 2 });
+  assert.throws(() => client.command('market', { volume: 2 }), /尚未确认/);
+  socket.emit({ type: 'command_result', command_id: id, state: 'completed' });
+  socket.emit({ type: 'snapshot', read_only: true, block_reason: 'risk' });
+  assert.equal(access(client.getSnapshot()).enabled, false);
+  assert.match(access(client.getSnapshot()).lockedReason, /保留下单日志/);
+  assert.throws(() => client.command('market', { volume: 2 }), /未授权/);
+  socket.emit({ type: 'snapshot', read_only: false, quota_unrestricted: false, block_reason: '' });
+  assert.equal(client.getSnapshot().quota_unrestricted, false);
+  assert.throws(() => client.command('market', { volume: 2 }), /未授权/);
+});
+
+test('snapshots can grant and revoke unrestricted permission and preserve exact read-only diagnostics', () => {
+  const { client, connect, access } = fixture();
+  const socket = connect('2002', { demo: false, real_trading: false, hedging: false, netting_manage: false, unrestricted: true });
+  socket.emit({ type: 'snapshot', positions: [] });
+  assert.equal(client.getSnapshot().unrestricted, true);
+  socket.emit({ type: 'snapshot', unrestricted: false, real_no_caps: false, block_reason: 'real_not_allowed' });
+  assert.equal(client.getSnapshot().unrestricted, false);
+  assert.throws(() => client.command('market', { volume: 2 }), /未授权/);
+  socket.emit({ type: 'snapshot', unrestricted: true, real_no_caps: true, block_reason: '', read_only: false });
+  assert.equal(access(client.getSnapshot()).lockedReason, '');
+  const id = client.command('close', { position_ticket: '7', volume: 0 });
+  assert.equal(socket.sent.at(-1).action, 'close');
+  assert.throws(() => client.command('market', { volume: 2 }), /尚未确认/);
+  socket.emit({ type: 'command_result', command_id: id, state: 'completed' });
+  socket.emit({ type: 'snapshot', read_only: true, block_reason: 'journal' });
+  assert.equal(client.getSnapshot().block_reason, 'journal');
+  assert.equal(client.getSnapshot().real_no_caps, true);
+  assert.equal(access(client.getSnapshot()).enabled, false);
+  assert.match(access(client.getSnapshot()).lockedReason, /下单日志/);
+  assert.throws(() => client.command('market', { volume: 2 }), /未授权/);
+});
+
+test('quota-unrestricted risk preview removes the local lot cap while retaining numeric and price validation', () => {
+  const { previewRisk } = loadComponent(fileURLToPath(new URL('../src/trade/risk.ts', import.meta.url)));
+  const request = { action: 'market', side: 'buy', symbol: 'XAUUSD', volume: 2, price: 0, sl: 0, tp: 0, deviation: 20, magic: 0, comment: '' };
+  const ref = { bid: 2400, ask: 2401 };
+  assert.ok(previewRisk(request, ref, null).problems.some((message) => message.includes('手数不得超过')));
+  assert.equal(previewRisk(request, ref, null, true).problems.length, 0);
+  for (const volume of [0, -1, NaN, Infinity]) {
+    assert.ok(previewRisk({ ...request, volume }, ref, null, true).problems.includes('手数必须大于 0'));
+  }
+  const limit = { ...request, action: 'limit', price: 1200 };
+  assert.ok(previewRisk(limit, ref, null).problems.some((message) => message.includes('价格偏离')));
+  assert.ok(previewRisk(limit, ref, null, true).problems.some((message) => message.includes('价格偏离')));
+  assert.ok(previewRisk({ ...limit, price: 2500 }, ref, null, true).problems.includes('买入限价需低于当前卖价'));
+  assert.ok(previewRisk({ ...request, sl: 2500 }, ref, null, true).problems.includes('买单止损需低于入场价'));
 });
 
 test('the order ticket enables only individually declared market/limit/stop controls', () => {

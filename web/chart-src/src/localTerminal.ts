@@ -29,10 +29,12 @@ export interface LocalTerminalState {
   hedging: boolean;
   /** 净额账户下 EA 是否允许平仓/改单。 */
   netting_manage: boolean;
-  /** EA 明确允许在实盘账户上下单（InpAllowRealTrading + 上限都打开时才会是 true）。 */
+  /** EA 明确允许当前实盘账户交易；不限额模式不依赖旧实盘开关或额度。 */
   real_trading: boolean;
   /** EA 开了「配对后无任何限制」（InpUnrestricted），额度与开关都不检查。 */
   unrestricted?: boolean;
+  /** 配对后不受账户类型和手数 / 敞口 / 每日额度限制；不授予净额持仓管理。 */
+  quota_unrestricted?: boolean;
   /** 实盘不限额（InpRealNoCaps）。 */
   real_no_caps?: boolean;
   /** EA 报告的拦截原因：journal / risk / account / margin_mode / allow_trading / real_not_allowed / caps。 */
@@ -86,6 +88,31 @@ const freshState = (): LocalTerminalState => ({
 const terminalStates = new Set(['completed', 'rejected']);
 const unresolvedStates = new Set(['sending', 'received', 'submitted', 'uncertain', 'not_found']);
 const tfKeys = new Set(['1m', '5m', '15m', '1h']);
+
+/** 显示与发送共用 EA 的账户授权，避免不限额模式仍被旧网页门禁拦住。 */
+export function localTradeAccess(state: LocalTerminalState) {
+  const accountAllowed = state.demo || state.real_trading || state.unrestricted === true || state.quota_unrestricted === true;
+  const canManage = state.hedging || state.netting_manage || state.unrestricted === true;
+  const unresolved = state.commands.some((command) => command.account_id === state.account_id && command.server === state.server && unresolvedStates.has(command.state));
+  const blockText: Record<string, string> = {
+    journal: 'EA 写不了下单日志：检查 MQL5/Files 是否被占用或有权限限制',
+    risk: 'EA 的风控账本打不开：检查是否在多个图表挂了同一账户的 SyncTrade；保留下单日志，先核对未完成指令',
+    account: '账户信息还没稳定（MT5 正在切换账户），等几秒或重新挂载 EA',
+    margin_mode: '不支持的保证金模式，EA 只接对冲/净额/交易所账户',
+    allow_trading: '当前 EA 配置为只读，请在 MT5 核对交易授权',
+    real_not_allowed: '旧版 EA 仍在限制实盘账户，请更新并重新加载 EA',
+    caps: '当前 EA 仍启用了旧版额度限制，请更新并重新加载 EA',
+  };
+  const lockedReason = state.phase !== 'connected' ? ''
+    : state.read_only ? '已连接，但 EA 不接单：' + (blockText[state.block_reason ?? ''] ?? '请在 MT5 核对本机授权与 EA 状态')
+      : !accountAllowed ? '已连接，但 EA 未授权当前账户交易，请核对本机授权与 EA 版本'
+        : unresolved ? '已连接，但还有未确认的指令，先核对结果再下单' : '';
+  return {
+    accountAllowed, canManage, lockedReason,
+    realTrading: accountAllowed && !state.demo,
+    enabled: state.phase === 'connected' && !state.read_only && accountAllowed && !unresolved,
+  };
+}
 
 /** One connection per page. Credentials stay in RAM; trade writes never retry or use the cloud. */
 export class LocalTerminal {
@@ -215,6 +242,7 @@ export class LocalTerminal {
       hedging: message.hedging === true,
       netting_manage: message.netting_manage === true,
       unrestricted: message.unrestricted === true,
+      quota_unrestricted: message.quota_unrestricted === true,
       real_no_caps: message.real_no_caps === true,
       block_reason: typeof message.block_reason === 'string' ? message.block_reason : '',
       real_trading: message.real_trading === true,
@@ -279,6 +307,10 @@ export class LocalTerminal {
           demo: message.demo === undefined ? this.state.demo : message.demo === true,
           hedging: message.hedging === undefined ? this.state.hedging : message.hedging === true,
           netting_manage: message.netting_manage === undefined ? this.state.netting_manage : message.netting_manage === true,
+          unrestricted: message.unrestricted === undefined ? this.state.unrestricted : message.unrestricted === true,
+          quota_unrestricted: message.quota_unrestricted === undefined ? this.state.quota_unrestricted : message.quota_unrestricted === true,
+          real_no_caps: message.real_no_caps === undefined ? this.state.real_no_caps : message.real_no_caps === true,
+          block_reason: message.block_reason === undefined ? this.state.block_reason : typeof message.block_reason === 'string' ? message.block_reason : '',
           real_trading: message.real_trading === undefined ? this.state.real_trading : message.real_trading === true,
           capabilities: message.capabilities === undefined ? this.state.capabilities
             : Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [],
@@ -344,9 +376,9 @@ export class LocalTerminal {
     this.deadlines.set(id, timer);
   }
   command(action: string, payload: Record<string, unknown>) {
-    const allowed = this.state.demo || this.state.real_trading;
-    if (this.state.phase !== 'connected' || this.state.read_only || !allowed || !this.state.capabilities.includes(action)) throw new Error('本机 EA 当前未授权此账户交易操作。');
-    if ((action === 'close' || action === 'modify') && !this.state.hedging && !this.state.netting_manage) throw new Error('净额或账户模式未确认：EA 未明确授权持仓管理。');
+    const { accountAllowed, canManage } = localTradeAccess(this.state);
+    if (this.state.phase !== 'connected' || this.state.read_only || !accountAllowed || !this.state.capabilities.includes(action)) throw new Error('本机 EA 当前未授权此账户交易操作。');
+    if ((action === 'close' || action === 'modify') && !canManage) throw new Error('净额或账户模式未确认：EA 未明确授权持仓管理。');
     if (this.state.commands.some((command) => command.account_id === this.state.account_id && command.server === this.state.server && unresolvedStates.has(command.state))) throw new Error('当前账户有指令的结果尚未确认，请先查询或在 MT5 中核实。');
     const id = crypto.randomUUID();
     const command: LocalCommand = { command_id: id, action, state: 'sending', created: Date.now(), account_id: this.state.account_id, server: this.state.server };

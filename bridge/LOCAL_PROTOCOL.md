@@ -1,6 +1,6 @@
 # SyncNote Local WebSocket Protocol v1
 
-状态：以下正文记录旧 `SyncNoteLocal.mq5` 首版协议与模拟对冲账户限制；**离线编译通过不等于真实 MT5 交易验收通过**。当前 `SyncTrade.mq5` 1.102 在兼容消息结构上增加了逐动作 `limit/stop`、明确实盘授权、净额管理同意及持久每日风控，权限和安装以该产品的 `SyncTrade_README.md` 为准。旧 EA 仍保持正文的模拟账户边界。
+状态：以下正文记录旧 `SyncNoteLocal.mq5` 首版协议与模拟对冲账户限制；**离线编译通过不等于真实 MT5 交易验收通过**。当前 `SyncTrade.mq5` 1.105 兼容消息结构和逐动作 `limit/stop`；身份状态新增 `quota_unrestricted:true`，表示本机配对授权后取消账户类型及手数/敞口/每日额度门槛，不授予净额持仓管理权限。持久日志、期限及其他操作校验继续保留，权限和安装以该产品的 `SyncTrade_README.md` 为准。旧 EA 仍保持正文的模拟账户边界。
 
 本协议与 `PROTOCOL.md` 中的 EA→Python gateway NDJSON v1 是两个独立协议。它不改变旧 WebBridge、云端 Hub 或其端口。
 

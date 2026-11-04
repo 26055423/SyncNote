@@ -41,6 +41,18 @@ int main(int argc,char** argv){try{
   require(risk->Reserved(day)==1,"restart lost unknown-result reservation");
   require(!risk->Reserve("command_002",day,1,error),"restart reset quota");
   require(!risk->Reserve("command_001",day,1,error),"crash gap replay allowed");
+ }else if(scenario=="quota_unlimited"){
+  require(!risk->Reserve("negative_cap",day,-1,error),"Negative cap accepted");
+  for(int i=0;i<8;i++) require(risk->Reserve("unlimited_"+IntegerToString(i),day,0,error),"Unlimited reserve rejected");
+  require(risk->Reserved(day)==8,"Unlimited mode lost durable reservations");
+  risk->Close();require(risk->Open(IntegerToString(login),server,error),"Unlimited restart failed");
+  require(risk->Reserved(day)==8,"Unlimited restart lost reservations");
+  require(!risk->Reserve("unlimited_0",day,0,error),"Unlimited mode replayed a command");
+  require(!risk->Reserve("unlimited_new",day,1,error),"Bounded mode ignored previous reservations");
+  broker_now+=86400;
+  require(!risk->Reserve("unlimited_old_day",day,0,error),"Unlimited mode allowed a stale day");
+  require(risk->Reserve("unlimited_new_day",day+1,0,error),"Unlimited next day rejected");
+  fail_flush=true;require(!risk->Reserve("unlimited_write_error",day+1,0,error)&&!risk->Healthy(),"Unlimited mode ignored durable-write failure");
  }else if(scenario=="quota_release_day"){
   require(risk->Reserve("command_001",day,1,error),"reserve failed");
   require(risk->Release("command_001",error),"unsent release failed");

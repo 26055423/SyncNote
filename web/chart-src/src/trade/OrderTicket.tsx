@@ -45,6 +45,8 @@ export interface OrderTicketProps {
   lockedReason?: string;
   /** 实盘账户：额外显示醒目标签并多一道确认。 */
   real?: boolean;
+  /** EA 授权不限额模式时，手数上限交由券商检查。 */
+  quotaUnrestricted?: boolean;
   /** EA 逐项声明的开仓动作；pending 兼容标签不授予 limit/stop 权限。 */
   allowedActions?: readonly OrderAction[];
   submitting?: boolean;
@@ -52,7 +54,7 @@ export interface OrderTicketProps {
   onConnect?: () => void;
 }
 
-export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason, real = false, allowedActions = ['market'], submitting = false, onSubmit, onConnect }: OrderTicketProps) {
+export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason, real = false, quotaUnrestricted = false, allowedActions = ['market'], submitting = false, onSubmit, onConnect }: OrderTicketProps) {
   const [action, setAction] = useState<OrderAction>('market');
   const [side, setSide] = useState<OrderSide>('buy');
   const [volume, setVolume] = useState('0.01');
@@ -96,7 +98,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
   );
 
   const ref = useMemo(() => ({ bid, ask }), [bid, ask]);
-  const preview = useMemo(() => previewRisk(request, ref, account), [request, ref, account]);
+  const preview = useMemo(() => previewRisk(request, ref, account, quotaUnrestricted), [request, ref, account, quotaUnrestricted]);
   const entry = resolveEntry(request, ref);
 
   const blocked = !allowedActions.includes(action)

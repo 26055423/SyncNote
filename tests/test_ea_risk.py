@@ -31,6 +31,7 @@ class RiskRuntimeTests(unittest.TestCase):
  def test_history_getters_and_numeric_fail_closed(self):self.scenario('loss_failures')
  def test_metadata_errors_are_not_treated_as_empty_state(self):self.scenario('metadata_failures')
  def test_reservations_survive_restart_and_unknown_results(self):self.scenario('quota_restart')
+ def test_unlimited_reservations_preserve_replay_and_journal_checks(self):self.scenario('quota_unlimited')
  def test_release_is_durable_and_days_are_isolated(self):self.scenario('quota_release_day')
  def test_accounts_servers_and_file_locks(self):self.scenario('quota_accounts_lock')
  def test_unsent_old_account_reservation_can_be_released_after_switch(self):self.scenario('quota_account_switch_release')

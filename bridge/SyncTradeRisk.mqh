@@ -148,11 +148,12 @@ public:
  {
   error="";if(!Check(error))return false;
   long now=(long)TimeTradeServer();
-  if(!SafeId(command_id)||cap<1||broker_day<1||broker_day>1000000||now<=0||broker_day!=now/86400){error="RISK_QUOTA_ARGUMENTS_OR_DAY";return false;}
+  // cap=0 keeps durable command reservations without a daily count limit.
+  if(!SafeId(command_id)||cap<0||broker_day<1||broker_day>1000000||now<=0||broker_day!=now/86400){error="RISK_QUOTA_ARGUMENTS_OR_DAY";return false;}
   // A crash may leave a durable reservation without an execution-intent row.
   // Never return idempotent success: the caller must investigate, not resubmit.
   if(Find(command_id)>=0){error="RISK_COMMAND_ALREADY_RESERVED_OR_USED";return false;}
-  if(Reserved(broker_day)>=cap){error="RISK_DAILY_ORDER_LIMIT";return false;}
+  if(cap>0 && Reserved(broker_day)>=cap){error="RISK_DAILY_ORDER_LIMIT";return false;}
   if(m_size>=SYNCTRADE_RISK_MAX)return Bad("RISK_JOURNAL_CAPACITY",error);
   if(!Append(IntegerToString(broker_day)+"\t"+command_id+"\tR",error))return false;
   int index=m_size++;m_ids[index]=command_id;m_days[index]=broker_day;m_held[index]=true;return true;

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { money, quotePrice } from './api';
-import { localTerminal, type LocalTerminalState } from './localTerminal';
+import { localTerminal, localTradeAccess, type LocalTerminalState } from './localTerminal';
 import { OrderTicket } from './trade/OrderTicket';
 import { submitMarketOrder } from './trade/localSubmit';
 import { HistorySyncPanel } from './HistorySyncPanel';
@@ -17,32 +17,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   const [prepared, setPrepared] = useState<{ action: string; payload: Record<string, unknown>; description: string; epoch: string } | null>(null);
   const [modifyTicket, setModifyTicket] = useState('');
   const connected = state.phase === 'connected';
-  const unresolved = state.commands.some((command) => command.account_id === state.account_id && command.server === state.server && !['completed', 'rejected'].includes(command.state));
-  // 实盘账户：EA 只有在 InpAllowRealTrading + 单笔/日上限都打开时才报 real_trading=true。
-  const realTrading = (state.real_trading || state.unrestricted === true) && !state.demo;
-  const enabled = connected && !state.read_only && (state.demo || realTrading) && !unresolved;
-  // 净额账户：持仓是所有来源合并的，平仓/改单无法证明归属，默认禁用。
-  const canManage = state.hedging || state.netting_manage;
-  // 连上了却下不了单时，说清楚是哪一条拦住的：非模拟账户 / 只读 / 还有待核实指令。
-  // EA 会直接告诉我们被哪一条拦住（block_reason），不要再让用户猜。
-  const blockText: Record<string, string> = {
-    journal: 'EA 写不了下单日志：检查 MQL5/Files 是否被占用或有权限限制',
-    risk: 'EA 的风控账本打不开：常见原因是同一账户在多个图表挂了 SyncTrade，或 MQL5/Files/TongpinLocal 下的日志损坏；只保留一个图表上的 EA，或删掉该目录后重挂',
-    account: '账户信息还没稳定（MT5 正在切换账户），等几秒或重新挂载 EA',
-    margin_mode: '不支持的保证金模式，EA 只接对冲/净额/交易所账户',
-    allow_trading: '需在 EA 里打开 InpAllowTrading（或者打开 InpUnrestricted 一劳永逸）',
-    real_not_allowed: '实盘账户：打开 InpAllowRealTrading，或直接打开 InpUnrestricted',
-    caps: '实盘账户：单笔/每日上限必须大于 0，或打开 InpRealNoCaps / InpUnrestricted',
-  };
-  const lockedReason = !connected
-    ? ''
-    : state.read_only
-      ? '已连接，但 EA 不接单：' + (blockText[state.block_reason ?? ''] ?? '请在 EA 参数里开启交易权限')
-      : !state.demo && !state.real_trading
-        ? '已连接，但当前账户不是模拟账户：需在 EA 里打开 InpAllowRealTrading 和单笔/每日上限（或直接开 InpUnrestricted，配对后不再有任何限制）'
-        : unresolved
-          ? '已连接，但还有未确认的指令，先核对结果再下单'
-          : '';
+  const { realTrading, enabled, canManage, lockedReason } = localTradeAccess(state);
 
   const perform = (callback: () => unknown) => {
     try { setError(''); callback(); } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
@@ -95,13 +70,14 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
         connected={enabled}
         lockedReason={lockedReason}
         real={realTrading}
+        quotaUnrestricted={state.unrestricted === true || state.quota_unrestricted === true}
         allowedActions={(['market', 'limit', 'stop'] as const).filter((action) => state.capabilities.includes(action))}
         onSubmit={submitMarketOrder}
       />
       {realTrading ? (
         <p className="local-real-warning" role="alert">实盘账户：下单按钮发出的指令会真实成交，请先核对手数、方向与止损。</p>
       ) : null}
-    {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || (!state.demo && !realTrading) ? '只读' : state.unrestricted ? '已获本机授权（不限额）' : realTrading ? '已获本机实盘交易授权' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
+    {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || (!state.demo && !realTrading) ? '只读' : state.unrestricted || state.quota_unrestricted ? '已获本机授权（不限额）' : realTrading ? '已获本机实盘交易授权' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
     {connected ? <>
       
       <h3>本机持仓 <small>{state.positions.length}</small></h3>

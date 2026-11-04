@@ -69,14 +69,14 @@ export function resolveEntry(request: OrderRequest, ref: PriceRef): number {
   return request.price;
 }
 
-export function previewRisk(request: OrderRequest, ref: PriceRef, account: Account | null): RiskPreview {
+export function previewRisk(request: OrderRequest, ref: PriceRef, account: Account | null, quotaUnrestricted = false): RiskPreview {
   const entry = resolveEntry(request, ref);
   const stop = request.sl > 0 ? request.sl : 0;
   const target = request.tp > 0 ? request.tp : 0;
   const problems: string[] = [];
 
   if (!Number.isFinite(request.volume) || request.volume <= 0) problems.push('手数必须大于 0');
-  if (request.volume > MAX_VOLUME) problems.push('手数不得超过 ' + MAX_VOLUME);
+  if (!quotaUnrestricted && request.volume > MAX_VOLUME) problems.push('手数不得超过 ' + MAX_VOLUME);
 
   if (request.action !== 'market') {
     if (!(request.price > 0)) problems.push('限价/止损单必须填写价格');
