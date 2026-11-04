@@ -83,6 +83,8 @@ export class BackfillBars {
   private session = '';
   private storageKey = '';
   private checkpoint: Checkpoint | null = null;
+  /** 每个周期的边界误判重试次数:序列没加载好时退避重试,不要一次就判到底。 */
+  private retries = new Map<Tf, number>();
   constructor(private readonly deps: Dependencies) {
     deps.terminal.subscribe(() => {
       if (this.state.phase === 'idle') return;
@@ -207,15 +209,28 @@ export class BackfillBars {
         // 游标前移到 advanceTo(本轮处理的洞左界;coverage 失败时 = from)。
         // 防卡:必须严格小于当前 to,否则强制退到 from,保证单调递减、不原地打转。
         const next = advanceTo < to ? advanceTo : from;
-        cp.cursors[tf] = next; this.save();
+        cp.cursors[tf] = next; this.retries.delete(tf); this.save();
         this.update({ reachedServer: next, message: `正在确保行情数据完整…(${cp.symbol} ${tf},已到 ${new Date(next * 1000).toISOString().slice(0, 10)})` });
       } catch (error) {
-        // HISTORY_UNAVAILABLE / 读超时:这个周期到可得边界,停在这里,不死等。
         const msg = error instanceof Error ? error.message : String(error);
-        if (/HISTORY_UNAVAILABLE|HISTORY_TIMEOUT|unavailable/i.test(msg)) {
+        // 「整个窗口都早于可得历史」才算到底(EA 用 SERIES_FIRSTDATE 判定)。
+        if (/starts later than|reached available floor|no earlier history/i.test(msg)) {
           if (!cp.floored.includes(tf)) cp.floored.push(tf);
           this.save();
           this.update({ flooredTfs: [...cp.floored] });
+        } else if (/HISTORY_UNAVAILABLE|not ready|does not cover|unavailable/i.test(msg)) {
+          // 序列还没加载好 / 旧版 EA 的边界误判:退避重试几次再放弃,不要一次就判到底。
+          const attempts = (this.retries.get(tf) ?? 0) + 1;
+          this.retries.set(tf, attempts);
+          if (attempts > 5) {
+            if (!cp.floored.includes(tf)) cp.floored.push(tf);
+            this.save();
+            this.update({ flooredTfs: [...cp.floored] });
+          } else {
+            this.update({ message: `等待 MT5 加载 ${tf} 历史(第 ${attempts} 次)…` });
+            await new Promise((r) => setTimeout(r, 3000));
+            if (!this.active(generation)) return;
+          }
         } else {
           this.update({ phase: 'error', locked: false, message: '行情回填出错,可重试:' + msg });
           return;

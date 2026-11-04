@@ -475,13 +475,18 @@ void PumpBars()
    {
       long interval=PeriodSeconds(LocalTf(g_bars_job.tf));
       long aligned_from=g_bars_job.from_server-g_bars_job.from_server%interval;
+      // MT5 里这个周期最早能拿到的时间。回填窗口可能比这更早(最早交易在 5 年前,而
+      // 终端只加载了最近几个月):夹到可得起点,不要因为"左边界拿不到"就整段失败。
+      long first=(long)SeriesInfoInteger(g_bars_job.symbol,LocalTf(g_bars_job.tf),SERIES_FIRSTDATE);
+      if(g_bars_job.range_mode && first>0 && aligned_from<first) aligned_from=first-first%interval;
       int count=g_bars_job.range_mode ? CopyRates(g_bars_job.symbol,LocalTf(g_bars_job.tf),(datetime)aligned_from,(datetime)g_bars_job.to_server,g_bars_job.rates) :
          CopyRates(g_bars_job.symbol,LocalTf(g_bars_job.tf),0,g_bars_job.limit,g_bars_job.rates);
       string error="";
-      if(count<1) error="MT5 history is not ready";
+      if(count<1) error="MT5 history is not ready for this range";
       else if(g_bars_job.range_mode && (count>2000 || count>g_bars_job.limit)) error="Requested range exceeds limit; split it into smaller windows";
-      else if(g_bars_job.range_mode && ((long)g_bars_job.rates[0].time>g_bars_job.from_server ||
-         (long)g_bars_job.rates[count-1].time+interval<=g_bars_job.to_server)) error="MT5 series does not cover the requested range";
+      // 只有"整个请求窗口都早于可得历史"才算到底;右边界不足(周末/休市/最新一根还没走完)
+      // 返回已有数据即可,交给调用方按返回的最后一根推进。
+      else if(g_bars_job.range_mode && first>0 && first>=(long)g_bars_job.to_server) error="MT5 history starts later than the requested range";
       if(error!="") {LocalError(g_bars_job.peer,"HISTORY_UNAVAILABLE",error,g_bars_job.request_id);g_bars_job.active=false;return;}
       g_bars_job.limit=count;g_bars_job.loaded=true;return;
    }

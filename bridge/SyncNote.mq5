@@ -244,14 +244,17 @@ void SNBarsPump()
  // ② 拉这段 K 线。
  if(!SymbolSelect(symbol,true)){g_sn_bf_floored[idx]=true;SNBarsSaveState();return;}
  MqlRates rates[];ArraySetAsSeries(rates,false);
+ // MT5 可得历史的起点:窗口比这更早时夹到起点,不要整段失败。
+ long first=(long)SeriesInfoInteger(symbol,SNBarsTfPeriod(idx),SERIES_FIRSTDATE);
+ long period_sec=SNBarsTfSeconds(idx);
+ if(first>0 && fetch_from<first) fetch_from=first-first%period_sec;
  int count=CopyRates(symbol,SNBarsTfPeriod(idx),(datetime)fetch_from,(datetime)fetch_to,rates);
  if(count<1)
  {
-  // EA 一根都给不出(MT5 没加载更早历史):这个周期到可得边界,停在此,不死等。
-  // 只凭 count<1 判定——不要用"第一根晚于预期"判,否则周末/长假的正常休市缺口会被误判到底。
-  g_sn_bf_floored[idx]=true;SNBarsSaveState();
-  Print("SyncNote bars: ",tf," reached available floor (no bars for requested range)");
-  return;
+  // 整个窗口都早于可得历史才算到底;周末/休市的空窗(窗口内一根都没有)只跳过这一段,
+  // 游标继续往左走,下次会拿到有数据的窗口。
+  if(first>0 && first>=fetch_to){g_sn_bf_floored[idx]=true;SNBarsSaveState();Print("SyncNote bars: ",tf," reached available floor");return;}
+  g_sn_bf_cursor[idx]=(fetch_from>g_sn_bf_floor)?fetch_from:g_sn_bf_floor;SNBarsSaveState();return;
  }
  if(count>2000)count=2000;
  string rows="";
