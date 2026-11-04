@@ -10,6 +10,7 @@ import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
 import { ChatDock } from './ChatDock';
+import { ReviewShareDialog } from './ReviewShareDialog';
 import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
@@ -152,16 +153,13 @@ export default function App() {
   const [noteState, setNoteState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [inbox, setInbox] = useState<ShareRow[]>([]);
-  const [following, setFollowing] = useState<Array<{ id: string; name: string }>>([]);
   // 好友申请：别人申请我的（可通过对）/ 我申请的（可取消）。
   const [friendManager, setFriendManager] = useState(false);
   const [dmUnread, setDmUnread] = useState<Record<string, number>>({});
   const [groupUnread, setGroupUnread] = useState(0);
   const [chatGroup, setChatGroup] = useState<{ id: string; name: string; avatar?: string } | null>(null);
   const [friendReq, setFriendReq] = useState<{ incoming: Array<{ id: string; nickname: string; username: string }>; outgoing: Array<{ id: string; nickname: string; username: string }> }>({ incoming: [], outgoing: [] });
-  const [recipients, setRecipients] = useState<Set<string>>(new Set());
-  const [message, setMessage] = useState('');
-  const [shareState, setShareState] = useState('');
+  const [shareRequest, setShareRequest] = useState<{ ticket: string; snapshot: unknown; initialRecipient?: { kind: 'dm' | 'group'; id: string } } | null>(null);
   const [chat, setChat] = useState('');
   const [tf, setTf] = useState('15');
   const [layout, setLayout] = useState('4');
@@ -478,10 +476,9 @@ export default function App() {
     };
     void loadInbox();
     const loadProfile = () => {
-      void api<{ following: Array<{ id: string; name: string }>; incoming?: any[]; outgoing?: any[] }>('/api/profile')
+      void api<{ incoming?: any[]; outgoing?: any[] }>('/api/profile')
         .then((r) => {
           if (!alive) return;
-          setFollowing(r.following);
           setFriendReq({ incoming: r.incoming ?? [], outgoing: r.outgoing ?? [] });
           void api<{ unread: Record<string, number> | number; threads: Array<{ peer: { id: string }; unread: number }> }>('/api/dm/threads')
             .then((dm) => {
@@ -640,9 +637,7 @@ export default function App() {
     setNote({ body: '', tags: [] });
     setNoteState('idle');
     setSaveState('idle');
-    setShareState('');
-    setMessage('');
-    setRecipients(new Set());
+    setShareRequest(null);
     setFeedFilter('all');
     const qs = new URLSearchParams({ view: 'review', person, ticket });
     if (t) qs.set('t', String(t));
@@ -663,9 +658,7 @@ export default function App() {
     setNote({ body: '', tags: [] });
     setNoteState('idle');
     setSaveState('idle');
-    setShareState('');
-    setMessage('');
-    setRecipients(new Set());
+    setShareRequest(null);
     history.replaceState(null, '', '/chart?view=review&share=' + row.id);
   };
 
@@ -683,31 +676,16 @@ export default function App() {
     }
   };
 
-  const sendShare = async () => {
+  const openReviewShare = (initialRecipient?: { kind: 'dm' | 'group'; id: string }) => {
     if (!entry || entry.read_only || !target) return;
-    if (!recipients.size) {
-      setShareState('请选择至少一位收件人');
-      return;
-    }
-    setShareState('正在发送…');
-    try {
-      // 分享 = 一条带切片的富文本消息：此刻激活格子的周期、可见窗口中点、画线坐标。
-      const snapshot = chartRef.current?.view?.() ?? null;
-      await api('/api/reviews/share', { ticket: target.ticket, recipients: [...recipients], message, snapshot });
-      setShareState('已发给 ' + recipients.size + ' 位好友' + (snapshot ? '（含当前复盘切片）' : ''));
-      setRecipients(new Set());
-      setMessage('');
-    } catch (err) {
-      setShareState(err instanceof Error ? err.message : '发送失败');
-    }
+    setShareRequest({ ticket: target.ticket, snapshot: chartRef.current?.view?.() ?? null, initialRecipient });
   };
 
   /** 通过 / 拒绝好友申请：处理完把面板和看板一起刷新。 */
   const answerRequest = async (id: string, action: 'accept' | 'reject') => {
     try {
       await api('/api/friends/' + action, { target: id });
-      const r = await api<{ following?: Array<{ id: string; name: string }>; incoming?: any[]; outgoing?: any[] }>('/api/profile');
-      setFollowing(r.following ?? []);
+      const r = await api<{ incoming?: any[]; outgoing?: any[] }>('/api/profile');
       setFriendReq({ incoming: r.incoming ?? [], outgoing: r.outgoing ?? [] });
       setBoard(await api<Board>('/api/state?view=board'));
     } catch (err) {
@@ -1355,7 +1333,7 @@ export default function App() {
                 <ChatDock
                   visible={railOpen && tab === 'friends' && !friendManager}
                   current={target?.ticket && target.person === me?.id && entry && !entry.read_only ? { ticket: target.ticket } : null}
-                  getSnapshot={() => chartRef.current?.view?.() ?? null}
+                  onShareCurrent={openReviewShare}
                   onError={setError}
                   onOpenFriendManager={() => setFriendManager(true)}
                   openGroup={chatGroup}
@@ -1404,33 +1382,7 @@ export default function App() {
                         </>
                       ) : <p className="dim">这是好友的复盘，笔记与画线只读。</p>}
 
-                      {!entry.read_only ? (
-                        <details className="share-box">
-                          <summary>把这笔复盘发给好友</summary>
-                          {following.length ? (
-                            <div className="people">
-                              {following.map((row) => (
-                                <label key={row.id} className="person">
-                                  <input
-                                    type="checkbox"
-                                    checked={recipients.has(row.id)}
-                                    onChange={() => setRecipients((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(row.id)) next.delete(row.id);
-                                      else next.add(row.id);
-                                      return next;
-                                    })}
-                                  />
-                                  <span>{row.name}</span>
-                                </label>
-                              ))}
-                            </div>
-                          ) : <p className="dim">还没有关注的人。</p>}
-                          <textarea value={message} maxLength={500} rows={2} placeholder="留言，例如：看 15 分钟这段结构" onChange={(e) => setMessage(e.target.value)} />
-                          <button type="button" className="primary" onClick={() => void sendShare()} disabled={!following.length}>发送</button>
-                          {shareState ? <p className="dim">{shareState}</p> : null}
-                        </details>
-                      ) : null}
+                      {!entry.read_only ? <button type="button" className="tool-btn review-share-trigger" onClick={() => openReviewShare()}>分享复盘给好友或群聊</button> : null}
                     </>
                   ) : target ? <p className="dim">正在加载这笔复盘…</p> : (
                     <div className="rail-empty">
@@ -1484,6 +1436,7 @@ export default function App() {
         </div>
       </footer>
 
+      {shareRequest && <ReviewShareDialog {...shareRequest} onClose={() => setShareRequest(null)} />}
       {error ? (
         <div className="toast" role="alert" aria-live="assertive">
           <span>{error}</span>

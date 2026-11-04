@@ -230,9 +230,12 @@ def _touch(db, gid, uid, now):
     db.execute('UPDATE group_members SET last_read=? WHERE group_id=? AND user_id=?', (now, gid, uid))
 
 
-def share_trade(db, uid, gid, ticket, snapshot=None):
+def share_trade(db, uid, gid, ticket, snapshot=None, message=''):
     """把一笔交易发进群：群里留一张卡片，同时给每个成员各写一条 review_shares。"""
     require_member(db, gid, uid)
+    if not isinstance(message, str) or len(message) > chart.MAX_MESSAGE:
+        raise GroupError('分享留言最多 %d 字' % chart.MAX_MESSAGE)
+    message = message.strip()
     ticket = str(ticket or '')
     trade = db.execute('SELECT * FROM trades WHERE person=? AND ticket=?', (uid, ticket)).fetchone()
     if not trade:
@@ -241,10 +244,10 @@ def share_trade(db, uid, gid, ticket, snapshot=None):
     recipients = [m for m in members if m != uid]
     now = time.time()
     saved_snapshot = chart.clean_snapshot(snapshot)
-    db.execute("INSERT INTO group_messages(group_id,person,kind,text,ticket,created,snapshot) VALUES(?,?,'trade','',?,?,?)", (gid, uid, ticket, now, saved_snapshot))
+    db.execute("INSERT INTO group_messages(group_id,person,kind,text,ticket,created,snapshot) VALUES(?,?,'trade',?,?,?,?)", (gid, uid, message, ticket, now, saved_snapshot))
     message_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
-    if recipients:
-        chart.share(db, uid, ticket, recipients, '', snapshot)
+    for start in range(0, len(recipients), chart.MAX_RECIPIENTS):
+        chart.share(db, uid, ticket, recipients[start:start + chart.MAX_RECIPIENTS], message, snapshot)
     _touch(db, gid, uid, now)
     return {'id': message_id, 'created': now, 'sent': len(recipients)}
 
@@ -347,7 +350,7 @@ def open_trade(db, gid, uid, message_id):
     share = db.execute('SELECT id FROM review_shares WHERE owner=? AND ticket=? AND recipient=?', (row['person'], row['ticket'], uid)).fetchone()
     if share:
         return {'share': share['id']}
-    chart.share(db, row['person'], row['ticket'], [uid], '', json.loads(row['snapshot']) if row['snapshot'] else None)
+    chart.share(db, row['person'], row['ticket'], [uid], row['text'] or '', json.loads(row['snapshot']) if row['snapshot'] else None)
     share = db.execute('SELECT id FROM review_shares WHERE owner=? AND ticket=? AND recipient=?', (row['person'], row['ticket'], uid)).fetchone()
     if not share:
         raise GroupError('这笔交易暂时无法打开', 404)

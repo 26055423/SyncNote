@@ -918,7 +918,7 @@ class Handler(BaseHTTPRequestHandler):
                         result=groups.reaction(db,uid,str(data.get('group','')),data.get('id'),data.get('emoji'),data.get('active'))
                     elif path=='/api/groups/share':
                         try:
-                            result=groups.share_trade(db,uid,str(data.get('group','')),str(data.get('ticket','')),data.get('snapshot'))
+                            result=groups.share_trade(db,uid,str(data.get('group','')),str(data.get('ticket','')),data.get('snapshot'),data.get('message',''))
                         except groups.GroupError:
                             raise
                         except Exception as _e:

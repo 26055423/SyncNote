@@ -333,12 +333,16 @@ def main():
    myid=alice.request('/api/me')['user']['id']
    with sqlite3.connect(db) as conn: ticket=conn.execute('SELECT ticket FROM trades WHERE person=? ORDER BY rowid DESC LIMIT 1',(myid,)).fetchone()[0]
    member.request('/api/history?person='+a['id'],status=403)
-   share=alice.request('/api/groups/share',{'group':g['id'],'ticket':ticket,'snapshot':{'anchor_ms':1700000000000,'timeframe':'15m','layout':'1'}})
+   alice.request('/api/groups/share',{'group':g['id'],'ticket':ticket,'message':'x'*501},status=400)
+   alice.request('/api/groups/share',{'group':g['id'],'ticket':ticket,'message':None},status=400)
+   share=alice.request('/api/groups/share',{'group':g['id'],'ticket':ticket,'message':'一起看这段结构','snapshot':{'anchor_ms':1700000000000,'timeframe':'15m','layout':'1'}})
    ensure(share['sent']>=1,'发进群时给成员各写一条 share')
    card=[m for m in member.request('/api/groups/messages?group='+g['id'])['messages'] if m['kind']=='trade'][0]
    ensure(card['share'],'成员拿到这条交易的 share id')
+   ensure(card['text']=='一起看这段结构','群分享卡片保留留言')
    entry=member.request('/api/chart/entry?share='+str(card['share']))
    ensure(entry['owner']['id']==a['id'],'非好友也能打开群里分享的这一笔')
+   ensure(entry['share']['message']=='一起看这段结构','群成员打开分享时保留留言')
    ensure(entry['share']['anchor_ms']==1700000000000 and entry['share']['timeframe']=='15m','群分享保留图表切片')
    ensure(bool(entry['review']['trade']),'这单的复盘数据完整')
    member.request('/api/history?person='+a['id'],status=403)
@@ -349,6 +353,7 @@ def main():
    late=outsider.request('/api/groups/open',{'group':g['id'],'id':card['id']})
    late_entry=outsider.request('/api/chart/entry?share='+str(late['share']))
    ensure(late_entry['share']['anchor_ms']==1700000000000,'后加入成员打开原消息仍保留切片')
+   ensure(late_entry['share']['message']=='一起看这段结构','后加入群成员也能看到原分享留言')
    outsider.request('/api/groups/leave',{'group':g['id']})
    member.request('/api/groups/share',{'group':g['id'],'ticket':ticket},status=403)
    alice.request('/api/groups/leave',{'group':g['id']})

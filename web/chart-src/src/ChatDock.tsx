@@ -21,7 +21,7 @@ type Conversation = { kind: 'dm' | 'group'; id: string; name: string; avatar?: s
 interface Props {
   visible?: boolean;
   current?: { ticket: string } | null;
-  getSnapshot?: () => unknown;
+  onShareCurrent?: (destination: { kind: 'dm' | 'group'; id: string }) => void;
   onError?: (message: string) => void;
   openGroup?: { id: string; name: string; avatar?: string } | null;
   onGroupOpened?: () => void;
@@ -52,7 +52,7 @@ function Avatar({ name, avatar, size = '' }: { name: string; avatar?: string; si
 }
 
 /** 私信与群聊共用会话、引用回复、表情回应和复盘卡片。 */
-export function ChatDock({ visible = true, current, getSnapshot, onError, openGroup, onGroupOpened, onOpenFriendManager }: Props) {
+export function ChatDock({ visible = true, current, onShareCurrent, onError, openGroup, onGroupOpened, onOpenFriendManager }: Props) {
   const prefs = usePrefs();
   const [threads, setThreads] = useState<DmThread[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
@@ -272,19 +272,6 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, openGr
     try { await api('/api/groups/recall', { group: conversation.id, id: message.id }); await loadConversation(conversation, true); }
     catch (error) { fail(error); }
   };
-  const shareTrade = async () => {
-    const conversation = activeRef.current;
-    if (!conversation || !current || writeBusy.current) return;
-    writeBusy.current = true; setBusy(true);
-    try {
-      await api(conversation.kind === 'dm' ? '/api/reviews/share' : '/api/groups/share', {
-        ticket: current.ticket, snapshot: getSnapshot?.() ?? null,
-        ...(conversation.kind === 'dm' ? { recipients: [conversation.id], message: '' } : { group: conversation.id }),
-      });
-      await loadConversation(conversation, true); await loadLists();
-    } catch (error) { fail(error); }
-    finally { writeBusy.current = false; if (mounted.current) setBusy(false); }
-  };
   const openGroupTrade = async (message: Message) => {
     const conversation = activeRef.current;
     if (!conversation || conversation.kind !== 'group') return;
@@ -403,7 +390,7 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, openGr
             {reply && <div className="dc-reply-bar"><Icon name="reply" /><span>回复 <b>{reply.mine ? me?.nickname : reply.name ?? name}</b>：{reply.text || '复盘分享'}</span><button type="button" className="dc-icon-button" aria-label="取消回复" onClick={() => setReplies((all) => ({ ...all, [activeKey]: null }))}><Icon name="close" /></button></div>}
             {emojiOpen && <div className="dc-emoji-picker" role="group" aria-label="插入表情">{[...EMOJI, '🙌', '🤝', '📈', '📉', '💡', '🔥'].map((emoji) => <button type="button" key={emoji} aria-label={`插入 ${emoji}`} onClick={() => insertText(emoji)}>{emoji}</button>)}</div>}
             <div className="dc-composer">
-              {current && <button type="button" className="dc-icon-button" title={`分享当前复盘 #${current.ticket}`} aria-label="分享当前复盘" disabled={busy} onClick={() => void shareTrade()}><Icon name="chart" /></button>}
+              {current && onShareCurrent && <button type="button" className="dc-icon-button" title={`选择好友或群聊，分享复盘 #${current.ticket}`} aria-label="分享当前复盘" disabled={busy} onClick={() => onShareCurrent({ kind: active.kind, id: active.id })}><Icon name="chart" /></button>}
               <textarea ref={composerRef} aria-label={`发消息给 ${name}`} value={draft} rows={1} maxLength={1000} placeholder={active.kind === 'dm' ? `发消息给 @${name}` : `发送到 # ${name}`} onSelect={(event) => { selectionRef.current = { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }; }} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(); }
               }} />
