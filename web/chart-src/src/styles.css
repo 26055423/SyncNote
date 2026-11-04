@@ -1034,7 +1034,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .dc-details-close { position: absolute; right: 10px; top: 10px; background: var(--panel); }
 .dc-profile-body { padding: 0 16px 18px; }
 .dc-profile-body > .dc-avatar, .dc-profile-body > .dc-avatar-wrap { margin-top: -40px; margin-bottom: 10px; }
-.dc-profile-body > .dc-avatar { display: flex; }
+.dc-profile-body > .dc-avatar { display: flex; position: relative; z-index: 1; }
 .dc-profile-name { margin: 0 0 4px; font-size: 21px; font-weight: 700; overflow-wrap: anywhere; }
 .dc-profile-meta { margin: 0; color: var(--dim); font-size: 11px; line-height: 1.7; }
 .dc-profile-card { margin-top: 18px; padding: 14px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--well); }
@@ -1117,3 +1117,46 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   .dc-conversation, .dc-message-actions { transition: none; }
   .dc-timeline { scroll-behavior: auto; }
 }
+
+/* 群聊创建与管理都留在同一聊天工作区。 */
+.dc-group-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; margin: auto; padding: 22px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+.dc-group-dialog::backdrop { background: var(--scrim); }
+.dc-group-dialog-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.dc-group-dialog-head h2 { flex: 1; margin: 0; font-size: 18px; }
+.dc-group-dialog-head button { border: 0; background: none; color: var(--dim); font-size: 24px; padding: 0 4px; }
+.dc-group-dialog-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+.dc-group-dialog-tabs button { flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--dim); }
+.dc-group-dialog-tabs button[aria-pressed='true'] { background: var(--accent-bg); color: var(--accent-ink); border-color: var(--accent-line); }
+.dc-group-dialog form { display: flex; flex-direction: column; gap: 10px; }
+.dc-group-dialog label, .gd-form label { font-size: 12px; color: var(--dim); }
+.dc-group-dialog input, .gd-form input, .gd-form textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); font: inherit; font-size: 13px; }
+.dc-group-dialog form p { margin: 0 0 8px; color: var(--dim); font-size: 12px; line-height: 1.7; }
+.dc-group-dialog form button { padding: 10px; }
+.dc-group-error, .gd-feedback.is-error { color: var(--error-ink) !important; }
+.gd-details { margin-top: 18px; font-size: 12px; }
+.gd-section { padding: 16px 0; border-top: 1px solid var(--line); }
+.gd-section h3 { margin: 0 0 10px; font-size: 12px; }
+.gd-section-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.gd-section-head h3 { margin: 0; }
+.gd-section-head > span { font-size: 10px; }
+.gd-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.gd-details button { padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--panel-2); color: var(--text); font: inherit; font-size: 11px; }
+.gd-details button:hover { border-color: var(--accent-line); background: var(--hover); }
+.gd-details button:disabled { opacity: .5; cursor: default; }
+.gd-form { display: flex; flex-direction: column; gap: 8px; }
+.gd-form textarea { resize: vertical; min-height: 90px; max-height: 220px; }
+.gd-avatar-picker { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 12px; }
+.gd-avatar-picker button { padding: 3px; min-width: 0; }
+.gd-avatar-picker img { display: block; width: 100%; aspect-ratio: 1; border-radius: 50%; }
+.gd-avatar-picker button[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-bg); }
+.gd-notice { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); line-height: 1.8; }
+.gd-invite p { color: var(--dim); }
+.gd-invite code { color: var(--text); font-size: 14px; letter-spacing: .08em; }
+.gd-invite .gd-form { margin-top: 10px; }
+.gd-members .dc-member { gap: 5px; padding: 8px 0; }
+.gd-members .dc-icon-button { padding: 2px; }
+.gd-details .gd-danger { color: var(--bad-ink); border-color: var(--bad-line); background: var(--bad-bg); }
+.gd-confirm { margin: 10px 0; padding: 10px; border: 1px solid var(--warn-line); border-radius: 6px; background: var(--warn-bg); }
+.gd-confirm p { margin: 0 0 10px; line-height: 1.8; color: var(--warn-ink); }
+.gd-feedback { margin: 10px 0; overflow-wrap: anywhere; color: var(--good-ink); line-height: 1.7; }
+.gd-leave { width: 100%; margin-top: 8px; }

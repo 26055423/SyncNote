@@ -10,8 +10,7 @@ import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
 import { ChatDock } from './ChatDock';
-import { GroupsPanel } from './GroupsPanel';
-import { FriendsIcon, GroupsIcon, ReviewIcon, TradeIcon } from './ui/icons';
+import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
 import { localHistorySync } from './localHistorySync';
@@ -77,7 +76,7 @@ interface ShareRow {
   trade: any;
 }
 
-type Tab = 'trade' | 'friends' | 'groups' | 'review' | 'inbox';
+type Tab = 'trade' | 'friends' | 'review' | 'inbox';
 
 /* 复盘图一次抓多宽的行情：按锚点往前/往后取多少天（每个基础周期各自独立）。 */
 const REVIEW_BASE_TFS = ['M1', 'M5', 'M15', 'H1'] as const;
@@ -158,6 +157,7 @@ export default function App() {
   const [friendManager, setFriendManager] = useState(false);
   const [dmUnread, setDmUnread] = useState<Record<string, number>>({});
   const [groupUnread, setGroupUnread] = useState(0);
+  const [chatGroup, setChatGroup] = useState<{ id: string; name: string; avatar?: string } | null>(null);
   const [friendReq, setFriendReq] = useState<{ incoming: Array<{ id: string; nickname: string; username: string }>; outgoing: Array<{ id: string; nickname: string; username: string }> }>({ incoming: [], outgoing: [] });
   const [recipients, setRecipients] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState('');
@@ -446,13 +446,16 @@ export default function App() {
     };
   }, [mode, liveBars, localConnected]);
 
-  // 邀请链接：/chart?group=<邀请码> 直接入群并切到「群组」。
+  // 邀请链接沿用旧地址，入群后直接进入聊天中的对应群会话。
   useEffect(() => {
     const code = params.get('group');
     if (!code || !board?.user.id) return;
-    void api('/api/groups/join', { code })
-      .then(() => {
-        setTab('groups');
+    void api<{ id: string; name: string; avatar?: string }>('/api/groups/join', { code })
+      .then((group) => {
+        setChatGroup(group);
+        setTab('friends');
+        setFriendManager(false);
+        setRailOpen(true);
         const next = new URLSearchParams(location.search);
         next.delete('group');
         history.replaceState(null, '', location.pathname + (next.toString() ? '?' + next.toString() : ''));
@@ -1147,10 +1150,9 @@ export default function App() {
                 { key: 'review', label: '复盘', Icon: ReviewIcon },
                 { key: 'trade', label: '交易', Icon: TradeIcon },
                 { key: 'friends', label: '聊天', Icon: FriendsIcon },
-                { key: 'groups', label: '群组', Icon: GroupsIcon },
               ] as Array<{ key: Tab; label: string; Icon: typeof TradeIcon }>).map(({ key, label, Icon }) => {
-                const fresh = (key === 'friends' && Object.values(dmUnread).reduce((n, v) => n + v, 0) > 0) || (key === 'groups' && groupUnread > 0);
-                const badge = key === 'friends' ? Object.values(dmUnread).reduce((n, v) => n + v, 0) : key === 'groups' ? groupUnread : 0;
+                const badge = key === 'friends' ? Object.values(dmUnread).reduce((n, v) => n + v, 0) + groupUnread : 0;
+                const fresh = badge > 0;
                 return (
                   <button
                     key={key}
@@ -1298,10 +1300,6 @@ export default function App() {
                 </div>
               ) : null}
 
-              {tab === 'groups' ? (
-                <GroupsPanel current={target?.ticket ? { ticket: target.ticket, person: target.person } : null} onError={setError} />
-              ) : null}
-
               {tab === 'friends' && friendManager ? (
                 <div className="pane pane-wide">
                     <div className="friend-manager">
@@ -1358,7 +1356,8 @@ export default function App() {
                   getSnapshot={() => chartRef.current?.view?.() ?? null}
                   onError={setError}
                   onOpenFriendManager={() => setFriendManager(true)}
-                  onOpenGroupSettings={() => setTab('groups')}
+                  openGroup={chatGroup}
+                  onGroupOpened={() => setChatGroup(null)}
                 />
               </div>
 

@@ -1,12 +1,14 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, stamp } from './api';
 import { usePrefs } from './ui/prefs';
+import { GroupEntry } from './GroupEntry';
+import { GroupDetails } from './GroupDetails';
 
 interface Person { id: string; nickname: string; avatar?: string; username?: string; bio?: string; online?: boolean; role?: string; can_chat?: boolean }
 interface DmThread { peer: Person; text: string; created: number; unread: number }
 interface GroupRow {
   id: string; name: string; members: number; unread: number; mentions?: number;
-  avatar?: string; notice?: string; role: string; last?: { text: string; created: number } | null;
+  avatar?: string; notice?: string; code?: string; role: string; last?: { text: string; created: number } | null;
 }
 interface Reaction { emoji: string; count: number; mine: boolean }
 interface Message {
@@ -21,7 +23,8 @@ interface Props {
   current?: { ticket: string } | null;
   getSnapshot?: () => unknown;
   onError?: (message: string) => void;
-  onOpenGroupSettings?: () => void;
+  openGroup?: { id: string; name: string; avatar?: string } | null;
+  onGroupOpened?: () => void;
   onOpenFriendManager?: () => void;
 }
 const EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
@@ -49,7 +52,7 @@ function Avatar({ name, avatar, size = '' }: { name: string; avatar?: string; si
 }
 
 /** 私信与群聊共用会话、引用回复、表情回应和复盘卡片。 */
-export function ChatDock({ visible = true, current, getSnapshot, onError, onOpenGroupSettings, onOpenFriendManager }: Props) {
+export function ChatDock({ visible = true, current, getSnapshot, onError, openGroup, onGroupOpened, onOpenFriendManager }: Props) {
   const prefs = usePrefs();
   const [threads, setThreads] = useState<DmThread[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
@@ -68,6 +71,7 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, onOpen
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [details, setDetails] = useState(false);
+  const [groupEntry, setGroupEntry] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [reactionPicker, setReactionPicker] = useState<number | string | null>(null);
   const [jumpTarget, setJumpTarget] = useState<number | string | null>(null);
@@ -113,6 +117,13 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, onOpen
       }
     } catch (error) { if (mounted.current) fail(error); }
   }, [fail]);
+  useEffect(() => {
+    if (!visible || !openGroup) return;
+    setFilter('group');
+    select({ kind: 'group', ...openGroup });
+    void loadLists();
+    onGroupOpened?.();
+  }, [visible, openGroup, onGroupOpened, loadLists]);
   const loadConversation = useCallback(async (conversation: Conversation, fresh = false): Promise<void> => {
     const key = keyOf(conversation);
     const readable = () => mounted.current && visibleRef.current && !document.hidden && activeRef.current && keyOf(activeRef.current) === key;
@@ -211,6 +222,18 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, onOpen
     selectionRef.current = { start: cursor, end: cursor };
     setEmojiOpen(false);
     window.requestAnimationFrame(() => { composerRef.current?.focus(); composerRef.current?.setSelectionRange(cursor, cursor); });
+  };
+  const enterGroup = async (row: GroupRow) => {
+    setGroups((all) => [row, ...all.filter((item) => item.id !== row.id)]);
+    setFilter('group'); setQuery(''); setDetails(true); setGroupEntry(false);
+    select({ kind: 'group', id: row.id, name: row.name, avatar: row.avatar });
+    await loadLists();
+  };
+  const refreshGroup = async (id: string) => {
+    await loadLists();
+    if (!visibleRef.current || activeRef.current?.kind !== 'group' || activeRef.current.id !== id) return;
+    const result = await api<{ members: Person[] }>(`/api/groups/members?group=${encodeURIComponent(id)}`);
+    if (mounted.current && activeRef.current?.kind === 'group' && activeRef.current.id === id) setMembers(result.members);
   };
   const send = async () => {
     const conversation = activeRef.current;
@@ -313,7 +336,7 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, onOpen
               {row.unread > 0 && <span className="dc-badge" aria-label={`${row.unread} 条未读`}>{row.unread}</span>}
             </button>)}
             {!visibleDm.length && <p className="dc-empty">{filter === 'unread' ? '私信已全部读完' : query ? '没有找到这位好友' : '添加交易伙伴，开始交流。'}</p>}</>}
-          {filter !== 'dm' && <><div className="dc-section-title">群聊 <button type="button" title="创建或加入群组" aria-label="创建或加入群组" onClick={onOpenGroupSettings}>+</button></div>
+          {filter !== 'dm' && <><div className="dc-section-title">群聊 <button type="button" title="创建或加入群聊" aria-label="创建或加入群聊" onClick={() => setGroupEntry(true)}>+</button></div>
             {visibleGroups.map((row) => <button type="button" key={row.id} className={`dc-conversation ${active?.kind === 'group' && active.id === row.id ? 'is-active' : ''}`}
               aria-current={active?.kind === 'group' && active.id === row.id ? 'true' : undefined} onClick={() => select({ kind: 'group', id: row.id, name: row.name, avatar: row.avatar })}>
               <Avatar name={row.name} avatar={row.avatar} /><span className="dc-conversation-copy"><span className="dc-conversation-name">{row.name}</span><span className="dc-preview">{row.mentions ? `有人 @ 你 · ${row.mentions} 条` : row.last?.text || `${row.members} 位成员`}</span></span>
@@ -321,13 +344,13 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, onOpen
             </button>)}
             {!visibleGroups.length && <p className="dc-empty">{filter === 'unread' ? '群聊已全部读完' : query ? '没有找到这个群聊' : '创建或加入群组，一起讨论交易。'}</p>}</>}
         </div>
-        <div className="dc-sidebar-foot"><button type="button" onClick={onOpenFriendManager}>好友管理{requests ? ` · ${requests} 个申请` : ''}</button><button type="button" onClick={onOpenGroupSettings}>群组管理</button></div>
+        <div className="dc-sidebar-foot"><button type="button" onClick={onOpenFriendManager}>好友管理{requests ? ` · ${requests} 个申请` : ''}</button><button type="button" onClick={() => setGroupEntry(true)}>创建 / 加入群</button></div>
         <a className="dc-self" href="/profile" target="_blank" rel="noopener noreferrer"><Avatar name={me?.nickname ?? '我'} avatar={me?.avatar} size="sm" /><span><b>{me?.nickname ?? '我的账户'}</b><small>个人资料与设置 ↗</small></span></a>
       </aside>
       <div className="dc-content">
         <header className="dc-header">
           <button type="button" className="dc-icon-button dc-mobile-back" aria-label="返回会话列表" onClick={() => { activeRef.current = null; setActive(null); }}><Icon name="back" /></button>
-          <div className="dc-header-title">{active ? <Avatar name={name} avatar={active.avatar} size="sm" /> : <Icon name="users" />}<b>{name || '同频 · 聊天'}</b><small>{active?.kind === 'group' ? `${group?.members ?? 0} 位成员` : active ? (peer?.online ? '在线' : '私信') : '与交易伙伴保持同频'}</small></div>
+          <div className="dc-header-title">{active ? <Avatar name={name} avatar={group?.avatar ?? active.avatar} size="sm" /> : <Icon name="users" />}<b>{name || '同频 · 聊天'}</b><small>{active?.kind === 'group' ? `${group?.members ?? 0} 位成员` : active ? (peer?.online ? '在线' : '私信') : '与交易伙伴保持同频'}</small></div>
           <div className="dc-header-tools">
             {active && <label className="dc-message-search"><Icon name="search" /><input aria-label="搜索已加载消息" placeholder="搜索最近消息" value={search} onChange={(event) => setSearch(event.target.value)} /></label>}
             {active && <button type="button" className="dc-icon-button" title={active.kind === 'dm' ? '查看资料' : '查看成员'} aria-label={active.kind === 'dm' ? '查看资料' : '查看成员'} aria-pressed={details} onClick={() => setDetails((value) => !value)}><Icon name={active.kind === 'dm' ? 'profile' : 'users'} /></button>}
@@ -340,7 +363,7 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, onOpen
             nearBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
             if (nearBottom.current) setPendingNew(false);
           }}>
-            <div className="dc-intro"><Avatar name={name} avatar={active.avatar} size="lg" /><h2>{active.kind === 'group' ? '# ' : ''}{name}</h2><p>{active.kind === 'group' ? group?.notice || '交流思路，分享复盘，一起把交易做得更好。' : `这是你与 ${name} 的私信。分享想法，也分享每一次交易的成长。`}</p></div>
+            <div className="dc-intro"><Avatar name={name} avatar={group?.avatar ?? active.avatar} size="lg" /><h2>{active.kind === 'group' ? '# ' : ''}{name}</h2><p>{active.kind === 'group' ? group?.notice || '交流思路，分享复盘，一起把交易做得更好。' : `这是你与 ${name} 的私信。分享想法，也分享每一次交易的成长。`}</p></div>
             {loading && !messages.length && <p className="dc-empty" role="status">正在加载消息…</p>}
             {!loading && !visibleMessages.length && <p className="dc-empty">{search ? '没有找到匹配的消息' : '对话从这里开始，打个招呼吧。'}</p>}
             {visibleMessages.map((message, index) => {
@@ -392,12 +415,14 @@ export function ChatDock({ visible = true, current, getSnapshot, onError, onOpen
       </div>
       {active && <aside className="dc-details" aria-label={active.kind === 'dm' ? '好友资料' : '群组资料'}>
         <div className="dc-profile-banner"><button type="button" className="dc-icon-button dc-details-close" aria-label="关闭资料栏" onClick={() => setDetails(false)}><Icon name="close" /></button></div>
-        <div className="dc-profile-body"><Avatar name={name} avatar={active.avatar} size="lg" /><h2 className="dc-profile-name">{name}</h2><p className="dc-profile-meta">{active.kind === 'dm' ? (person?.username ? `@${person.username}` : '交易伙伴') : `${group?.members ?? members.length} 位成员`}</p>
-          <div className="dc-profile-card"><h3>{active.kind === 'dm' ? '关于我' : '群公告'}</h3><p>{active.kind === 'dm' ? person?.bio || '这个人还没有填写简介。' : group?.notice || '暂时没有群公告。'}</p></div>
-          {active.kind === 'group' && <div className="dc-members"><h3>成员 · {members.length}</h3>{members.map((member) => <div className="dc-member" key={member.id}><span className="dc-avatar-wrap"><Avatar name={member.nickname} avatar={member.avatar} size="sm" />{member.online && <i className="dc-presence is-online" />}</span><span>{member.nickname}</span><small>{member.role === 'owner' ? '群主' : member.online ? '在线' : ''}</small><button type="button" className="dc-icon-button" aria-label={`提及 ${member.nickname}`} title={`提及 ${member.nickname}`} onClick={() => { setDraft(draft + `@${member.nickname} `); composerRef.current?.focus(); }}>@</button></div>)}</div>}
-          <button type="button" onClick={active.kind === 'dm' ? onOpenFriendManager : onOpenGroupSettings}>{active.kind === 'dm' ? '管理好友' : '管理群组'}</button>
+        <div className="dc-profile-body"><Avatar name={name} avatar={group?.avatar ?? active.avatar} size="lg" /><h2 className="dc-profile-name">{name}</h2><p className="dc-profile-meta">{active.kind === 'dm' ? (person?.username ? `@${person.username}` : '交易伙伴') : `${group?.members ?? members.length} 位成员`}</p>
+          {active.kind === 'dm' ? <><div className="dc-profile-card"><h3>关于我</h3><p>{person?.bio || '这个人还没有填写简介。'}</p></div><button type="button" onClick={onOpenFriendManager}>管理好友</button></> : group && <GroupDetails key={group.id} group={group} members={members} onChanged={() => refreshGroup(group.id)} onError={onError ?? (() => undefined)} onMention={(nickname) => insertText(`@${nickname} `)} onLeave={() => {
+            if (activeRef.current?.kind === 'group' && activeRef.current.id === group.id) { activeRef.current = null; setActive(null); setMessages([]); setMembers([]); setDetails(false); }
+            void loadLists();
+          }} />}
         </div>
       </aside>}
+      {groupEntry && visible && <GroupEntry onClose={() => setGroupEntry(false)} onComplete={enterGroup} />}
     </section>
   );
 }
