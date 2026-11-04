@@ -34,6 +34,9 @@ function stripTheme(document: unknown, provider?: string, symbol?: string): unkn
   } catch {
     return document;
   }
+  // sync（十字线/周期/绘图联动）是工作台偏好，不属于某笔复盘的存档：
+  // 旧文档里可能是 crosshair=false，恢复后会出现"十字线不同步"的怪现象。
+  delete copy.sync;
   if (Array.isArray(copy.charts)) {
     for (const chart of copy.charts) {
       if (chart && typeof chart === 'object') {
@@ -72,6 +75,8 @@ export interface ChartHandle {
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
 /** 「时间轴」开关存在本机：只影响点击跳转，不影响缩放。 */
 const TIME_SYNC_KEY = 'sn-time-sync';
+/** 「十字线」联动开关也存在本机，默认开。 */
+const CROSSHAIR_SYNC_KEY = 'sn-crosshair-sync';
 
 interface Props {
   charts: ReviewCharts;
@@ -164,9 +169,14 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     // 默认开启：勾掉才完全不联动。
     try { return localStorage.getItem(TIME_SYNC_KEY) !== '0'; } catch { return true; }
   })());
+  /** 十字线联动：默认开，勾掉后记在本机。 */
+  const crosshairSyncRef = useRef<boolean>((() => {
+    try { return localStorage.getItem(CROSSHAIR_SYNC_KEY) !== '0'; } catch { return true; }
+  })());
   const stateWithTimeSync = (ws: any): Partial<Record<SyncKind, boolean>> => ({
     ...((ws?.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>),
     viewport: timeSyncRef.current,
+    crosshair: crosshairSyncRef.current,
   });
   /**
    * 设置可见范围，但**保持跨度不变**。
@@ -330,7 +340,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         return;
       }
       const state = ws.sync?.state?.() ?? {};
-      ws.sync?.set?.(kind, !state[kind]);
+      const next = !state[kind];
+      ws.sync?.set?.(kind, next);
+      if (kind === 'crosshair') {
+        crosshairSyncRef.current = next;
+        try { localStorage.setItem(CROSSHAIR_SYNC_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+      }
       onSyncs?.(stateWithTimeSync(ws));
     },
     getSyncs() {
@@ -418,7 +433,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           providers: { [providerName]: () => provider },
           // Pine 指标引擎 + bigwolf：指标面板里就能添加，不再自己画叠加层。
           // 官方推荐：workspace 里用 Worker 版，脚本再重也不卡 UI。
-          sync: { crosshair: true },
+          sync: { crosshair: crosshairSyncRef.current },
           persist: false,
           drawingToolbar: !readOnly,
           bottombar: false,
@@ -448,6 +463,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         // Vela 自带的 viewport 同步会连缩放一起同步，不需要：关掉它，
         // 「时间轴」只由本站的点击跳转实现（timeSyncRef）。
         try { ws.sync?.set?.('viewport', false); } catch { /* ignore */ }
+        // 旧存档/旧工作台可能残留 crosshair=false，按本机偏好恢复一次。
+        try { ws.sync?.set?.('crosshair', crosshairSyncRef.current); } catch { /* ignore */ }
         onSyncs?.(stateWithTimeSync(ws));
 
         const focusOne = (cell: any) => {
