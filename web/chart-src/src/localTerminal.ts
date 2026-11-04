@@ -85,6 +85,10 @@ const freshState = (): LocalTerminalState => ({
   latency: null, account: {}, tick: null,
   positions: [], orders: [], bars: {}, history_ready: false, commands: [], revision: 0,
 });
+const TF_SECONDS: Record<string, number> = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600 };
+/** 初次连上时每个周期预取多少根:EA 的 range 模式一次最多 2000 个周期槽。 */
+// 留 10 根余量:EA 会按周期对齐起点,正好 2000 槽时可能多出一根被判超限。
+const HISTORY_SLOTS = 1990;
 const terminalStates = new Set(['completed', 'rejected']);
 const unresolvedStates = new Set(['sending', 'received', 'submitted', 'uncertain', 'not_found']);
 const tfKeys = new Set(['1m', '5m', '15m', '1h']);
@@ -230,7 +234,12 @@ export class LocalTerminal {
       this.nextHistory();
     }, 10000);
     this.pendingHistory = { id, tf, timer };
-    this.send({ type: 'bars', symbol: this.state.symbol, tf, limit: 400, request_id: id });
+    // 原来只取 400 根（1m 才 6 小时），指标和复盘都不够用。
+    // 改成 range 模式一次取满 2000 个周期槽：1m≈33h、5m≈7天、15m≈20天、1h≈83天。
+    const period = TF_SECONDS[tf] ?? 60;
+    const to = Math.floor(Date.now() / 1000) + (this.state.server_offset_sec || 0);
+    const from = to - (HISTORY_SLOTS - 1) * period;
+    this.send({ type: 'bars', symbol: this.state.symbol, tf, from_server: from, to_server: to, request_id: id });
   }
   private identity(message: Record<string, any>) {
     return {
@@ -327,7 +336,9 @@ export class LocalTerminal {
           return;
         }
         if (!this.pendingHistory || message.request_id !== this.pendingHistory.id || message.tf !== this.pendingHistory.tf) return;
-        const rows = message.bars.filter((row: unknown) => Array.isArray(row) && row.length >= 5 && row.slice(0, 5).every((value: unknown) => typeof value === 'number' && Number.isFinite(value)));
+        // range 模式的时间是券商墙钟，减掉券商偏移后与复盘/成交的 UTC 对齐。
+        const shift = (message as { range?: unknown }).range ? (this.state.server_offset_sec || 0) : 0;
+        const rows = message.bars.filter((row: unknown) => Array.isArray(row) && row.length >= 5 && row.slice(0, 5).every((value: unknown) => typeof value === 'number' && Number.isFinite(value))).map((row: number[]) => (shift ? [row[0] - shift, ...row.slice(1)] : row));
         this.update({ bars: { ...this.state.bars, [message.tf]: rows.slice(-3000) } });
         this.nextHistory();
       } else if (message.type === 'bar' && tfKeys.has(message.tf)) {
