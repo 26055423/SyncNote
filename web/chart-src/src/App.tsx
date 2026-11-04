@@ -217,6 +217,12 @@ export default function App() {
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') || params.get('share') ? 'review' : 'live'));
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
+  /** 有新 K 线时是否自动滚动到最新：默认关，让蜡烛在画面里自然生长。 */
+  const [autoScroll, setAutoScroll] = useState(() => {
+    try { return localStorage.getItem('sn-autoscroll') === '1'; } catch { return false; }
+  });
+  const autoScrollRef = useRef(autoScroll);
+  autoScrollRef.current = autoScroll;
   /** 图上画的是哪套数据：server = bars 表（券商墙钟），utc = 交易快照（journal.review 已转 UTC）。 */
 
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
@@ -355,11 +361,36 @@ export default function App() {
   useEffect(() => {
     if (!localConnected) return;
     setLiveTick(local.tick);
+    // 新 K 线不该把画面推走：先记下每格可见范围，合并后再恢复（自动滚动关闭时）。
+    const keepRanges = autoScrollRef.current ? null : chartRef.current?.captureRanges();
+    const beforeLast: Record<string, number> = {};
+    for (const [key, rows] of Object.entries(liveRef.current)) {
+      const last = rows?.[rows.length - 1];
+      if (last) beforeLast[key] = last[0];
+    }
     // tick 变化也进这里:把最新报价插值进当前蜡烛,蜡烛在两次 EA bar 推送之间随 tick 伸缩。
     const incoming = applyTickToBars(toChartBars(local.bars), local.tick);
     Object.assign(liveRef.current, incoming);
     if (local.history_ready && Object.keys(incoming).length) setLiveBars(liveRef.current);
     for (const listener of liveListeners.current) listener();
+    if (!keepRanges) return;
+    const grew = Object.entries(liveRef.current).some(([key, rows]) => {
+      const last = rows?.[rows.length - 1];
+      const prev = beforeLast[key];
+      return Boolean(last && prev !== undefined && last[0] > prev);
+    });
+    if (!grew) return;
+    // 只冻结"已经往回翻"的格子：可见右端比最新一根落后超过 8 根，才把范围拉回去；
+    // 停在最新时保持自然生长，新蜡烛照常出现在右侧。
+    const frozen: Record<string, { from: number; to: number }> = {};
+    for (const [id, range] of Object.entries(keepRanges)) {
+      const rows = liveRef.current[range.base];
+      const newest = rows?.[rows.length - 1]?.[0];
+      const tfSec = TIMEFRAMES[range.base]?.seconds ?? 60;
+      if (!newest) continue;
+      if (range.to < (newest - 8 * tfSec) * 1000) frozen[id] = { from: range.from, to: range.to };
+    }
+    if (Object.keys(frozen).length) requestAnimationFrame(() => chartRef.current?.restoreRanges(frozen));
   }, [localConnected, local.tick, local.bars, local.history_ready]);
 
   useEffect(() => () => localTerminal.disconnect(), []);
@@ -1135,6 +1166,19 @@ export default function App() {
               <span className="badge">历史行情{marketInfo?.last ? ' · 最新 ' + stamp(marketInfo.last) : ''}</span>
             ) : null}
             <span className="spacer" />
+            <button
+              type="button"
+              className={`tool-btn autoscroll-toggle ${autoScroll ? 'is-active' : ''}`.trim()}
+              title={autoScroll ? '新 K 线出现时自动滚动到最新（点击关闭）' : '新 K 线出现时保持当前画面，不自动滚动（点击开启自动滚动）'}
+              aria-pressed={autoScroll}
+              onClick={() => {
+                const next = !autoScroll;
+                setAutoScroll(next);
+                try { localStorage.setItem('sn-autoscroll', next ? '1' : '0'); } catch { /* ignore */ }
+              }}
+            >
+              自动滚动
+            </button>
             {/* 数据源标签：避免把"复盘回放"当成实时行情。 */}
             <span
               className={`data-chip ${mode === 'live' ? (liveBars ? (liveLag.stale.length ? 'is-wait' : 'is-live') : 'is-wait') : 'is-review'}`}

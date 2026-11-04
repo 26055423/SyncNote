@@ -58,6 +58,10 @@ export interface ChartHandle {
   focus(timestampMs?: number): void;
   toggleSync(kind: SyncKind): void;
   getSyncs(): Partial<Record<SyncKind, boolean>>;
+  /** 记下每格可见范围（新 K 线到来前调用）。 */
+  captureRanges(): Record<string, { from: number; to: number; base: BaseTimeframe }>;
+  /** 把可见范围恢复回去（只恢复传入的格子）。 */
+  restoreRanges(ranges: Record<string, { from: number; to: number }>): void;
   snapshot(): unknown;
   flush(): void;
   /** 分享用：激活格子的周期、可见窗口中点（毫秒）、布局，以及当时的画线文档（已去掉开平仓标注）。 */
@@ -350,6 +354,32 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     },
     getSyncs() {
       return stateWithTimeSync(wsRef.current);
+    },
+    /** 记下每格当前的可见范围（新 K 线到来前调用）。 */
+    captureRanges() {
+      const out: Record<string, { from: number; to: number; base: BaseTimeframe }> = {};
+      for (const cell of wsRef.current?.cells?.() ?? []) {
+        try {
+          const range = cell.chart?.getVisibleRange?.();
+          const tfId = cell.chart?.market?.timeframe ?? '15';
+          const base = TIMEFRAMES[tfId]?.base;
+          if (range && base && Number.isFinite(range.from) && Number.isFinite(range.to)) out[cell.id] = { from: range.from, to: range.to, base };
+        } catch { /* ignore */ }
+      }
+      return out;
+    },
+    /** 把可见范围恢复回去：新 K 线不该把画面推走。 */
+    restoreRanges(ranges: Record<string, { from: number; to: number; base?: BaseTimeframe }>) {
+      for (const cell of wsRef.current?.cells?.() ?? []) {
+        const target = ranges[cell.id];
+        if (!target) continue;
+        try {
+          const now = cell.chart?.getVisibleRange?.();
+          if (now && Math.abs(now.from - target.from) < 1 && Math.abs(now.to - target.to) < 1) continue;
+          programmaticUntilRef.current.set(cell.id, Date.now() + 250);
+          cell.chart?.setVisibleRange?.({ from: target.from, to: target.to });
+        } catch { /* ignore */ }
+      }
     },
     snapshot() {
       try {
