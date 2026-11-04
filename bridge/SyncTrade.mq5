@@ -18,6 +18,8 @@ input bool InpAllowTrading=false;                    // Explicit local opt-in fo
 input bool InpAllowRealTrading=false;                 // Allow a REAL account (needs the two caps below)
 input double InpRealMaxLots=0.05;                     // Real account: max lots per order (0 = block real trading)
 input int InpRealMaxOrdersPerDay=5;                   // Real account: max new market/pending commands per broker day
+input bool InpRealNoCaps=false;                        // Real account: no per-order / per-day / daily-loss caps (full risk, no limits)
+input bool InpUnrestricted=false;                      // 配对后不再有任何额度/账户类型限制（InpAllowTrading 与全部上限都不检查；配对授权与下单日志仍然必需）
 input double InpMaxOrderLots=0.10;                   // Maximum market order / partial close lots
 input double InpMaxSymbolLots=1.00;                  // Maximum gross exposure on selected symbol
 input int InpMaxDeviationPoints=20;                  // Maximum requested deviation in broker points
@@ -112,21 +114,27 @@ bool LocalDemo() { return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_
 bool LocalReal() { return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_REAL; }
 bool LocalHedging() { return AccountInfoInteger(ACCOUNT_MARGIN_MODE)==ACCOUNT_MARGIN_MODE_RETAIL_HEDGING; }
 // 净额账户上，持仓是所有来源合并的，magic 归属无法证明：默认只允许开新仓。
-bool LocalManageAllowed() { return LocalHedging() || InpAllowNettingManage; }
+bool LocalManageAllowed() { return InpUnrestricted || LocalHedging() || InpAllowNettingManage; }
 bool LocalCanTrade()
 {
-   if(!InpAllowTrading || !g_journal_ok || !g_account_stable || !g_risk_ok || !g_risk.Healthy()) return false;
+   // 这三个是"能不能安全下单"的底线，任何时候都不跳过：下单日志、账户稳定、风控账本。
+   if(!g_journal_ok || !g_account_stable || !g_risk_ok || !g_risk.Healthy()) return false;
    long margin=AccountInfoInteger(ACCOUNT_MARGIN_MODE);
    if(margin!=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING && margin!=ACCOUNT_MARGIN_MODE_RETAIL_NETTING && margin!=ACCOUNT_MARGIN_MODE_EXCHANGE) return false;
    // 对冲、净额都允许开新仓；净额下 close/modify 的归属无法证明，另由 LocalManageAllowed 把关。
+   // 无限制模式：配对成功后不再看 InpAllowTrading / InpAllowRealTrading / 任何额度上限。
+   if(InpUnrestricted) return true;
+   if(!InpAllowTrading) return false;
    if(LocalDemo()) return true;
    // 实盘：必须单独开关 + 单笔/每日上限都有效，否则一律只读。
+   if(InpRealNoCaps) return LocalReal() && InpAllowRealTrading;
    return LocalReal() && InpAllowRealTrading && InpRealMaxLots>0 && InpRealMaxOrdersPerDay>0;
 }
 string JsonBool(const bool value) { return value ? "true" : "false"; }
 string CapabilitiesJson()
 {
    if(!LocalCanTrade()) return "[]";
+   if(InpUnrestricted) return "[\"market\",\"close\",\"cancel\",\"modify\",\"pending\",\"limit\",\"stop\"]";
    string capabilities="[\"market\"";
    if(InpAllowClose && LocalManageAllowed()) capabilities+=",\"close\"";
    if(InpAllowCancel) capabilities+=",\"cancel\"";
@@ -153,7 +161,7 @@ bool PendingSideValid(const string action,const bool buy,const double price,cons
 string IdentityFields()
 {
    return "\"product\":\"SyncTrade\",\"features\":[\"history\"],\"instance_id\":"+JStr(g_instance)+",\"account_id\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+",\"epoch\":"+JStr(g_epoch)+
-      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging())+",\"netting_manage\":"+JsonBool(InpAllowNettingManage)+",\"real_trading\":"+JsonBool(LocalReal() && InpAllowRealTrading && LocalCanTrade())+
+      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging()) +",\"netting_manage\":"+JsonBool(InpAllowNettingManage) +",\"real_no_caps\":"+JsonBool(InpRealNoCaps) +",\"unrestricted\":"+JsonBool(InpUnrestricted) +",\"real_trading\":"+JsonBool(LocalReal() && InpAllowRealTrading && LocalCanTrade())+
       ",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
 }
 void LocalError(const int peer,const string code,const string message,const string request_id="")
@@ -609,7 +617,8 @@ bool Authenticated(const int peer,const string js)
 bool VolumeValid(const double volume)
 {
    double minv=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_MIN),maxv=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_MAX),step=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_STEP);
-   if(!MathIsValidNumber(volume)||step<=0 || volume<minv-1e-9 || volume>maxv+1e-9 || volume>InpMaxOrderLots+1e-9) return false;
+   double lot_cap=((LocalReal()&&InpRealNoCaps)||InpUnrestricted)?maxv:InpMaxOrderLots;
+   if(!MathIsValidNumber(volume)||step<=0 || volume<minv-1e-9 || volume>maxv+1e-9 || volume>lot_cap+1e-9) return false;
    return MathAbs(volume/step-MathRound(volume/step))<1e-6;
 }
 bool PriceValid(const double price)
@@ -648,7 +657,7 @@ bool PendingStopsValid(const bool buy,const double price,const double sl,const d
 bool NettingOrderAllowed(const string action,string &error)
 {
    if(LocalHedging()) return true;
-   if(!InpAllowNettingManage && action!="market")
+   if(!InpUnrestricted && !InpAllowNettingManage && action!="market")
    {error="NETTING_MANAGEMENT_REQUIRED: pending orders may affect a future net position";return false;}
    for(int i=0;i<PositionsTotal();i++)
    {
@@ -656,7 +665,7 @@ bool NettingOrderAllowed(const string action,string &error)
       string symbol=PositionGetString(POSITION_SYMBOL);
       if(symbol=="") {error="Cannot read current position symbol";return false;}
       if(symbol!=InpSymbol) continue;
-      if(!InpAllowNettingManage || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic))
+   if(!InpUnrestricted && (!InpAllowNettingManage || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)))
       {error="NETTING_EXPOSURE: a new order could change an existing position outside local consent";return false;}
    }
    for(int i=0;i<OrdersTotal();i++)
@@ -693,17 +702,21 @@ bool ExposureAllowed(const double volume,string &error)
       if(!MathIsValidNumber(amount) || amount<0) {error="Invalid pending exposure";return false;}
       exposure+=amount;
    }
-   if(!MathIsValidNumber(exposure) || exposure+volume>InpMaxSymbolLots+1e-9)
+   if(!(LocalReal()&&InpRealNoCaps) && (!MathIsValidNumber(exposure) || exposure+volume>InpMaxSymbolLots+1e-9))
    {error="Total symbol exposure exceeds local limit";return false;}
    return true;
 }
 bool OpeningAllowed(const string action,const double volume,string &error)
 {
    if(!NewOrderAction(action)) return true;
-   if(!NettingOrderAllowed(action,error) || !ExposureAllowed(volume,error)) return false;
-   if(LocalReal() && (InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9))
+   if(!NettingOrderAllowed(action,error)) return false;
+   // 无限制模式：手数、品种总敞口、每日已实现亏损都不检查（配对授权与日志仍然必需）。
+   if(InpUnrestricted) return true;
+   if(!ExposureAllowed(volume,error)) return false;
+   if(LocalReal() && !InpRealNoCaps && (InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9))
    {error="Real account lot cap exceeded";return false;}
-   return g_risk.LossAllowed(InpSymbol,InpMaxDailyLoss,error);
+   // 不限额时每日已实现亏损也不设上限（LossAllowed 的 cap=0 表示不启用）。
+   return g_risk.LossAllowed(InpSymbol,InpRealNoCaps?0.0:InpMaxDailyLoss,error);
 }
 void HandleTradeCommand(const int peer,const string js)
 {
@@ -830,7 +843,7 @@ void HandleTradeCommand(const int peer,const string js)
    if(LocalReal() && NewOrderAction(action))
    {
       long broker_day=(long)TimeTradeServer()/86400;
-      if(!g_risk.Reserve(id,broker_day,InpRealMaxOrdersPerDay,error))
+      if(!g_risk.Reserve(id,broker_day,(InpUnrestricted||InpRealNoCaps)?1000000:InpRealMaxOrdersPerDay,error))
       {
          g_risk_ok=g_risk.Healthy();g_commands[index].state="rejected";
          g_commands[index].result=CommandResult(id,"rejected",error);
@@ -976,7 +989,7 @@ int OnInit()
    {Print("SyncTrade: allowed origin must be one exact https origin without path/wildcards");return INIT_PARAMETERS_INCORRECT;}
    if(!MathIsValidNumber(InpMaxOrderLots) || !MathIsValidNumber(InpMaxSymbolLots) || !MathIsValidNumber(InpRealMaxLots) ||
       !MathIsValidNumber(InpMaxDailyLoss) || !MathIsValidNumber(InpMaxPendingDeviationPct) || InpRealMaxLots<0 || InpRealMaxOrdersPerDay<0 ||
-      InpMaxDailyLoss<0 || InpMaxPendingDeviationPct<0 || InpMaxOrderLots<=0 || InpMaxSymbolLots<InpMaxOrderLots ||
+      InpMaxDailyLoss<0 || InpMaxPendingDeviationPct<0 || (InpMaxOrderLots<=0 && !InpUnrestricted) || (InpMaxSymbolLots<InpMaxOrderLots && !InpUnrestricted) ||
       InpMaxDeviationPoints<0 || InpMaxSpreadPoints<0 || InpMagic<0 || !SymbolSelect(InpSymbol,true)) return INIT_PARAMETERS_INCORRECT;
    g_digits=(int)SymbolInfoInteger(InpSymbol,SYMBOL_DIGITS);
    g_bar_push_ms=(int)MathMax(50,MathMin(1000,InpBarPushMs));

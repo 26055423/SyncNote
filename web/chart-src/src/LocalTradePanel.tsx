@@ -27,7 +27,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   const lockedReason = !connected
     ? ''
     : !state.demo && !state.real_trading
-      ? '已连接，但当前账户不是模拟账户：需在 EA 里打开 InpAllowRealTrading 和单笔/每日上限'
+      ? '已连接，但当前账户不是模拟账户：需在 EA 里打开 InpAllowRealTrading 和单笔/每日上限（或直接开 InpUnrestricted，配对后不再有任何限制）'
       : state.read_only
         ? '已连接，但 EA 处于只读模式：请在 EA 参数里开启交易权限'
         : unresolved
@@ -91,7 +91,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
       {realTrading ? (
         <p className="local-real-warning" role="alert">实盘账户：下单按钮发出的指令会真实成交，请先核对手数、方向与止损。</p>
       ) : null}
-    {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || (!state.demo && !realTrading) ? '只读' : realTrading ? '已获本机实盘交易授权' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
+    {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || (!state.demo && !realTrading) ? '只读' : state.unrestricted ? '已获本机授权（不限额）' : realTrading ? '已获本机实盘交易授权' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
     {connected ? <>
       
       <h3>本机持仓 <small>{state.positions.length}</small></h3>

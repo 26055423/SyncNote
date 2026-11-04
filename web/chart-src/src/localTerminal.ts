@@ -31,6 +31,10 @@ export interface LocalTerminalState {
   netting_manage: boolean;
   /** EA 明确允许在实盘账户上下单（InpAllowRealTrading + 上限都打开时才会是 true）。 */
   real_trading: boolean;
+  /** EA 开了「配对后无任何限制」（InpUnrestricted），额度与开关都不检查。 */
+  unrestricted?: boolean;
+  /** 实盘不限额（InpRealNoCaps）。 */
+  real_no_caps?: boolean;
   capabilities: string[];
   product: string;
   features: string[];
@@ -208,6 +212,8 @@ export class LocalTerminal {
       demo: message.demo === true,
       hedging: message.hedging === true,
       netting_manage: message.netting_manage === true,
+      unrestricted: message.unrestricted === true,
+      real_no_caps: message.real_no_caps === true,
       real_trading: message.real_trading === true,
       capabilities: Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [],
       product: typeof message.product === 'string' ? message.product : this.state.product,
