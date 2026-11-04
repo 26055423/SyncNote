@@ -1147,8 +1147,8 @@ export default function App() {
         <aside className={railOpen ? (tab === 'friends' ? "rail is-wide" : "rail") : "rail is-collapsed"}>
             <div className="rail-icons">
               {([
-                { key: 'review', label: '复盘', Icon: ReviewIcon },
                 { key: 'trade', label: '交易', Icon: TradeIcon },
+                { key: 'review', label: '复盘', Icon: ReviewIcon },
                 { key: 'friends', label: '聊天', Icon: FriendsIcon },
               ] as Array<{ key: Tab; label: string; Icon: typeof TradeIcon }>).map(({ key, label, Icon }) => {
                 const badge = key === 'friends' ? Object.values(dmUnread).reduce((n, v) => n + v, 0) + groupUnread : 0;
