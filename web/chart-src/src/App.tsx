@@ -225,6 +225,22 @@ export default function App() {
   const liveRef = useRef<ReviewCharts>({});
   const liveListeners = useRef(new Set<() => void>());
   const liveSymbol = localConnected ? local.symbol : 'XAUUSD';
+  // 实时数据新鲜度：各周期最后一根的时间。某个周期明显落后（>3 根）时在标签上提示，
+  // 否则用户会以为"十字线没同步"，其实是那一格的数据停在了更早的位置。
+  const liveLag = useMemo(() => {
+    if (!liveBars) return { stale: [] as string[], latest: null as number | null };
+    const entries = Object.entries(liveBars) as Array<[string, number[][]]>;
+    const last: Array<{ tf: string; time: number; sec: number }> = [];
+    for (const [tf, rows] of entries) {
+      const row = rows?.[rows.length - 1];
+      const sec = TIMEFRAMES[tf as BaseTimeframe]?.seconds ?? 0;
+      if (Array.isArray(row) && Number.isFinite(row[0]) && sec) last.push({ tf, time: row[0], sec });
+    }
+    if (!last.length) return { stale: [] as string[], latest: null as number | null };
+    const latest = Math.max(...last.map((row) => row.time));
+    const stale = last.filter((row) => latest - row.time > row.sec * 3).map((row) => row.tf);
+    return { stale, latest };
+  }, [liveBars]);
   const liveProvider = useMemo(
     () => new LiveProvider(liveRef.current, liveSymbol, (listener) => {
       liveListeners.current.add(listener);
@@ -1081,16 +1097,22 @@ export default function App() {
             <span className="spacer" />
             {/* 数据源标签：避免把"复盘回放"当成实时行情。 */}
             <span
-              className={`data-chip ${mode === 'live' ? (liveBars ? 'is-live' : 'is-wait') : 'is-review'}`}
+              className={`data-chip ${mode === 'live' ? (liveBars ? (liveLag.stale.length ? 'is-wait' : 'is-live') : 'is-wait') : 'is-review'}`}
               title={
                 mode === 'live'
                   ? liveBars
-                    ? '实时行情：来自本机 EA 推送，随 tick 更新'
+                    ? `实时行情：来自本机 EA 推送，随 tick 更新${liveLag.latest ? `；最新一根 ${new Date(liveLag.latest * 1000).toLocaleString()}` : ''}`
                     : '实时行情未就绪：本机 EA 还没推送 K 线，当前显示的是服务器历史行情'
                   : '复盘回放：这是那笔交易发生时的历史切片，不是实时行情'
               }
             >
-              {mode === 'live' ? (liveBars ? '实时 K 线' : '历史行情（实时未就绪）') : '复盘回放 · 非实时'}
+              {mode === 'live'
+                ? liveBars
+                  ? liveLag.stale.length
+                    ? `实时 K 线（${liveLag.stale.join(' / ')} 落后）`
+                    : '实时 K 线'
+                  : '历史行情（实时未就绪）'
+                : '复盘回放 · 非实时'}
             </span>
             <span className="save-hint" role="status" aria-live="polite">
               {saveState === 'saving' ? '保存画线…' : saveState === 'saved' ? '画线已保存' : saveState === 'error' ? '画线保存失败' : ''}
