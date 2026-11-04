@@ -46,7 +46,7 @@ function fixture(secure = true) {
     clearTimeout(id) { timers.delete(id); },
   };
   const exports = {};
-  vm.runInNewContext(compiled, { exports, require: createRequire(import.meta.url), window, WebSocket: Socket, performance, crypto: webcrypto, setTimeout, clearTimeout });
+  vm.runInNewContext(compiled, { exports, require: createRequire(import.meta.url), window, WebSocket: Socket, performance, crypto: webcrypto, AbortController, setTimeout, clearTimeout });
   const client = new exports.LocalTerminal();
   function connect(account = '1001', extra = {}) {
     client.connect();
@@ -437,4 +437,99 @@ test('review range bars are returned to the note job without overwriting live-ch
   const page = await read;
   assert.equal(page.bars[0][0], 1700000000);
   assert.equal(client.getSnapshot().bars['1m'][0][0], 100);
+});
+
+function olderHistoryFixture() {
+  const setup = fixture();
+  const socket = setup.connect('1001', { features: ['history'], product: 'SyncTrade', server_offset_sec: 10800 });
+  for (let index = 0; index < 4; index += 1) {
+    const request = socket.sent.at(-1);
+    socket.emit({ type: 'bars', request_id: request.request_id, tf: request.tf, bars: [[100, 1, 2, 1, 2]] });
+  }
+  const respond = (request, bars, extra = {}) => socket.emit({
+    type: 'bars', request_id: request.request_id, symbol: request.symbol, tf: request.tf,
+    range: { from_server: request.from_server, to_server: request.to_server }, time_basis: 'broker_server', bars, ...extra,
+  });
+  return { ...setup, socket, respond };
+}
+
+test('older live bars cross an empty closure window and retain a one-bar UTC page', async () => {
+  const { client, socket, respond } = olderHistoryFixture();
+  const read = client.loadOlderBars('1m', 1700000000);
+  const first = socket.sent.at(-1);
+  assert.equal(first.to_server, 1700000000 + 10800 - 1);
+  assert.equal(first.to_server - first.from_server, 1989 * 60);
+  respond(first, []);
+  await Promise.resolve();
+  const second = socket.sent.at(-1);
+  assert.notEqual(second.request_id, first.request_id);
+  assert.equal(second.to_server, first.from_server - 1);
+  respond(second, [[second.from_server, 1, 2, 1, 2, 3]]);
+  const rows = await read;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0][0], second.from_server - 10800);
+  assert.equal(rows[0][5], 3);
+  assert.equal(socket.sent.filter((message) => message.type === 'command').length, 0);
+});
+
+test('older live bars scan only explicitly identified unavailable windows and stay bounded', async () => {
+  for (const detail of ['MT5 history is not ready for this range', 'MT5 history starts later than the requested range']) {
+    const { client, socket } = olderHistoryFixture();
+    const before = socket.sent.length;
+    const read = client.loadOlderBars('1m', 1700000000);
+    for (let probe = 0; probe < 4; probe += 1) {
+      const request = socket.sent.at(-1);
+      socket.emit({ type: 'error', request_id: request.request_id, code: 'HISTORY_UNAVAILABLE', error: detail });
+      await Promise.resolve();
+    }
+    assert.equal((await read).length, 0);
+    assert.equal(socket.sent.length - before, 4);
+  }
+});
+
+test('older live bars do not scan past busy, timeout or unspecified unavailable failures', async () => {
+  for (const [code, detail] of [['BARS_BUSY', 'Wait for current bars/history response'], ['HISTORY_UNAVAILABLE', 'Open this symbol/timeframe in MT5 to load history first']]) {
+    const { client, socket } = olderHistoryFixture();
+    const before = socket.sent.length;
+    const read = client.loadOlderBars('1m', 1700000000);
+    socket.emit({ type: 'error', request_id: socket.sent.at(-1).request_id, code, error: detail });
+    await assert.rejects(read, new RegExp(code));
+    assert.equal(socket.sent.length - before, 1);
+  }
+  const { client, socket, timers } = olderHistoryFixture();
+  const before = socket.sent.length;
+  const read = client.loadOlderBars('1m', 1700000000);
+  [...timers.values()].find((timer) => timer.ms === 30000).callback();
+  await assert.rejects(read, /HISTORY_TIMEOUT/);
+  assert.equal(socket.sent.length - before, 1);
+});
+
+test('older live bars reject disconnects and epoch changes without accepting a late page', async () => {
+  for (const change of ['disconnect', 'epoch']) {
+    const { client, socket, respond } = olderHistoryFixture();
+    const before = socket.sent.length;
+    const read = client.loadOlderBars('1m', 1700000000);
+    const request = socket.sent.at(-1);
+    if (change === 'disconnect') client.disconnect();
+    else socket.emit({ type: 'snapshot', epoch: 'epoch2' });
+    respond(request, [[request.from_server, 1, 2, 1, 2]]);
+    await assert.rejects(read, /会话已改变/);
+    assert.equal(socket.sent.length - before, 1);
+  }
+});
+
+test('older live bars recheck the session between windows and reject another symbol', async () => {
+  const { client, socket, respond } = olderHistoryFixture();
+  const before = socket.sent.length;
+  const read = client.loadOlderBars('1m', 1700000000);
+  respond(socket.sent.at(-1), []);
+  client.disconnect();
+  await assert.rejects(read, /会话已改变/);
+  assert.equal(socket.sent.length - before, 1);
+
+  const next = olderHistoryFixture();
+  const wrong = next.client.loadOlderBars('1m', 1700000000);
+  const request = next.socket.sent.at(-1);
+  next.respond(request, [[request.from_server, 1, 2, 1, 2]], { symbol: 'EURUSD' });
+  await assert.rejects(wrong, /HISTORY_RESPONSE_MISMATCH/);
 });

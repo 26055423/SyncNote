@@ -93,6 +93,10 @@ const terminalStates = new Set(['completed', 'rejected']);
 const unresolvedStates = new Set(['sending', 'received', 'submitted', 'uncertain', 'not_found']);
 const tfKeys = new Set(['1m', '5m', '15m', '1h']);
 
+class EaBarsError extends Error {
+  constructor(readonly code: string, readonly detail: string) { super(code); }
+}
+
 /** 显示与发送共用 EA 的账户授权，避免不限额模式仍被旧网页门禁拦住。 */
 export function localTradeAccess(state: LocalTerminalState) {
   const accountAllowed = state.demo || state.real_trading || state.unrestricted === true || state.quota_unrestricted === true;
@@ -293,7 +297,7 @@ export class LocalTerminal {
       if (reviewRead) {
         this.reviewReads.delete(message.request_id);
         reviewRead.cleanup();
-        reviewRead.reject(new Error(String(message.code || 'HISTORY_UNAVAILABLE')));
+        reviewRead.reject(new EaBarsError(String(message.code || 'HISTORY_UNAVAILABLE'), String(message.error || message.message || '')));
       }
     } else if (message.type === 'account_changed' || message.type === 'revoked') {
       this.disconnect();
@@ -445,12 +449,35 @@ export class LocalTerminal {
     if (this.state.phase !== 'connected' || !this.state.features.includes('history') || !this.state.history_ready) throw new Error('本机历史读取尚未就绪。');
     const period = TF_SECONDS[tf] ?? 60;
     const shift = this.state.server_offset_sec || 0;
-    const to = Math.floor(beforeUtc + shift) - 1;
-    const from = to - (slots - 1) * period;
-    if (from < 1 || to <= from) return [];
+    const session = { epoch: this.state.epoch, symbol: this.state.symbol, account: this.state.account_id, server: this.state.server, instance: this.state.instance_id };
+    const checkSession = () => {
+      if (this.state.phase !== 'connected' || this.state.epoch !== session.epoch || this.state.symbol !== session.symbol
+        || this.state.account_id !== session.account || this.state.server !== session.server || this.state.instance_id !== session.instance) {
+        throw new Error('本机历史读取会话已改变，请重新请求。');
+      }
+    };
+    let to = Math.floor(beforeUtc + shift) - 1;
     const controller = new AbortController();
-    const page = await this.requestReviewBars(this.state.symbol, tf, { from_server: from, to_server: to }, controller.signal);
-    return page.bars.map((row) => (shift ? [row[0] - shift, ...row.slice(1)] : row));
+    // A fixed calendar window may lie entirely inside a market closure. Probe a
+    // bounded three extra windows; this never proves the terminal history ended.
+    for (let probe = 0; probe < 4; probe += 1) {
+      checkSession();
+      const from = to - (slots - 1) * period;
+      if (from < 1 || to <= from) return [];
+      try {
+        const page = await this.requestReviewBars(session.symbol, tf, { from_server: from, to_server: to }, controller.signal);
+        checkSession();
+        if (page.symbol !== session.symbol || page.tf !== tf || page.time_basis !== 'broker_server'
+          || page.range?.from_server !== from || page.range?.to_server !== to) throw new Error('HISTORY_RESPONSE_MISMATCH');
+        if (page.bars.length) return page.bars.map((row) => (shift ? [row[0] - shift, ...row.slice(1)] : row));
+      } catch (error) {
+        checkSession();
+        if (!(error instanceof EaBarsError) || error.code !== 'HISTORY_UNAVAILABLE'
+          || !/^(?:MT5 history is not ready for this range|MT5 history starts later than the requested range)$/.test(error.detail)) throw error;
+      }
+      to = from - 1;
+    }
+    return [];
   }
 
   requestReviewBars(symbol: string, tf: string, range: { from_server: number; to_server: number }, signal: AbortSignal): Promise<NoteReviewBars> {

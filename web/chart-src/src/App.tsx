@@ -4,6 +4,7 @@ import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } fr
 import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
+import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from './liveHistory';
 import { LocalTradePanel } from './LocalTradePanel';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
@@ -113,9 +114,6 @@ function toChartBars(bars: Record<string, number[][]> | undefined): ReviewCharts
   }
   return out;
 }
-
-/** 周期秒数：用于判断 tick 是否落在当前（最新）那根 K 线窗口内。 */
-const TF_SECONDS: Record<'M1' | 'M5' | 'M15' | 'H1', number> = { M1: 60, M5: 300, M15: 900, H1: 3600 };
 
 /**
  * 用一笔 tick 的中间价,把每个周期最新那根蜡烛的 close/high/low 更新到当前价,
@@ -372,7 +370,7 @@ export default function App() {
     }
     // tick 变化也进这里:把最新报价插值进当前蜡烛,蜡烛在两次 EA bar 推送之间随 tick 伸缩。
     const incoming = applyTickToBars(toChartBars(local.bars), local.tick);
-    Object.assign(liveRef.current, incoming);
+    mergeLiveHistory(liveRef.current, incoming);
     if (local.history_ready && Object.keys(incoming).length) {
       setLiveBars(liveRef.current);
       setLiveRev((n) => n + 1);
@@ -391,7 +389,7 @@ export default function App() {
     for (const [id, range] of Object.entries(keepRanges)) {
       const rows = liveRef.current[range.base];
       const newest = rows?.[rows.length - 1]?.[0];
-      const tfSec = TIMEFRAMES[range.base]?.seconds ?? 60;
+      const tfSec = TF_SECONDS[range.base];
       if (!newest) continue;
       if (range.to < (newest - 8 * tfSec) * 1000) frozen[id] = { from: range.from, to: range.to };
     }
@@ -995,23 +993,23 @@ export default function App() {
     }
   }, []);
 
-  /** 实时图分页：一个格子一个周期只允许一个在途请求；取到空/失败后冷却 5 分钟。 */
+  /** 实时图分页：同周期只允许一个在途请求；暂时无数据时短暂退避，不认定历史到底。 */
   const livePagingRef = useRef<Set<string>>(new Set());
   const liveFloorRef = useRef<Record<string, number>>({});
+  const liveScopeRef = useRef('');
+  liveScopeRef.current = `${mode}:${localConnected}:${local.epoch}:${liveSymbol}`;
   const liveOlder = useCallback(async (base: BaseTimeframe) => {
     if (!localConnected || livePagingRef.current.has(base)) return;
     const rows = liveRef.current[base];
     if (!rows || rows.length < 10) return;
     if ((liveFloorRef.current[base] ?? 0) > Date.now()) return;
     const eaTf: Record<BaseTimeframe, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
-    const period = TIMEFRAMES[base]?.seconds ?? 60;
+    const period = TF_SECONDS[base];
+    const scope = liveScopeRef.current;
+    const valid = () => liveScopeRef.current === scope;
     const merge = (older: number[][]) => {
-      // 用最新的当前数组，避免这段时间里新推来的 K 线被覆盖掉。
-      const current = liveRef.current[base] ?? rows;
-      const seen = new Set(current.map((row) => row[0]));
-      const fresh = older.filter((row) => !seen.has(row[0]));
-      if (!fresh.length) return false;
-      liveRef.current[base] = [...fresh, ...current].sort((a, b) => a[0] - b[0]).slice(-60000);
+      if (!valid()) return false;
+      if (!prependLiveHistory(liveRef.current, base, older, (tf, data) => chartRef.current?.applySeries(tf, data))) return false;
       // 注意：必须传同一个引用。传 {...} 会让 charts prop 变换新对象，
       // ChartWorkspace 的初始化 effect 依赖 [charts] → 整个工作台重建 → 视图跳回最新。
       setLiveBars(liveRef.current);
@@ -1026,10 +1024,11 @@ export default function App() {
       let got = false;
       try {
         const older = await localTerminal.loadOlderBars(eaTf[base], earliest);
-        if (older.length > 50) got = merge(older);
+        got = merge(older);
       } catch (error) {
         console.warn('[live-paging] EA 取更早 K 线失败', base, error);
       }
+      if (!valid()) return;
       if (got) return;
       // ② MT5 给不出（或本地历史也到头）→ 问服务器共享轨道（回填过的历史，最长 5 年）。
       const want = 3000;
@@ -1039,14 +1038,15 @@ export default function App() {
         const data = await api<{ bars: number[][] }>(
           `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${eaTf[base]}&from=${from}&to=${to}`,
         );
-        if (Array.isArray(data?.bars) && data.bars.length > 20 && merge(data.bars)) return;
+        if (!valid()) return;
+        if (Array.isArray(data?.bars) && merge(data.bars)) return;
       } catch (error) {
         console.warn('[live-paging] 服务器取更早 K 线失败', base, error);
       }
-      liveFloorRef.current[base] = Date.now() + 5 * 60_000;
+      if (valid()) liveFloorRef.current[base] = Date.now() + 15_000;
     } catch {
       // 忙/超时只短暂退避。
-      liveFloorRef.current[base] = Date.now() + 60_000;
+      if (valid()) liveFloorRef.current[base] = Date.now() + 15_000;
     } finally {
       livePagingRef.current.delete(base);
     }
@@ -1067,7 +1067,8 @@ export default function App() {
   }, [mode, localConnected, local.history_ready, liveBars, liveOlder]);
   useEffect(() => {
     // 断开/换账户后重新允许预取
-    if (!localConnected) prefetchedRef.current = false;
+    prefetchedRef.current = false;
+    liveFloorRef.current = {};
   }, [localConnected, local.epoch]);
 
   const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
