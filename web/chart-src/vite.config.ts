@@ -4,12 +4,16 @@ import react from '@vitejs/plugin-react';
 /**
  * Builds into `web/chart/`, which `app_server.py` serves at `/chart`.
  *
- * 静态资源走 jsDelivr（仓库是公开的）：从国内到新加坡的链路实测只有 20 KB/s，
- * 而同一个文件走 CDN 是 300 KB/s 以上。HTML 仍由自己的服务器返回，接口照旧同源。
+ * 默认改为**同源** `/chart/`：jsDelivr 的 `@main` 是按分支解析的，有新版本时
+ * CDN 可能还指着旧提交——新构建出的 `layouts-*.js` 之类懒加载分块会 404，
+ * 而且浏览器缓存了旧 HTML 时更容易踩到。同源资源由 app_server 直接发，
+ * 文件名带内容哈希 + `Cache-Control: immutable`，既不会 404 也不会重复下载。
  *
- * 想在完全自托管的机器上用本地资源，把 CHART_BASE 设成 '/chart/' 再构建即可。
+ * 需要 CDN 时可以显式指定：
+ *   CHART_BASE='https://cdn.jsdelivr.net/gh/26055423/SyncNote@<固定提交>/web/chart/' npm run build
+ * （务必钉到具体提交，不要用 @main）
  */
-const CHART_BASE = process.env.CHART_BASE ?? 'https://cdn.jsdelivr.net/gh/26055423/SyncNote@main/web/chart/';
+const CHART_BASE = process.env.CHART_BASE ?? '/chart/';
 
 export default defineConfig({
   base: CHART_BASE,
