@@ -33,6 +33,7 @@ input double InpMaxDailyLoss=0.0;                      // Daily realized-loss ca
 input double InpMaxPendingDeviationPct=1.5;            // Pending price must stay within this % of the mid
 input int InpBarPushMs=100;                            // Current-bar push interval (50..1000ms); lower = smoother candles
 input int InpTickPushMs=100;                           // Tick push interval (50..1000ms); lower = smoother price
+input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
 #define LOCAL_VERSION "1.102"
@@ -55,6 +56,7 @@ string g_journal_path="";
 int g_digits=5;
 long g_offset=0;
 string g_button_allow="SyncTrade.Allow",g_button_revoke="SyncTrade.Revoke";
+int g_panel_button_y=190;
 
 struct LocalCommandEntry
 {
@@ -180,12 +182,74 @@ bool NewPairCode()
    g_pair_until=GetTickCount64()+PAIR_TTL_MS;g_pair_attempts=0;
    return true;
 }
+// --- 可缩放的信息面板 ---
+// Comment() 的字号跟随终端设置、改不了;要"放大一倍"只能用对象自己画。
+// 面板由一行行 OBJ_LABEL + 一块背景 OBJ_RECTANGLE_LABEL 组成,字号/行高/按钮尺寸
+// 全部按 InpPanelScale 缩放,默认 200% 就是原来的一倍大。
+int PanelFontSize()
+{
+   int scale=(int)MathMax(100,MathMin(300,InpPanelScale));
+   return (int)MathMax(9,(int)MathRound(9.0*scale/100.0));
+}
+int PanelLineHeight(){return PanelFontSize()+8;}
+int PanelWidth(){return (int)MathMax(260,(int)MathRound(430.0*MathMax(100,MathMin(300,InpPanelScale))/100.0));}
+void PanelLabel(const int index,const string text)
+{
+   string name="SyncTrade.Panel."+IntegerToString(index);
+   if(ObjectFind(0,name)<0)
+   {
+      ObjectCreate(0,name,OBJ_LABEL,0,0,0);
+      ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+      ObjectSetInteger(0,name,OBJPROP_XDISTANCE,12);
+      ObjectSetString(0,name,OBJPROP_FONT,"Microsoft YaHei");
+      ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);
+      ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+      ObjectSetInteger(0,name,OBJPROP_HIDDEN,false);
+      ObjectSetInteger(0,name,OBJPROP_ZORDER,90);
+   }
+   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,10+index*PanelLineHeight());
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,PanelFontSize());
+   ObjectSetString(0,name,OBJPROP_TEXT,text);
+}
+void PanelBackground(const int lines)
+{
+   string name="SyncTrade.Panel.Bg";
+   if(ObjectFind(0,name)<0)
+   {
+      ObjectCreate(0,name,OBJ_RECTANGLE_LABEL,0,0,0);
+      ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+      ObjectSetInteger(0,name,OBJPROP_XDISTANCE,4);
+      ObjectSetInteger(0,name,OBJPROP_YDISTANCE,4);
+      ObjectSetInteger(0,name,OBJPROP_BORDER_TYPE,BORDER_FLAT);
+      ObjectSetInteger(0,name,OBJPROP_COLOR,clrDimGray);
+      ObjectSetInteger(0,name,OBJPROP_BGCOLOR,C'22,26,32');
+      ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+      ObjectSetInteger(0,name,OBJPROP_HIDDEN,false);
+      ObjectSetInteger(0,name,OBJPROP_ZORDER,80);
+   }
+   ObjectSetInteger(0,name,OBJPROP_XSIZE,PanelWidth());
+   ObjectSetInteger(0,name,OBJPROP_YSIZE,10+lines*PanelLineHeight()+6);
+}
+void PanelClear()
+{
+   for(int i=0;i<16;i++) ObjectDelete(0,"SyncTrade.Panel."+IntegerToString(i));
+   ObjectDelete(0,"SyncTrade.Panel.Bg");
+}
+int PanelHeightFor(const int lines)
+{
+   return 10+lines*PanelLineHeight()+6+8;
+}
 void MakeButton(const string name,const string label,const int x)
 {
+   int scale=(int)MathMax(100,MathMin(300,InpPanelScale));
+   int w=(int)MathRound(165.0*scale/100.0);
+   int h=(int)MathRound(30.0*scale/100.0);
    if(ObjectFind(0,name)<0) ObjectCreate(0,name,OBJ_BUTTON,0,0,0);
    ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
-   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,x);ObjectSetInteger(0,name,OBJPROP_YDISTANCE,150);
-   ObjectSetInteger(0,name,OBJPROP_XSIZE,165);ObjectSetInteger(0,name,OBJPROP_YSIZE,30);
+   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,x);ObjectSetInteger(0,name,OBJPROP_YDISTANCE,g_panel_button_y);
+   ObjectSetInteger(0,name,OBJPROP_XSIZE,w);ObjectSetInteger(0,name,OBJPROP_YSIZE,h);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,PanelFontSize());
+   ObjectSetString(0,name,OBJPROP_FONT,"Microsoft YaHei");
    ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);ObjectSetInteger(0,name,OBJPROP_BGCOLOR,clrDarkSlateGray);
    ObjectSetString(0,name,OBJPROP_TEXT,label);
    // 按钮要在最上层、且可点击：OBJPROP_SELECTABLE 关掉只影响拖动，不影响点击；
@@ -198,13 +262,24 @@ void MakeButton(const string name,const string label,const int x)
 void PaintStatus()
 {
    string mode=!LocalCanTrade() ? "READ ONLY / 只读" : (LocalReal() ? "REAL trading enabled (caps active) / 实盘交易已开启（有上限）" : "DEMO trading enabled / 模拟交易已开启");
-   string pending=g_pending_peer>=0 ? "\n网站已输入正确配对码，请核对来源及账号后点击下方【允许本次连接】。" : "";
-   Comment("SyncTrade 本机 EA ",LOCAL_VERSION,"\n",mode,"\n网站来源: ",InpAllowedOrigin,
-      "\n账号: ",g_account," @ ",g_server,"\n品种: ",InpSymbol,
-      "\n配对码: ",g_pair_code," (",IntegerToString((long)MathMax(0,(long)(g_pair_until-GetTickCount64())/1000)),"s)",
-      "\n只监听 127.0.0.1:18765; 不读取/上传交易密码",pending,
-      g_journal_ok ? "" : "\n交易日志不可用，禁止交易。",
-      g_risk_ok ? "" : "\n风控存储不可用，禁止交易。");
+   string lines[12];
+   int n=0;
+   lines[n]="SyncTrade 本机 EA "+LOCAL_VERSION;n++;
+   lines[n]=mode;n++;
+   lines[n]="网站来源: "+InpAllowedOrigin;n++;
+   lines[n]="账号: "+g_account+" @ "+g_server;n++;
+   lines[n]="品种: "+InpSymbol;n++;
+   lines[n]="配对码: "+g_pair_code+" ("+IntegerToString((long)MathMax(0,(long)(g_pair_until-GetTickCount64())/1000))+"s)";n++;
+   lines[n]="只监听 127.0.0.1:18765; 不读取/上传交易密码";n++;
+   if(g_pending_peer>=0){lines[n]="网站已输入正确配对码，请核对来源及账号后点击下方【允许本次连接】。";n++;}
+   if(!g_journal_ok){lines[n]="交易日志不可用，禁止交易。";n++;}
+   if(!g_risk_ok){lines[n]="风控存储不可用，禁止交易。";n++;}
+   Comment("");
+   PanelBackground(n);
+   for(int i=0;i<n;i++) PanelLabel(i,lines[i]);
+   g_panel_button_y=PanelHeightFor(n);
+   MakeButton(g_button_allow,"允许本次连接 / Allow",10);
+   MakeButton(g_button_revoke,"撤销授权 / Revoke",(int)MathRound(175.0*MathMax(100,MathMin(300,InpPanelScale))/100.0));
    ChartRedraw();
 }
 void ClearAuthorization()
@@ -911,7 +986,6 @@ int OnInit()
    AccountChanged();
    if(g_epoch=="" || g_pair_code=="") return INIT_FAILED;
    if(!WsStart(LOCAL_PORT)) {Print("SyncTrade: cannot bind 127.0.0.1:18765; another EA may already own the port. Error=",WSAGetLastError());WsStop();return INIT_FAILED;}
-   MakeButton(g_button_allow,"允许本次连接 / Allow",10);MakeButton(g_button_revoke,"撤销授权 / Revoke",185);
    // Object clicks arrive as CHARTEVENT_OBJECT_CLICK; no ChartSetInteger flag is required.
    if(!EventSetMillisecondTimer(15)) {WsStop();return INIT_FAILED;}
    PaintStatus();return INIT_SUCCEEDED;
@@ -921,7 +995,7 @@ void OnDeinit(const int reason)
    EventKillTimer();WsStop();
    g_risk.Close();g_risk_ok=false;
    if(g_journal!=INVALID_HANDLE) {FileFlush(g_journal);FileClose(g_journal);g_journal=INVALID_HANDLE;}
-   ObjectDelete(0,g_button_allow);ObjectDelete(0,g_button_revoke);Comment("");
+   ObjectDelete(0,g_button_allow);ObjectDelete(0,g_button_revoke);PanelClear();Comment("");
 }
 void OnTimer()
 {
