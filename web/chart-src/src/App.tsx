@@ -999,26 +999,66 @@ export default function App() {
     if (!rows || rows.length < 10) return;
     if ((liveFloorRef.current[base] ?? 0) > Date.now()) return;
     const eaTf: Record<BaseTimeframe, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
+    const period = TIMEFRAMES[base]?.seconds ?? 60;
+    const merge = (older: number[][]) => {
+      // 用最新的当前数组，避免这段时间里新推来的 K 线被覆盖掉。
+      const current = liveRef.current[base] ?? rows;
+      const seen = new Set(current.map((row) => row[0]));
+      const fresh = older.filter((row) => !seen.has(row[0]));
+      if (!fresh.length) return false;
+      liveRef.current[base] = [...fresh, ...current].sort((a, b) => a[0] - b[0]).slice(-60000);
+      setLiveBars({ ...liveRef.current });
+      for (const listener of liveListeners.current) listener();
+      return true;
+    };
     livePagingRef.current.add(base);
     try {
-      const older = await localTerminal.loadOlderBars(eaTf[base], rows[0][0]);
-      const seen = new Set(rows.map((row) => row[0]));
-      const fresh = older.filter((row) => !seen.has(row[0]));
-      if (!fresh.length) {
-        liveFloorRef.current[base] = Date.now() + 5 * 60_000;
-        return;
+      // ① 先问服务器（共享数据轨道）：不依赖 MT5 本地历史深度，能翻到回填过的更早数据。
+      const earliest = rows[0][0];
+      const want = 3000;
+      const to = earliest - 1;
+      const from = to - (want - 1) * period;
+      try {
+        const data = await api<{ bars: number[][] }>(
+          `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${eaTf[base]}&from=${from}&to=${to}`,
+        );
+        if (Array.isArray(data?.bars) && data.bars.length > 20) {
+          merge(data.bars);
+          return;
+        }
+      } catch {
+        /* 服务器没有这一段就退回问 EA */
       }
-      const merged = [...fresh, ...rows].sort((a, b) => a[0] - b[0]);
-      liveRef.current[base] = merged.slice(-40000);
-      if (local.history_ready) setLiveBars({ ...liveRef.current });
-      for (const listener of liveListeners.current) listener();
+      // ② 服务器也没有 → 问本机 MT5（受 SERIES_FIRSTDATE 限制）。
+      const older = await localTerminal.loadOlderBars(eaTf[base], earliest);
+      if (!merge(older)) {
+        liveFloorRef.current[base] = Date.now() + 5 * 60_000;
+      }
     } catch {
-      // 忙/超时只短暂退避；真空结果已在上面按 5 分钟冷却。
+      // 忙/超时只短暂退避。
       liveFloorRef.current[base] = Date.now() + 60_000;
     } finally {
       livePagingRef.current.delete(base);
     }
-  }, [localConnected, local.history_ready]);
+  }, [localConnected, liveSymbol]);
+
+  /** 连上 EA、首屏数据就绪后，每个周期先自动补一页更早的历史（之后靠左滑继续）。 */
+  const prefetchedRef = useRef(false);
+  useEffect(() => {
+    if (mode !== 'live' || !localConnected || !local.history_ready || !liveBars || prefetchedRef.current) return;
+    prefetchedRef.current = true;
+    const bases: BaseTimeframe[] = ['M1', 'M5', 'M15', 'H1'];
+    void (async () => {
+      for (const base of bases) {
+        if (!liveRef.current[base]?.length) continue;
+        await liveOlder(base).catch(() => undefined);
+      }
+    })();
+  }, [mode, localConnected, local.history_ready, liveBars, liveOlder]);
+  useEffect(() => {
+    // 断开/换账户后重新允许预取
+    if (!localConnected) prefetchedRef.current = false;
+  }, [localConnected, local.epoch]);
 
   const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
     const recipe = TIMEFRAMES[info.timeframe];
