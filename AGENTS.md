@@ -33,7 +33,10 @@
 | `web/chart-src/src/BottomDock.tsx` | 底部「持仓 / 挂单 / 历史」 |
 | `web/chart-src/src/DrawingFavs.tsx` | 顶部画图收藏栏（镜像 Vela 左侧工具栏的收藏） |
 | `web/chart-src/src/SettingsMenu.tsx` | 顶部「设置」：深/浅主题、显示时区、图表语言 |
-| `web/chart-src/src/ui/icons.tsx` | 右栏四个线框图标（交易 / 消息 / 好友 / 复盘） |
+| `web/chart-src/src/ChatDock.tsx` | 私信与群聊共用的聊天界面、引用、回应与复盘卡片 |
+| `web/chart-src/src/GroupEntry.tsx` / `GroupDetails.tsx` | 聊天内创建 / 加入群，以及资料栏的群管理 |
+| `web/chart-src/src/ReviewShareDialog.tsx` | 搜索、多选好友和群聊，附带留言并分享复盘切片 |
+| `web/chart-src/src/ui/icons.tsx` | 右栏线框图标；主导航顺序为交易 / 复盘 / 聊天 |
 | `web/chart-src/src/TrackStrip.tsx` | 「数据轨道」：一个券商一条轨，当前交易的轨提到最上层 |
 | `web/chart-src/src/ui/prefs.ts` | 本机偏好存储（`localStorage.sn-ui.v1`）+ 写 `<html data-theme>` |
 | `web/chart-src/src/lib/time.ts` | 显示时区格式化（`stamp()` 用的就是它），不要再写死 `+8` |
@@ -49,7 +52,8 @@
 ## 常用命令
 
 ```bash
-python tests/smoke.py                 # 集成测试（临时库，166 项）
+python tests/smoke.py                 # 集成测试（临时生成数据）
+python tests/group_share.py           # 群分享超过 20 位成员的留言与切片回归
 python tools/local_demo.py            # 本地演示实例（127.0.0.1:18900，密码 syncnote-demo-2026）
 cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/chart
 ```
@@ -104,8 +108,11 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 - 画图收藏存在浏览器 `localStorage`（`sn-chart-favs`），不跨设备。
 - 主题 / 显示时区 / 图表语言存在浏览器 `localStorage`（`sn-ui.v1`），不跨设备、不上云；默认深色 + `Asia/Shanghai`。
 - 设置只作用于 `/chart` 交易台；`/history`、`/profile` 等页面还是各自的静态页面。
-- 右栏「消息」是**留言 + 复盘分享的合并时间线**；分享存的是切片（当时激活格子的可见窗口中点、周期、画线文档），
-  收件人按切片回放，不读分享人后来改过的存档。
+- 主导航从上到下为「交易、复盘、聊天」；私信、群聊与群管理统一在聊天内，群未读数合并到聊天角标。
+- 复盘面板与聊天输入栏共用分享选择窗口，可搜索、多选好友及群聊、附带 500 字留言；聊天入口预选当前会话。
+  打开选择窗口时冻结激活格子的可见窗口中点、周期与画线文档，收件人按切片只读回放。
+  群分享留言和切片保存在群消息中；为全部现有成员在同一事务中分批生成分享，新成员打开卡片时按权限补建。
+- 分享兼容限制：`review_shares` 仍按 `(owner,ticket,recipient)` 唯一，重复分享同一交易会更新共用记录，旧卡片可能打开最新分享切片；尚未迁移为每条消息独立快照。
 - **两款 EA 的差别只在"要不要交易"**：SyncNote 只读历史（关浏览器也继续传）；SyncTrade 多了本机 WS，
   历史由浏览器代传（关网页暂停，下次补齐）。旧的 `web/SyncNoteSync.mq5` 仍会上传余额与持仓，只为兼容保留。
 - 历史重建要证据：缺开仓上下文时宁可标记「无法完整重建」，也不猜开仓价；券商改数据后旧派生交易标 `invalidated` 而不删除。
