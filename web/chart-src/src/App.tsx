@@ -1306,8 +1306,10 @@ export default function App() {
                       <button type="button" className="link" onClick={() => setFriendManager(false)}>
                         ← 返回聊天
                       </button>
-                      <h3>好友管理 <small>{Math.max(0, board.members.length - 1)}</small></h3>
-                      <a className="tool-btn" href="/profile" target="_blank" rel="noopener noreferrer">搜索并添加好友 ↗</a>
+                      <div className="friend-manager-head">
+                        <h3>好友管理 <small>{Math.max(0, board.members.length - 1)}</small></h3>
+                        <a className="tool-btn" href="/profile" target="_blank" rel="noopener noreferrer">搜索并添加好友 ↗</a>
+                      </div>
                       {friendReq.incoming.length ? (
                         <div className="friend-requests">
                           <p className="dim">好友申请 · {friendReq.incoming.length}</p>
