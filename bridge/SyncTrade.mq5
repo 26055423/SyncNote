@@ -38,7 +38,7 @@ input int InpTickPushMs=100;                           // Tick push interval (50
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.102"
+#define LOCAL_VERSION "1.103"
 #define JOURNAL_MAX 10000
 #define PAIR_TTL_MS 120000
 
@@ -161,7 +161,7 @@ bool PendingSideValid(const string action,const bool buy,const double price,cons
 string IdentityFields()
 {
    return "\"product\":\"SyncTrade\",\"features\":[\"history\"],\"instance_id\":"+JStr(g_instance)+",\"account_id\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+",\"epoch\":"+JStr(g_epoch)+
-      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging()) +",\"netting_manage\":"+JsonBool(InpAllowNettingManage) +",\"real_no_caps\":"+JsonBool(InpRealNoCaps) +",\"unrestricted\":"+JsonBool(InpUnrestricted) +",\"real_trading\":"+JsonBool(LocalReal() && InpAllowRealTrading && LocalCanTrade())+
+      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging()) +",\"netting_manage\":"+JsonBool(InpAllowNettingManage) +",\"real_no_caps\":"+JsonBool(InpRealNoCaps) +",\"unrestricted\":"+JsonBool(InpUnrestricted) +",\"real_trading\":"+JsonBool(LocalReal() && LocalCanTrade())+
       ",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
 }
 void LocalError(const int peer,const string code,const string message,const string request_id="")

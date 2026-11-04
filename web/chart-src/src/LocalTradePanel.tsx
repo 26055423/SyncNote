@@ -19,7 +19,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   const connected = state.phase === 'connected';
   const unresolved = state.commands.some((command) => command.account_id === state.account_id && command.server === state.server && !['completed', 'rejected'].includes(command.state));
   // 实盘账户：EA 只有在 InpAllowRealTrading + 单笔/日上限都打开时才报 real_trading=true。
-  const realTrading = state.real_trading && !state.demo;
+  const realTrading = (state.real_trading || state.unrestricted === true) && !state.demo;
   const enabled = connected && !state.read_only && (state.demo || realTrading) && !unresolved;
   // 净额账户：持仓是所有来源合并的，平仓/改单无法证明归属，默认禁用。
   const canManage = state.hedging || state.netting_manage;
