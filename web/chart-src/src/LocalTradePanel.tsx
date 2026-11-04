@@ -74,9 +74,6 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
         allowedActions={(['market', 'limit', 'stop'] as const).filter((action) => state.capabilities.includes(action))}
         onSubmit={submitMarketOrder}
       />
-      {realTrading ? (
-        <p className="local-real-warning" role="alert">实盘账户：下单按钮发出的指令会真实成交，请先核对手数、方向与止损。</p>
-      ) : null}
     {state.account_id ? <div className="kv"><span>账户</span><b>{state.account_id} · {state.demo ? '模拟账户' : '实盘或类型未确认'}</b><span>服务器</span><b>{state.server}</b><span>权限</span><b>{state.read_only || (!state.demo && !realTrading) ? '只读' : state.unrestricted || state.quota_unrestricted ? '已获本机授权（不限额）' : realTrading ? '已获本机实盘交易授权' : '已获本机模拟交易授权'}</b><span>本机往返</span><b>{state.latency === null ? '待测量' : `${state.latency} ms`}</b></div> : null}
     {connected ? <>
       

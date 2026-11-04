@@ -308,8 +308,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
         {submitting || busy ? '提交中…' : `${side === 'buy' ? '买入' : '卖出'} ${fmtVolume(request.volume)} ${symbol}${oneClick ? ' · 一键' : ''}`}
       </button>
 
-      {oneClick && canSubmit ? <p className="oneclick-warn">一键下单已开启：点击即提交，不再弹出确认</p> : null}
-      {blocked ? <p className="hint">{blocked}</p> : null}
+            {blocked ? <p className="hint">{blocked}</p> : null}
 
       {attempt ? <ResultCard attempt={attempt} onDismiss={() => setAttempt(null)} /> : null}
 

@@ -286,9 +286,9 @@ button { font: inherit; cursor: pointer; }
 .buy { color: var(--good); }
 .sell { color: var(--bad); }
 
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
-.kv span { color: var(--dim); }
-.kv b { text-align: right; font-variant-numeric: tabular-nums; }
+.kv { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 10px; font-size: 12px; }
+.kv span { color: var(--dim); white-space: nowrap; }
+.kv b { text-align: right; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
 
 table.mini { width: 100%; border-collapse: collapse; font-size: 11.5px; font-variant-numeric: tabular-nums; }
 table.mini th { text-align: left; color: var(--dim); font-weight: 400; padding: 4px 2px; border-bottom: 1px solid var(--line); }
