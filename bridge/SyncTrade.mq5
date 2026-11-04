@@ -31,6 +31,8 @@ input bool InpAllowModify=true;
 input bool InpAllowPending=true;                       // Allow limit/stop pending orders
 input double InpMaxDailyLoss=0.0;                      // Daily realized-loss cap in account currency (0 disables)
 input double InpMaxPendingDeviationPct=1.5;            // Pending price must stay within this % of the mid
+input int InpBarPushMs=100;                            // Current-bar push interval (50..1000ms); lower = smoother candles
+input int InpTickPushMs=100;                           // Tick push interval (50..1000ms); lower = smoother price
 
 #define LOCAL_PORT 18765
 #define LOCAL_VERSION "1.102"
@@ -42,7 +44,9 @@ string g_pair_code="";
 ulong g_pair_until=0;
 int g_pair_attempts=0,g_pending_peer=-1,g_session_peer=-1;
 ulong g_pending_until=0;
-ulong g_last_tick=0,g_last_snapshot=0,g_last_command=0;
+ulong g_last_tick=0,g_last_snapshot=0,g_last_command=0,g_last_bar=0;
+bool g_bar_dirty=true;
+int g_bar_push_ms=100,g_tick_push_ms=100;
 CSyncTradeRisk g_risk;
 bool g_risk_ok=false;
 bool g_force_snapshot=true,g_journal_ok=false,g_account_stable=false;
@@ -895,6 +899,8 @@ int OnInit()
       InpMaxDailyLoss<0 || InpMaxPendingDeviationPct<0 || InpMaxOrderLots<=0 || InpMaxSymbolLots<InpMaxOrderLots ||
       InpMaxDeviationPoints<0 || InpMaxSpreadPoints<0 || InpMagic<0 || !SymbolSelect(InpSymbol,true)) return INIT_PARAMETERS_INCORRECT;
    g_digits=(int)SymbolInfoInteger(InpSymbol,SYMBOL_DIGITS);
+   g_bar_push_ms=(int)MathMax(50,MathMin(1000,InpBarPushMs));
+   g_tick_push_ms=(int)MathMax(50,MathMin(1000,InpTickPushMs));
    g_instance=RandomHex(16);
    if(g_instance=="") return INIT_FAILED;
    AccountChanged();
@@ -923,22 +929,37 @@ void OnTimer()
    WsPump(InpAllowedOrigin,LOCAL_PORT);
    // Let accepted commands settle before optional bars/history backfill.
    if(GetTickCount64()>=g_history_defer_until && GetTickCount64()-now<5) {PumpBars();PumpHistory();}
-   if(now-g_last_tick>=100)
+   if(now-g_last_tick>=(ulong)g_tick_push_ms)
    {
       g_last_tick=now;string tick=TickJson();
       for(int i=0;i<LOCAL_PEERS;i++)
          if(g_local_peers[i].authenticated && ArraySize(g_local_peers[i].tx)-g_local_peers[i].tx_offset<32768)
             WsText(i,"{\"type\":\"tick\",\"tick\":"+tick+"}");
    }
+   // 当前 K 线独立于 1 秒快照节奏，按 tick 驱动高频推送，让蜡烛实时伸缩。
+   // 自适应背压：发送缓冲越积压，推送间隔越长，撞上限前先降频而不是硬断。
+   // <16KiB 全速；16–32KiB 间隔翻倍降频；>=32KiB 这轮让给 tick，靠下一轮补。
+   if(g_bar_dirty)
+   {
+      bool pushed=false;
+      for(int i=0;i<LOCAL_PEERS;i++)
+      {
+         if(!g_local_peers[i].authenticated) continue;
+         int backlog=ArraySize(g_local_peers[i].tx)-g_local_peers[i].tx_offset;
+         ulong interval=backlog<16384 ? (ulong)g_bar_push_ms : (ulong)g_bar_push_ms*2;
+         if(backlog<32768 && now-g_last_bar>=interval) {SendCurrentBars(i);pushed=true;}
+      }
+      if(pushed) {g_last_bar=now;g_bar_dirty=false;}
+   }
    if(g_force_snapshot || now-g_last_snapshot>=1000)
    {
       g_last_snapshot=now;g_force_snapshot=false;
       for(int i=0;i<LOCAL_PEERS;i++) if(g_local_peers[i].authenticated && ArraySize(g_local_peers[i].tx)-g_local_peers[i].tx_offset<65536)
-      {SendSnapshot(i);SendCurrentBars(i);}
+         SendSnapshot(i);
       PaintStatus();
    }
 }
-void OnTick() { /* Networking is timer-driven and remains available during quiet markets. */ }
+void OnTick() { g_bar_dirty=true; /* 只置脏标记，网络 IO 统一在 OnTimer，避免与 OrderSend 阻塞交叉。 */ }
 void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)
 {
    if(id!=CHARTEVENT_OBJECT_CLICK) {AccountChanged();return;}
@@ -977,6 +998,7 @@ void OnChartEvent(const int id,const long &lparam,const double &dparam,const str
    if(g_token=="") {LocalError(g_pending_peer,"RNG","Could not create session token");return;}
    int peer=g_pending_peer;g_pending_peer=-1;g_pending_until=0;
    g_session_peer=peer;g_local_peers[peer].authenticated=true;
+   g_bar_dirty=true;g_last_bar=0;  // 配对后立即推一帧当前 K 线，不等下一个 tick
    WsText(peer,"{\"type\":\"paired\",\"token\":"+JStr(g_token)+","+IdentityFields()+",\"symbol\":"+JStr(InpSymbol)+"}");
    g_pair_code="--------";g_pair_until=GetTickCount64()+PAIR_TTL_MS;
    SendSnapshot(peer);PaintStatus();

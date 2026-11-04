@@ -79,7 +79,7 @@ EA 图表显示由 Windows CSPRNG 生成的 8 位配对码，有效期 120 秒�
 
 positions/orders 是替换快照（各最多 500 条）；可能列出当前账户其他品种，但交易只允许 EA 配置品种。所有数据仅发送已配对的本机网页。
 
-推送：`{"type":"tick","tick":{...}}` 最多每 100 毫秒一条；snapshot 每秒或交易变化后刷新；当前四周期 K 线每秒发送 `{"type":"bar","symbol":"XAUUSD","tf":"1m","bar_time":0,"open":0,"high":0,"low":0,"close":0,"volume":0}`。这些是限频展示更新，不是无损 tick 存档。
+推送：`{"type":"tick","tick":{...}}` 按 `InpTickPushMs` 节流（默认 100ms，可配 50–1000ms）；snapshot（账户/持仓/挂单）每秒或交易变化后刷新；当前四周期 K 线由 tick 驱动、按 `InpBarPushMs` 节流推送 `{"type":"bar","symbol":"XAUUSD","tf":"1m","bar_time":0,"open":0,"high":0,"low":0,"close":0,"volume":0}`（默认 100ms，可配 50–1000ms），让蜡烛随行情实时伸缩。当前 K 线推送独立于 1 秒 snapshot 节奏；发送缓冲积压时自动降频（<16KiB 全速、16–32KiB 间隔翻倍、≥32KiB 本轮让给 tick），撞上 512KiB 上限前先降频而非硬断。这些是限频展示更新，不是无损 tick 存档；最终流畅度上限取决于券商给 EA 的 tick 频率。
 
 ### 历史 K 线
 

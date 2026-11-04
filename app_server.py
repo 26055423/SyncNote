@@ -86,6 +86,7 @@ with connect() as db:
     if 'locked' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0')
 with connect() as db:
     if 'share_reviews' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN share_reviews INTEGER NOT NULL DEFAULT 0')
+    if 'auto_history_sync' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN auto_history_sync INTEGER NOT NULL DEFAULT 0')
     for _col in ('a_deleted','b_deleted','a_blocked','b_blocked','a_hide','b_hide','a_mute','b_mute'):
         if _col not in [r[1] for r in db.execute('PRAGMA table_info(friend_edges)')]:
             db.execute('ALTER TABLE friend_edges ADD COLUMN '+_col+' INTEGER NOT NULL DEFAULT 0')
@@ -143,7 +144,7 @@ def is_admin(u):
  return bool(u) and u['username']==ADMIN_USERNAME
 
 
-def public(u):return {**{k:u[k] for k in ('id','username','nickname','avatar','bio','allow_follow','share_data','share_reviews','onboarding_step')},'role':'admin' if u['username']==ADMIN_USERNAME else 'user'}
+def public(u):return {**{k:u[k] for k in ('id','username','nickname','avatar','bio','allow_follow','share_data','share_reviews','auto_history_sync','onboarding_step')},'role':'admin' if u['username']==ADMIN_USERNAME else 'user'}
 def friend_pair(x,y):
     """好友关系用无序对存：字典序小的当 a，保证 (A,B) 只有一行。"""
     return (x,y) if x<y else (y,x)
@@ -486,6 +487,28 @@ class Handler(BaseHTTPRequestHandler):
                         shift=bars.source_offset(db,source)
                         payload['last_bar']=(int(last)-shift) if last else last
                         return self.reply(bars.to_utc(payload,shift))
+                    if path=='/api/market/coverage':
+                        # 回填调度器查：这条券商轨某周期在 [from,to] 里还有哪些段没填（have/empty 都算已扫）。
+                        # 墙钟进墙钟出；前端按券商墙钟切窗口，不在这里换 UTC。
+                        feed=bars.feed_of(db,uid)
+                        source=feed['source'] if feed else ''
+                        if not source:raise Error('请先连接本机 MT5 绑定账户',409)
+                        symbol=str(q.get('symbol',['XAUUSD'])[0] or 'XAUUSD')[:64]
+                        tf=bars.normalize_tf(str(q.get('tf',['M1'])[0]))
+                        if not tf:raise Error('周期不正确')
+                        try:start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
+                        except ValueError:raise Error('时间范围不正确')
+                        if end<=start:raise Error('时间范围不正确')
+                        holes=bars.missing(db,source,symbol,tf,start,end)
+                        return self.reply({'source':source,'symbol':symbol,'tf':tf,'missing':[{'from':h[0],'to':h[1]} for h in holes]})
+                    if path=='/api/market/earliest':
+                        # 回填起点：本账户最早一笔交易的开仓墙钟。前端据此退 100 根、再夹 5 年上限。
+                        earliest=None
+                        for r in db.execute('SELECT payload FROM trades WHERE person=?',(uid,)):
+                            try:t=json.loads(r['payload']).get('opened_server')
+                            except (ValueError,TypeError):t=None
+                            if isinstance(t,(int,float)) and t>0 and (earliest is None or t<earliest):earliest=int(t)
+                        return self.reply({'earliest_server':earliest})
                     if path=='/api/data/sources':
                         # 数据源目录：公共轨 + 自己那条轨，附带每个周期的覆盖/根数。
                         # 第三类用户（没有 MT5）靠它选数据、自己复盘。
@@ -749,6 +772,60 @@ class Handler(BaseHTTPRequestHandler):
                     bars.bind_feed(db,uid,account,server,now)
                     result=journal.receive(db,uid,data)
                     review_bars(db,uid,journal.trade(db,uid,str(data.get('ticket',''))),data,now)
+                elif path=='/api/market/backfill':
+                    # 历史 K 线连续回填进共享轨道（单周期一段）。两种鉴权,都必须证明
+                    # 请求体的 (server,account) 确属调用者已绑定的 MT5 账户——否则任何登录用户
+                    # 都能往别人券商 source 的全局共享轨道灌伪造 K 线。
+                    #  - 连接码 Bearer(SyncNote EA):link.account_key 必须等于请求体 identity key。
+                    #  - 网站会话(SyncTrade 浏览器):feed_of 取用户已绑定账户,account_key 必须等于 key;
+                    #    未绑定 MT5 的用户直接拒绝(无法证明该券商属于他)。
+                    account,server,key=sync_history.identity(data)
+                    if self.headers.get('Authorization','').startswith('Bearer '):
+                        link=self.link_user(db)
+                        if not link['account_key'] or link['account_key']!=key:raise Error('连接码未绑定此 MT5 账户',403)
+                        uid=link['user_id']
+                    else:
+                        uid=self.user(db)['id']
+                        if data.get('website_user_id')!=uid:raise Error('网站登录账号已改变，请重新授权',409)
+                        bound=bars.feed_of(db,uid)
+                        if not bound or bound['account_key']!=key:raise Error('该券商账户未绑定到当前网站账号，无法回填',403)
+                    bars.bind_feed(db,uid,account,server,now)
+                    symbol=str(data.get('symbol') or '')
+                    tf=bars.normalize_tf(str(data.get('tf') or ''))
+                    rows=data.get('bars')
+                    if not tf:raise Error('周期不正确')
+                    if not isinstance(rows,list):raise Error('K 线数据格式不正确')
+                    begin,end=data.get('from_server'),data.get('to_server')
+                    series={tf:{'bars':rows,'complete':True,'from_server':begin,'to_server':end}}
+                    try:summary=bars.ingest(db,bars.source_for(server),key,symbol,series,now)
+                    except (bars.BarsError,ValueError,TypeError) as e:raise Error('回填入库失败：'+str(e))
+                    result={'ok':True,'tf':tf,'summary':(summary.get('series') or {}).get(tf) if isinstance(summary,dict) else None}
+                    symbol=str(data.get('symbol') or '')
+                    tf=bars.normalize_tf(str(data.get('tf') or ''))
+                    rows=data.get('bars')
+                    if not tf:raise Error('周期不正确')
+                    if not isinstance(rows,list):raise Error('K 线数据格式不正确')
+                    begin,end=data.get('from_server'),data.get('to_server')
+                    series={tf:{'bars':rows,'complete':True,'from_server':begin,'to_server':end}}
+                    try:summary=bars.ingest(db,bars.source_for(server),key,symbol,series,now)
+                    except (bars.BarsError,ValueError,TypeError) as e:raise Error('回填入库失败：'+str(e))
+                    result={'ok':True,'tf':tf,'summary':(summary.get('series') or {}).get(tf) if isinstance(summary,dict) else None}
+                elif path=='/api/market/coverage':
+                    # POST 版(SyncNote EA 用连接码查缺口;SNPost 固定发 POST）。GET 版见 do_GET,走会话。
+                    account,server,key=sync_history.identity(data)
+                    link=self.link_user(db)
+                    if not link['account_key'] or link['account_key']!=key:raise Error('连接码未绑定此 MT5 账户',403)
+                    symbol=str(data.get('symbol') or 'XAUUSD')[:64]
+                    tf=bars.normalize_tf(str(data.get('tf') or 'M1'))
+                    if not tf:raise Error('周期不正确')
+                    try:start=int(data.get('from') or 0);end=int(data.get('to') or 0)
+                    except (ValueError,TypeError):raise Error('时间范围不正确')
+                    if end<=start:raise Error('时间范围不正确')
+                    holes=bars.missing(db,bars.source_for(server),symbol,tf,start,end)
+                    # SyncNote(MQL5)只读标量,不解析数组:额外给"最靠右的那个洞"和总数,省掉 EA 侧数组解析。
+                    right=max(holes,key=lambda h:h[1]) if holes else None
+                    result={'source':bars.source_for(server),'symbol':symbol,'tf':tf,'missing':[{'from':h[0],'to':h[1]} for h in holes],
+                            'holes':len(holes),'hole_from':right[0] if right else 0,'hole_to':right[1] if right else 0}
                 elif path=='/api/mt5/live':
                     link=self.link_user(db)
                     ingested=LIVE.ingest(link['user_id'],data);result={'ok':True,'bars':ingested['bars'],'bootstrap':ingested['first']}
@@ -879,9 +956,11 @@ class Handler(BaseHTTPRequestHandler):
                         db.execute('UPDATE users SET onboarding_step=? WHERE id=?',(step,uid))
                     elif path=='/api/settings':
                         if 'share_reviews' in data and not isinstance(data['share_reviews'],bool):raise Error('复盘开关值不正确')
+                        if 'auto_history_sync' in data and not isinstance(data['auto_history_sync'],bool):raise Error('自动续传开关值不正确')
                         if not isinstance(data.get('allow_follow'),bool) or not isinstance(data.get('share_data'),bool):raise Error('开关值不正确')
                         db.execute('UPDATE users SET allow_follow=?,share_data=? WHERE id=?',(data['allow_follow'],data['share_data'],uid))
                         if 'share_reviews' in data:db.execute('UPDATE users SET share_reviews=? WHERE id=?',(data['share_reviews'],uid))
+                        if 'auto_history_sync' in data:db.execute('UPDATE users SET auto_history_sync=? WHERE id=?',(data['auto_history_sync'],uid))
                     elif path=='/api/notifications/read':
                         db.execute('UPDATE social_notifications SET seen=1 WHERE recipient=?',(uid,))
                     elif path=='/api/invite/rotate':

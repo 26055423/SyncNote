@@ -15,6 +15,7 @@ import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
 import { localHistorySync } from './localHistorySync';
+import { backfillBars, useBackfillBars } from './backfillBars';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -53,7 +54,7 @@ interface Member {
 }
 
 interface Board {
-  user: { id: string; nickname: string; username: string; avatar: string; onboarding_step: number };
+  user: { id: string; nickname: string; username: string; avatar: string; onboarding_step: number; auto_history_sync?: boolean };
   members: Member[];
   snapshots: Record<string, { data: any; updated: number }>;
   events: Array<{ id: number; person: string; kind: string; text: string; created: number }>;
@@ -113,6 +114,36 @@ function toChartBars(bars: Record<string, number[][]> | undefined): ReviewCharts
   return out;
 }
 
+/** 周期秒数：用于判断 tick 是否落在当前（最新）那根 K 线窗口内。 */
+const TF_SECONDS: Record<'M1' | 'M5' | 'M15' | 'H1', number> = { M1: 60, M5: 300, M15: 900, H1: 3600 };
+
+/**
+ * 用一笔 tick 的中间价,把每个周期最新那根蜡烛的 close/high/low 更新到当前价,
+ * 让蜡烛在两次 EA `bar` 推送之间也随 tick 实时伸缩(视觉插值,非无损存档)。
+ * 只改落在该 bar 周期窗口内的最新一根;改的是浅拷贝,不污染 local.bars 的原数组。
+ */
+function applyTickToBars(charts: ReviewCharts, tick: { bid: number; ask: number; time: number } | null): ReviewCharts {
+  if (!tick || !Number.isFinite(tick.bid) || !Number.isFinite(tick.ask)) return charts;
+  const mid = (tick.bid + tick.ask) / 2;
+  if (!Number.isFinite(mid) || mid <= 0) return charts;
+  const out: ReviewCharts = { ...charts };
+  for (const key of Object.keys(TF_SECONDS) as Array<keyof typeof TF_SECONDS>) {
+    const rows = charts[key];
+    if (!rows || !rows.length) continue;
+    const last = rows[rows.length - 1];
+    if (!Array.isArray(last) || last.length < 5) continue;
+    const seconds = TF_SECONDS[key];
+    // tick 必须落在最新这根的周期窗口内,否则是下一根开始,交给 EA 的 bar 推送开新蜡烛。
+    if (tick.time < last[0] || tick.time >= last[0] + seconds) continue;
+    const patched = [...last];
+    patched[4] = mid;                       // close = 当前中间价
+    patched[2] = Math.max(patched[2], mid); // high
+    patched[3] = Math.min(patched[3], mid); // low
+    out[key] = [...rows.slice(0, -1), patched];
+  }
+  return out;
+}
+
 function latestTradeOf(snapshot: { data: any } | undefined) {
   const rows = snapshot?.data?.history ?? [];
   return rows.length ? rows[0] : null;
@@ -129,6 +160,7 @@ function barsClose(entry: Entry | null): number | null {
 export default function App() {
   const local = useLocalTerminal();
   const localConnected = local.phase === 'connected';
+  const backfill = useBackfillBars();
   const params = useMemo(() => new URLSearchParams(location.search), []);
 
   const [board, setBoard] = useState<Board | null>(null);
@@ -307,7 +339,8 @@ export default function App() {
   useEffect(() => {
     if (!localConnected) return;
     setLiveTick(local.tick);
-    const incoming = toChartBars(local.bars);
+    // tick 变化也进这里:把最新报价插值进当前蜡烛,蜡烛在两次 EA bar 推送之间随 tick 伸缩。
+    const incoming = applyTickToBars(toChartBars(local.bars), local.tick);
     Object.assign(liveRef.current, incoming);
     if (local.history_ready && Object.keys(incoming).length) setLiveBars(liveRef.current);
     for (const listener of liveListeners.current) listener();
@@ -355,10 +388,31 @@ export default function App() {
 
   useEffect(() => {
     localHistorySync.bindUser(board?.user.id || '');
+    backfillBars.bindUser(board?.user.id || '');
   }, [board?.user.id]);
 
+  // 连上 EA + 图表就绪 → 自动进入行情回填首填(阻塞式初始化,只锁读轨道功能)。
+  // coverage 已满会很快到 ready;同券商复用别人填过的数据,新用户几秒解锁。
+  // error 态不在此自动重试(否则 error→initializing→error 无退避空转);重连会话变化会被
+  // backfillBars 内部 stop 回 idle,那时再由本 effect 重启。
   useEffect(() => {
-    const pause = () => localHistorySync.stop('网页已关闭，笔记同步已暂停。');
+    if (!board?.user.id || !localConnected || !local.history_ready || !local.features.includes('history')) return;
+    if (backfill.phase !== 'idle') return;
+    void backfillBars.start();
+  }, [board?.user.id, localConnected, local.history_ready, local.features, backfill.phase]);
+
+  // 个人中心勾了「自动续传」后:连上 EA、图表就绪、且行情首填已完成(ready/partial_ready)才启动,
+  // 避免与回填争用本机历史读通道(localTerminal 串行互斥)。已在同步中则不重复开。
+  useEffect(() => {
+    if (!board?.user.auto_history_sync || !localConnected || !local.history_ready) return;
+    if (!local.features.includes('history')) return;
+    if (backfill.phase !== 'ready' && backfill.phase !== 'partial_ready') return;
+    if (localHistorySync.getSnapshot().enabled) return;
+    void localHistorySync.start().catch(() => undefined);
+  }, [board?.user.auto_history_sync, localConnected, local.history_ready, local.features, backfill.phase]);
+
+  useEffect(() => {
+    const pause = () => { localHistorySync.stop('网页已关闭，笔记同步已暂停。'); backfillBars.stop('网页已关闭，行情回填已暂停。'); };
     window.addEventListener('pagehide', pause);
     return () => { window.removeEventListener('pagehide', pause); pause(); };
   }, []);
@@ -1031,6 +1085,22 @@ export default function App() {
               <b>只读回放</b>
               <span>{entry.owner.name} 的复盘 · 画线与笔记不可修改</span>
               {myHistory.length ? <button type="button" className="link" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>回到我的最近一笔</button> : null}
+            </div>
+          ) : null}
+
+          {backfill.locked ? (
+            <div className="context-banner" role="status" aria-live="polite">
+              <b>正在准备行情数据</b>
+              <span>
+                {backfill.message || '正在确保行情数据完整,复盘功能稍后可用…'}
+                {backfill.segments ? ` · 已处理 ${backfill.segments} 段` : ''}
+                {backfill.reachedServer ? ` · 已回溯到 ${new Date(backfill.reachedServer * 1000).toISOString().slice(0, 10)}` : ''}
+              </span>
+            </div>
+          ) : backfill.phase === 'partial_ready' ? (
+            <div className="context-banner" role="status">
+              <b>行情数据已就绪</b>
+              <span>更早的历史需要在 MT5 加载后重新回填{backfill.flooredTfs.length ? `（周期 ${backfill.flooredTfs.join(' / ')} 已到可得边界）` : ''}。</span>
             </div>
           ) : null}
 

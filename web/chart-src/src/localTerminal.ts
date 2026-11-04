@@ -293,10 +293,14 @@ export class LocalTerminal {
         const row = Array.isArray(message.bar) ? message.bar : [message.bar_time, message.open, message.high, message.low, message.close, message.tick_volume || 0];
         if (!row.slice(0, 5).every((value: unknown) => typeof value === 'number' && Number.isFinite(value))) return;
         const previous = this.state.bars[message.tf] || [];
-        const rows = previous.filter((bar) => bar[0] !== row[0]);
-        rows.push(row);
-        rows.sort((a, b) => a[0] - b[0]);
-        this.update({ bars: { ...this.state.bars, [message.tf]: rows.slice(-3000) } });
+        // 高频热点路径:当前蜡烛更新(替换末尾)和新蜡烛(追加末尾)无需 filter+sort。
+        // 只有罕见乱序/历史回补才走慢路径,避免每帧 O(n log n) 扫全数组。
+        const lastTime = previous.length ? previous[previous.length - 1][0] : -Infinity;
+        let rows: number[][];
+        if (row[0] === lastTime) rows = [...previous.slice(0, -1), row];
+        else if (row[0] > lastTime) rows = previous.length >= 3000 ? [...previous.slice(1), row] : [...previous, row];
+        else { rows = previous.filter((bar) => bar[0] !== row[0]); rows.push(row); rows.sort((a, b) => a[0] - b[0]); rows = rows.slice(-3000); }
+        this.update({ bars: { ...this.state.bars, [message.tf]: rows } });
       } else if (message.type === 'pong') {
         this.update({ latency: Math.round(performance.now() - this.pingSent) });
       } else if (message.type === 'history') {
