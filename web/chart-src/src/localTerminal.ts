@@ -35,6 +35,8 @@ export interface LocalTerminalState {
   unrestricted?: boolean;
   /** 实盘不限额（InpRealNoCaps）。 */
   real_no_caps?: boolean;
+  /** EA 报告的拦截原因：journal / risk / account / margin_mode / allow_trading / real_not_allowed / caps。 */
+  block_reason?: string;
   capabilities: string[];
   product: string;
   features: string[];
@@ -214,6 +216,7 @@ export class LocalTerminal {
       netting_manage: message.netting_manage === true,
       unrestricted: message.unrestricted === true,
       real_no_caps: message.real_no_caps === true,
+      block_reason: typeof message.block_reason === 'string' ? message.block_reason : '',
       real_trading: message.real_trading === true,
       capabilities: Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [],
       product: typeof message.product === 'string' ? message.product : this.state.product,

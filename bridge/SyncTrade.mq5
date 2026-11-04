@@ -3,7 +3,7 @@
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading is OFF by default; live trading requires separate local consent and durable caps.
 #property copyright "SyncTrade"
-#property version "1.102"
+#property version "1.103"
 #property strict
 #property description "Windows localhost EA. Default read-only; live trading needs explicit opt-in and caps."
 
@@ -38,7 +38,7 @@ input int InpTickPushMs=100;                           // Tick push interval (50
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.103"
+#define LOCAL_VERSION "1.104"
 #define JOURNAL_MAX 10000
 #define PAIR_TTL_MS 120000
 
@@ -131,6 +131,22 @@ bool LocalCanTrade()
    return LocalReal() && InpAllowRealTrading && InpRealMaxLots>0 && InpRealMaxOrdersPerDay>0;
 }
 string JsonBool(const bool value) { return value ? "true" : "false"; }
+string BlockReason()
+{
+   // 网页拿这个直接显示"到底是哪一条拦住了"，不用再让用户猜。
+   if(!g_journal_ok) return "journal";
+   if(!g_account_stable) return "account";
+   if(!g_risk_ok || !g_risk.Healthy()) return "risk";
+   long margin=AccountInfoInteger(ACCOUNT_MARGIN_MODE);
+   if(margin!=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING && margin!=ACCOUNT_MARGIN_MODE_RETAIL_NETTING && margin!=ACCOUNT_MARGIN_MODE_EXCHANGE) return "margin_mode";
+   if(InpUnrestricted) return "";
+   if(!InpAllowTrading) return "allow_trading";
+   if(LocalDemo()) return "";
+   if(InpRealNoCaps) return InpAllowRealTrading?"":"real_not_allowed";
+   if(!InpAllowRealTrading) return "real_not_allowed";
+   if(InpRealMaxLots<=0 || InpRealMaxOrdersPerDay<=0) return "caps";
+   return "";
+}
 string CapabilitiesJson()
 {
    if(!LocalCanTrade()) return "[]";
@@ -161,7 +177,7 @@ bool PendingSideValid(const string action,const bool buy,const double price,cons
 string IdentityFields()
 {
    return "\"product\":\"SyncTrade\",\"features\":[\"history\"],\"instance_id\":"+JStr(g_instance)+",\"account_id\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+",\"epoch\":"+JStr(g_epoch)+
-      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging()) +",\"netting_manage\":"+JsonBool(InpAllowNettingManage) +",\"real_no_caps\":"+JsonBool(InpRealNoCaps) +",\"unrestricted\":"+JsonBool(InpUnrestricted) +",\"real_trading\":"+JsonBool(LocalReal() && LocalCanTrade())+
+      ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging()) +",\"netting_manage\":"+JsonBool(InpAllowNettingManage) +",\"real_no_caps\":"+JsonBool(InpRealNoCaps) +",\"unrestricted\":"+JsonBool(InpUnrestricted) +",\"block_reason\":JStr(BlockReason()) +",\"real_trading\":"+JsonBool(LocalReal() && LocalCanTrade())+
       ",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
 }
 void LocalError(const int peer,const string code,const string message,const string request_id="")
