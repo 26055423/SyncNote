@@ -1079,6 +1079,19 @@ export default function App() {
               <span className="badge">历史行情{marketInfo?.last ? ' · 最新 ' + stamp(marketInfo.last) : ''}</span>
             ) : null}
             <span className="spacer" />
+            {/* 数据源标签：避免把"复盘回放"当成实时行情。 */}
+            <span
+              className={`data-chip ${mode === 'live' ? (liveBars ? 'is-live' : 'is-wait') : 'is-review'}`}
+              title={
+                mode === 'live'
+                  ? liveBars
+                    ? '实时行情：来自本机 EA 推送，随 tick 更新'
+                    : '实时行情未就绪：本机 EA 还没推送 K 线，当前显示的是服务器历史行情'
+                  : '复盘回放：这是那笔交易发生时的历史切片，不是实时行情'
+              }
+            >
+              {mode === 'live' ? (liveBars ? '实时 K 线' : '历史行情（实时未就绪）') : '复盘回放 · 非实时'}
+            </span>
             <span className="save-hint" role="status" aria-live="polite">
               {saveState === 'saving' ? '保存画线…' : saveState === 'saved' ? '画线已保存' : saveState === 'error' ? '画线保存失败' : ''}
             </span>
