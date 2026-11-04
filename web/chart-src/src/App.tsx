@@ -217,6 +217,8 @@ export default function App() {
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') || params.get('share') ? 'review' : 'live'));
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
+  /** 实时数据的修订号：liveRef 是稳定引用，靠它驱动依赖它的 UI 重算。 */
+  const [liveRev, setLiveRev] = useState(0);
   /** 有新 K 线时是否自动滚动到最新：默认关，让蜡烛在画面里自然生长。 */
   const [autoScroll, setAutoScroll] = useState(() => {
     try { return localStorage.getItem('sn-autoscroll') === '1'; } catch { return false; }
@@ -246,7 +248,7 @@ export default function App() {
     const latest = Math.max(...last.map((row) => row.time));
     const stale = last.filter((row) => latest - row.time > row.sec * 3).map((row) => row.tf);
     return { stale, latest };
-  }, [liveBars]);
+  }, [liveBars, liveRev]);
   const liveProvider = useMemo(
     () => new LiveProvider(liveRef.current, liveSymbol, (listener) => {
       liveListeners.current.add(listener);
@@ -371,7 +373,10 @@ export default function App() {
     // tick 变化也进这里:把最新报价插值进当前蜡烛,蜡烛在两次 EA bar 推送之间随 tick 伸缩。
     const incoming = applyTickToBars(toChartBars(local.bars), local.tick);
     Object.assign(liveRef.current, incoming);
-    if (local.history_ready && Object.keys(incoming).length) setLiveBars(liveRef.current);
+    if (local.history_ready && Object.keys(incoming).length) {
+      setLiveBars(liveRef.current);
+      setLiveRev((n) => n + 1);
+    }
     for (const listener of liveListeners.current) listener();
     if (!keepRanges) return;
     const grew = Object.entries(liveRef.current).some(([key, rows]) => {
@@ -1007,7 +1012,10 @@ export default function App() {
       const fresh = older.filter((row) => !seen.has(row[0]));
       if (!fresh.length) return false;
       liveRef.current[base] = [...fresh, ...current].sort((a, b) => a[0] - b[0]).slice(-60000);
-      setLiveBars({ ...liveRef.current });
+      // 注意：必须传同一个引用。传 {...} 会让 charts prop 变换新对象，
+      // ChartWorkspace 的初始化 effect 依赖 [charts] → 整个工作台重建 → 视图跳回最新。
+      setLiveBars(liveRef.current);
+      setLiveRev((n) => n + 1);
       for (const listener of liveListeners.current) listener();
       return true;
     };
