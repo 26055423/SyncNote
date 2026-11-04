@@ -959,10 +959,50 @@ export default function App() {
     }
   }, []);
 
+  /** 实时图分页：一个格子一个周期只允许一个在途请求；取到空/失败后冷却 5 分钟。 */
+  const livePagingRef = useRef<Set<string>>(new Set());
+  const liveFloorRef = useRef<Record<string, number>>({});
+  const liveOlder = useCallback(async (base: BaseTimeframe) => {
+    if (!localConnected || livePagingRef.current.has(base)) return;
+    const rows = liveRef.current[base];
+    if (!rows || rows.length < 10) return;
+    if ((liveFloorRef.current[base] ?? 0) > Date.now()) return;
+    const eaTf: Record<BaseTimeframe, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
+    livePagingRef.current.add(base);
+    try {
+      const older = await localTerminal.loadOlderBars(eaTf[base], rows[0][0]);
+      const seen = new Set(rows.map((row) => row[0]));
+      const fresh = older.filter((row) => !seen.has(row[0]));
+      if (!fresh.length) {
+        liveFloorRef.current[base] = Date.now() + 5 * 60_000;
+        return;
+      }
+      const merged = [...fresh, ...rows].sort((a, b) => a[0] - b[0]);
+      liveRef.current[base] = merged.slice(-40000);
+      if (local.history_ready) setLiveBars({ ...liveRef.current });
+      for (const listener of liveListeners.current) listener();
+    } catch {
+      // 忙/超时只短暂退避；真空结果已在上面按 5 分钟冷却。
+      liveFloorRef.current[base] = Date.now() + 60_000;
+    } finally {
+      livePagingRef.current.delete(base);
+    }
+  }, [localConnected, local.history_ready]);
+
   const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
     const recipe = TIMEFRAMES[info.timeframe];
     if (!recipe) return;
     const base = recipe.base;
+    const spanMs = Math.max(60_000, info.to - info.from);
+    // 实时模式：翻到最左边就把更早的一段补进来（每次 ~1990 根）。
+    if (mode === 'live' && localConnected) {
+      const liveRows = liveRef.current[base];
+      if (liveRows?.length) {
+        const firstMs = liveRows[0][0] * 1000;
+        if (info.from - firstMs < spanMs * 1.5) void liveOlder(base as BaseTimeframe);
+      }
+      return;
+    }
     const loaded = windowRef.current[base];
     if (!loaded) return;
     const span = Math.max(60_000, info.to - info.from);
@@ -984,7 +1024,7 @@ export default function App() {
         chartRef.current?.applySeries(base as BaseTimeframe, trimmed, info.cellId);
       }
     }
-  }, [loadWindow]);
+  }, [loadWindow, mode, localConnected, liveOlder]);
 
   const myChats = useMemo(
     () => (board?.messages ?? []).filter((row) => row.person !== me?.id),

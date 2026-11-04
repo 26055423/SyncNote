@@ -440,6 +440,19 @@ export class LocalTerminal {
       }
     });
   }
+  /** 实时图往左翻页：取比 beforeUtc 更早的一段（返回 UTC 秒，与 state.bars 一致）。 */
+  async loadOlderBars(tf: string, beforeUtc: number, slots = HISTORY_SLOTS): Promise<number[][]> {
+    if (this.state.phase !== 'connected' || !this.state.features.includes('history') || !this.state.history_ready) throw new Error('本机历史读取尚未就绪。');
+    const period = TF_SECONDS[tf] ?? 60;
+    const shift = this.state.server_offset_sec || 0;
+    const to = Math.floor(beforeUtc + shift) - 1;
+    const from = to - (slots - 1) * period;
+    if (from < 1 || to <= from) return [];
+    const controller = new AbortController();
+    const page = await this.requestReviewBars(this.state.symbol, tf, { from_server: from, to_server: to }, controller.signal);
+    return page.bars.map((row) => (shift ? [row[0] - shift, ...row.slice(1)] : row));
+  }
+
   requestReviewBars(symbol: string, tf: string, range: { from_server: number; to_server: number }, signal: AbortSignal): Promise<NoteReviewBars> {
     if (this.state.phase !== 'connected' || !this.state.features.includes('history') || !this.state.history_ready) return Promise.reject(new Error('本机历史读取尚未就绪。'));
     if (signal.aborted) return Promise.reject(new Error('复盘同步已取消。'));
