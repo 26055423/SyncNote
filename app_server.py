@@ -377,6 +377,7 @@ class Handler(BaseHTTPRequestHandler):
                         live_payload=LIVE.read(uid,max(50,min(3000,limit))) or {'bars':{},'tick':None,'updated':None,'age':None}
                         # 实时 K 线也是券商墙钟，同样换成 UTC，和复盘/历史的坐标一致。
                         feed=bars.feed_of(db,uid)
+                        live_payload['source']=feed['source'] if feed else None
                         shift=bars.source_offset(db,feed['source']) if feed else int(live_payload.get('offset') or 0)
                         if shift:
                             for rows in (live_payload.get('bars') or {}).values():
@@ -463,7 +464,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply(payload)
                     if path=='/api/market/bars':
                         # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
-                        # `limit=N`：直接给最新 N 根（有多少显示多少），不按“前后几天”切。
+                        # `limit=N&before=UTC秒`：同轨道向前按根数分页，不按日历窗口切。
                         symbol=str(q.get('symbol',['XAUUSD'])[0] or 'XAUUSD')[:64]
                         tf=str(q.get('tf',['M15'])[0])
                         requested=str(q.get('source',[''])[0])
@@ -472,8 +473,15 @@ class Handler(BaseHTTPRequestHandler):
                         if not source:source=bars.public_source(db,symbol) or ''
                         if not source:raise Error('服务器上还没有这个品种的 K 线数据',404)
                         is_public=not feed or source!=feed['source']
-                        if q.get('limit'):
-                            payload=bars.latest(db,source,symbol,tf,int(q['limit'][0]),time.time())
+                        counted=bool(q.get('limit'))
+                        if q.get('before') and not counted:raise Error('向前翻页需指定 limit')
+                        if counted:
+                            try:
+                                limit=int(q['limit'][0]);before=int(q['before'][0]) if q.get('before') else None
+                            except ValueError:raise Error('根数或翻页时间不正确')
+                            if limit<1 or (before is not None and not 1<=before<=32535215999):raise Error('根数或翻页时间不正确')
+                            try:payload=bars.latest_utc(db,source,symbol,tf,limit,time.time(),before)
+                            except bars.BarsError as error:raise Error(error.text,error.code)
                         else:
                             try:
                                 start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
@@ -486,7 +494,7 @@ class Handler(BaseHTTPRequestHandler):
                         payload['public']=is_public
                         shift=bars.source_offset(db,source)
                         payload['last_bar']=(int(last)-shift) if last else last
-                        return self.reply(bars.to_utc(payload,shift))
+                        return self.reply(payload if counted else bars.to_utc(payload,shift))
                     if path=='/api/market/coverage':
                         # 回填调度器查：这条券商轨某周期在 [from,to] 里还有哪些段没填（have/empty 都算已扫）。
                         # 墙钟进墙钟出；前端按券商墙钟切窗口，不在这里换 UTC。

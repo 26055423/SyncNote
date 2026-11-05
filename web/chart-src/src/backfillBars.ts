@@ -182,15 +182,22 @@ export class BackfillBars {
       const tf = TFS.find((t) => !cp.floored.includes(t) && (cp.cursors[t] ?? cp.floor_server) > cp.floor_server);
       if (!tf) { this.finish(generation); return; }
       const period = TF_SECONDS[tf];
-      const to = cp.cursors[tf]!;
-      const from = Math.max(to - MAX_BARS * period, cp.floor_server);
+      // EA counts both endpoints and aligns the left endpoint down. Align the
+      // right endpoint too: 2000 bars span 1999 intervals, not 2000 intervals.
+      const to = Math.floor(cp.cursors[tf]! / period) * period;
+      const from = Math.max(to - (MAX_BARS - 1) * period, cp.floor_server);
+      if (to < from) { cp.cursors[tf] = cp.floor_server; this.save(); continue; }
       // 先查这段有没有被(自己或同券商别人)填过,跳过已覆盖。可能有多个空洞:
       // 本轮只处理最靠右的洞,游标前移到该洞左界(不是整段 from),左侧剩余的洞下一轮再处理,不丢段。
       let fetchFrom = from, fetchTo = to, advanceTo = from;
       try {
         const cov = await this.deps.coverage({ source, symbol: cp.symbol, tf, from, to }, signal);
         if (!this.active(generation)) return;
-        const holes = (cov.missing || []).filter((h) => h.to > h.from).sort((a, b) => b.to - a.to);
+        const holes = (cov.missing || [])
+          .filter((h) => Number.isFinite(h.from) && Number.isFinite(h.to) && h.to >= h.from)
+          .map((h) => ({ from: Math.max(from, Math.floor(h.from / period) * period), to: Math.min(to, Math.floor(h.to / period) * period) }))
+          .filter((h) => h.to >= h.from)
+          .sort((a, b) => b.to - a.to);
         if (!holes.length) { cp.cursors[tf] = from; this.save(); this.update({ reachedServer: from }); continue; } // 整段已覆盖
         fetchTo = holes[0].to; fetchFrom = Math.max(holes[0].from, from);
         advanceTo = fetchFrom; // 游标停在本轮处理的洞的左界,保留左侧其余洞
@@ -207,8 +214,9 @@ export class BackfillBars {
           this.update({ segments: this.state.segments + 1 });
         }
         // 游标前移到 advanceTo(本轮处理的洞左界;coverage 失败时 = from)。
-        // 防卡:必须严格小于当前 to,否则强制退到 from,保证单调递减、不原地打转。
-        const next = advanceTo < to ? advanceTo : from;
+        // A one-bar hole at `to` still leaves any holes to its left. Move one
+        // period instead of skipping the rest of this coverage window.
+        const next = advanceTo < to ? advanceTo : Math.max(from, to - period);
         cp.cursors[tf] = next; this.retries.delete(tf); this.save();
         this.update({ reachedServer: next, message: `正在确保行情数据完整…(${cp.symbol} ${tf},已到 ${new Date(next * 1000).toISOString().slice(0, 10)})` });
       } catch (error) {

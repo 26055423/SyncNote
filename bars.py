@@ -138,10 +138,9 @@ def to_utc(bars_payload, offset_sec):
   for row in rows:
     if row and isinstance(row[0], (int, float)):
       row[0] = int(row[0]) - int(offset_sec)
-  if isinstance(bars_payload.get('from_server'), (int, float)):
-    bars_payload['from_server'] = int(bars_payload['from_server']) - int(offset_sec)
-  if isinstance(bars_payload.get('to_server'), (int, float)):
-    bars_payload['to_server'] = int(bars_payload['to_server']) - int(offset_sec)
+  for field in ('from_server', 'to_server', 'earliest', 'next_before'):
+    if isinstance(bars_payload.get(field), (int, float)):
+      bars_payload[field] = int(bars_payload[field]) - int(offset_sec)
   missing = bars_payload.get('missing') or []
   bars_payload['missing'] = [
     {'from': int(item['from']) - int(offset_sec), 'to': int(item['to']) - int(offset_sec)}
@@ -483,19 +482,29 @@ def mark_coverage(db, source, symbol, tf, start, end, state='have', now=None):
     raise BarsError('周期不正确')
   _apply_coverage(db, source, symbol, tf, int(start), int(end), state, now)
 
-def latest(db, source, symbol, tf, limit=4000, now=None):
-  """取这条轨最新的 N 根（行情页用）：不按“前后几天”切，按根数，多少数据就显示多少。"""
+def latest(db, source, symbol, tf, limit=4000, now=None, before=None):
+  """取同一轨严格早于 before 的最近 N 根；入参和结果均为库内券商墙钟。"""
   now = time.time() if now is None else now
   tf = normalize_tf(tf)
   if not tf:
     raise BarsError('周期不正确')
-  limit = max(50, min(20000, int(limit)))
+  limit = max(1, min(20000, int(limit)))
   period = tf_seconds(tf)
+  where = 'source=? AND symbol=? AND tf=? AND t<=?'
+  params = [source, symbol, tf, now - period]
+  if before is not None:
+    where += ' AND t<?'
+    params.append(int(before))
   rows = db.execute(
-    'SELECT t,o,h,l,c,v FROM bars WHERE source=? AND symbol=? AND tf=? AND t+?<=? ORDER BY t DESC LIMIT ?',
-    (source, symbol, tf, period, now, limit),
+    'SELECT t,o,h,l,c,v FROM bars WHERE ' + where + ' ORDER BY t DESC LIMIT ?',
+    (*params, limit + 1),
   ).fetchall()
-  bars = [[r['t'], r['o'], r['h'], r['l'], r['c'], r['v']] for r in reversed(rows)]
+  has_more = len(rows) > limit
+  bars = [[r['t'], r['o'], r['h'], r['l'], r['c'], r['v']] for r in reversed(rows[:limit])]
+  first = db.execute(
+    'SELECT t FROM bars WHERE source=? AND symbol=? AND tf=? AND t<=? ORDER BY t LIMIT 1',
+    (source, symbol, tf, now - period),
+  ).fetchone()
   return {
     'schema': SCHEMA,
     'source': source,
@@ -503,10 +512,24 @@ def latest(db, source, symbol, tf, limit=4000, now=None):
     'tf': tf,
     'bars': bars,
     'count': len(bars),
+    'has_more': has_more,
+    'earliest': first['t'] if first else None,
+    'next_before': bars[0][0] if bars and has_more else None,
     'from_server': bars[0][0] if bars else None,
     'to_server': bars[-1][0] if bars else None,
     'now': now,
   }
+
+
+def latest_utc(db, source, symbol, tf, limit=4000, now=None, before=None):
+  """行情分页边界只在这里换算：UTC 游标 → 券商墙钟查询 → UTC 报文。"""
+  now = time.time() if now is None else now
+  shift = source_offset(db, source)
+  payload = latest(db, source, symbol, tf, limit, now + shift, None if before is None else int(before) + shift)
+  payload = to_utc(payload, shift)
+  payload['now'] = now
+  payload['time_basis'] = 'utc'
+  return payload
 
 # ---------------------------------------------------------------- 数据源目录
 

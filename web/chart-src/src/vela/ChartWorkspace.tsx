@@ -73,7 +73,7 @@ export interface ChartHandle {
   /** 把收藏的工具同步给所有格子的原生工具栏。 */
   setFavorites(types: string[]): void;
   /** 用新的一段 K 线替换某个基础周期，并按各格子的周期重绘（保持视窗）。 */
-  applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string): void;
+  applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string): Promise<void>;
 }
 
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
@@ -310,8 +310,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         }
       }
     },
-    applySeries(base, bars, onlyCellId) {
+    async applySeries(base, bars, onlyCellId) {
       dataRef.current = { ...dataRef.current, [base]: bars };
+      const updates: Promise<void>[] = [];
       for (const cell of wsRef.current?.cells?.() ?? []) {
         // 只重画触发这次补段的那一格：把整屏同周期的格子一起 setBars，
         // 会让没在拖动的窗口被重新缩放/跳一下。
@@ -323,12 +324,21 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         if (!source.length) continue;
         const baseSeconds = TIMEFRAMES[basePeriodKey(recipe.base)]?.seconds ?? 60;
         const rendered = recipe.seconds === baseSeconds ? source : aggregate(source, recipe.seconds);
-        try {
-          cell.chart.setBars(rendered.map(toOhlcv), { preserveView: true });
-        } catch {
-          /* 渲染器不支持 setBars 时忽略：下次重挂载会拿到新数据 */
-        }
+        const chart = cell.chart;
+        const range = chart.getVisibleRange?.();
+        updates.push((async () => {
+          // Vela 0.9.3 的图表没有 setBars；那是 renderer 的底层接口。
+          // 实时图只扩深度，不能传 data（离线 data 会停止实时订阅）。
+          if (props.provider) {
+            await chart.setMarket({ bars: Math.max(rendered.length, (chart.market?.bars ?? 0) + 1), visibleRange: range });
+          } else {
+            await chart.setMarket({ data: rendered.map(toOhlcv), visibleRange: range });
+          }
+          await chart.historyComplete();
+          if (range) chart.setVisibleRange(range);
+        })());
       }
+      await Promise.all(updates);
     },
     toggleSync(kind) {
       const ws = wsRef.current;

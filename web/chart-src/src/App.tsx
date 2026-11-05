@@ -5,6 +5,7 @@ import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
 import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from './liveHistory';
+import { readTrackPage, selectTrackSource, type TrackCatalog, type TrackPage } from './trackHistory';
 import { LocalTradePanel } from './LocalTradePanel';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
@@ -227,7 +228,8 @@ export default function App() {
 
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
   const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
-  const [marketInfo, setMarketInfo] = useState<{ server: string; last: number | null } | null>(null);
+  const [marketInfo, setMarketInfo] = useState<{ source: string; server: string; last: number | null; tfs?: TrackCatalog['sources'][number]['tfs'] } | null>(null);
+  const trackSourceRef = useRef<string | null>(null);
   const liveRef = useRef<ReviewCharts>({});
   const liveListeners = useRef(new Set<() => void>());
   const liveSymbol = localConnected ? local.symbol : 'XAUUSD';
@@ -239,7 +241,7 @@ export default function App() {
     const last: Array<{ tf: string; time: number; sec: number }> = [];
     for (const [tf, rows] of entries) {
       const row = rows?.[rows.length - 1];
-      const sec = TIMEFRAMES[tf as BaseTimeframe]?.seconds ?? 0;
+      const sec = TF_SECONDS[tf as BaseTimeframe] ?? 0;
       if (Array.isArray(row) && Number.isFinite(row[0]) && sec) last.push({ tf, time: row[0], sec });
     }
     if (!last.length) return { stale: [] as string[], latest: null as number | null };
@@ -356,10 +358,12 @@ export default function App() {
     for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as keyof ReviewCharts];
     setLiveBars(null);
     setLiveTick(null);
-  }, [localConnected, local.epoch]);
+    trackSourceRef.current = null;
+    setMarketInfo(null);
+  }, [liveSymbol, board?.user.id]);
 
   useEffect(() => {
-    if (!localConnected) return;
+    if (!localConnected || !marketInfo?.server || marketInfo.server !== local.server) return;
     setLiveTick(local.tick);
     // 新 K 线不该把画面推走：先记下每格可见范围，合并后再恢复（自动滚动关闭时）。
     const keepRanges = autoScrollRef.current ? null : chartRef.current?.captureRanges();
@@ -369,9 +373,12 @@ export default function App() {
       if (last) beforeLast[key] = last[0];
     }
     // tick 变化也进这里:把最新报价插值进当前蜡烛,蜡烛在两次 EA bar 推送之间随 tick 伸缩。
-    const incoming = applyTickToBars(toChartBars(local.bars), local.tick);
+    // EA 只更新每周期最新一根；历史深度由服务器数据轨道决定。
+    const recent = toChartBars(local.bars);
+    for (const base of Object.keys(recent) as BaseTimeframe[]) recent[base] = recent[base]?.slice(-1);
+    const incoming = applyTickToBars(recent, local.tick);
     mergeLiveHistory(liveRef.current, incoming);
-    if (local.history_ready && Object.keys(incoming).length) {
+    if (trackSourceRef.current && Object.keys(incoming).length) {
       setLiveBars(liveRef.current);
       setLiveRev((n) => n + 1);
     }
@@ -394,7 +401,7 @@ export default function App() {
       if (range.to < (newest - 8 * tfSec) * 1000) frozen[id] = { from: range.from, to: range.to };
     }
     if (Object.keys(frozen).length) requestAnimationFrame(() => chartRef.current?.restoreRanges(frozen));
-  }, [localConnected, local.tick, local.bars, local.history_ready]);
+  }, [localConnected, local.server, marketInfo?.server, local.tick, local.bars, local.history_ready]);
 
   useEffect(() => () => localTerminal.disconnect(), []);
 
@@ -472,23 +479,15 @@ export default function App() {
     let alive = true;
     const tick = async () => {
       try {
-        const data = await api<{ tick: any; bars: Record<string, number[][]> }>('/api/live?limit=2');
+        const data = await api<{ source?: string | null; tick: any; bars: Record<string, number[][]> }>('/api/live?limit=2');
         if (!alive) return;
+        if (!trackSourceRef.current || data.source !== trackSourceRef.current) return;
         if (data.tick) setLiveTick(data.tick);
         const incoming = toChartBars(data.bars);
         if (Object.keys(incoming).length) {
           // 原地合并：LiveProvider 持有的是同一个对象引用，整体替换会让它看不到更新。
-          const merged = liveRef.current;
-          for (const [key, rows] of Object.entries(incoming)) {
-            const base = merged[key as keyof ReviewCharts] ?? [];
-            const last = (rows as number[][])[(rows as number[][]).length - 1];
-            const next = [...base];
-            if (last) {
-              if (next.length && next[next.length - 1][0] === last[0]) next[next.length - 1] = last;
-              else next.push(last);
-            }
-            merged[key as keyof ReviewCharts] = next.slice(-3000);
-          }
+          mergeLiveHistory(liveRef.current, incoming);
+          if (trackSourceRef.current) { setLiveBars(liveRef.current); setLiveRev((n) => n + 1); }
           for (const listener of liveListeners.current) listener();
         }
       } catch {
@@ -504,49 +503,46 @@ export default function App() {
   }, [mode, localConnected]);
 
   useEffect(() => {
-    // 既没有本机 EA、也没有 /api/live 缓存时，退回自己券商轨的历史 K 线。
-    // 按“最新 N 根”取：这条轨里有 7 年数据，就有多少显示多少，不按天数切。
-    if (mode !== 'live' || liveBars || localConnected) return;
+    // 历史首屏始终读当前数据轨道，不受 EA 是否在线或首批缓存深度限制。
+    if (mode !== 'live' || !board?.user.id) return;
     let alive = true;
     void (async () => {
-      const out: ReviewCharts = {};
-      let info: { server: string; last: number | null } | null = null;
-      await Promise.all(REVIEW_BASE_TFS.map(async (tf) => {
-        try {
-          const data = await api<{ bars: number[][]; feed?: { server?: string }; last_bar?: number | null }>(
-            `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${tf}&limit=${MARKET_LIMIT[tf]}`,
-          );
-          if (data?.bars?.length) out[tf] = data.bars;
-          if (data?.feed?.server) info = { server: data.feed.server, last: data.last_bar ?? null };
-        } catch {
-          /* 还没绑定账户或没有这段数据：保持原来的空态提示 */
+      try {
+        const catalog = await api<TrackCatalog>('/api/data/sources');
+        if (!alive) return;
+        const source = selectTrackSource(catalog, liveSymbol, localConnected ? local.server : undefined);
+        if (!source) {
+          for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as BaseTimeframe];
+          trackSourceRef.current = null; setLiveBars(null); setMarketSeries(null); setMarketInfo(null);
+          setError('当前券商的数据轨道尚未入库这个品种的行情。');
+          return;
         }
-      }));
-      if (!alive) return;
-      setMarketSeries(Object.keys(out).length ? out : null);
-      setMarketInfo(info);
+        if (trackSourceRef.current && trackSourceRef.current !== source) {
+          for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as BaseTimeframe];
+          setLiveBars(null);
+          setLiveTick(null);
+        }
+        trackSourceRef.current = source;
+        const pages = await Promise.all(REVIEW_BASE_TFS.map((base) => readTrackPage((path) => api<TrackPage>(path), {
+          source, symbol: liveSymbol, base, limit: MARKET_LIMIT[base],
+        })));
+        if (!alive || trackSourceRef.current !== source) return;
+        const out: ReviewCharts = {};
+        for (const page of pages) if (page.bars.length) out[page.tf as BaseTimeframe] = page.bars;
+        mergeLiveHistory(liveRef.current, out);
+        setMarketSeries(Object.keys(out).length ? out : null);
+        setMarketInfo({ source, server: pages[0]?.feed?.server ?? '', last: Math.max(0, ...pages.map((page) => page.last_bar ?? 0)) || null,
+          tfs: catalog.sources.find((track) => track.id === source && track.symbol === liveSymbol)?.tfs });
+        if (Object.keys(liveRef.current).length) { setLiveBars(liveRef.current); setLiveRev((n) => n + 1); }
+        await Promise.all(REVIEW_BASE_TFS.map((base) => out[base]?.length ? chartRef.current?.applySeries(base, liveRef.current[base]!) : undefined));
+      } catch (error) {
+        if (alive) setError(`轨道历史读取失败：${error instanceof Error ? error.message : String(error)}`);
+      }
     })();
     return () => {
       alive = false;
     };
-  }, [mode, liveBars, localConnected, liveSymbol]);
-
-  useEffect(() => {
-    if (localConnected || mode !== 'live' || liveBars) return;
-    let alive = true;
-    void api<{ bars: Record<string, number[][]> }>('/api/live?limit=400')
-      .then((data) => {
-        if (!alive) return;
-        const incoming = toChartBars(data.bars);
-        if (!Object.keys(incoming).length) return;
-        Object.assign(liveRef.current, incoming);
-        setLiveBars(liveRef.current);
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [mode, liveBars, localConnected]);
+  }, [mode, localConnected, local.server, local.epoch, liveSymbol, board?.user.id]);
 
   // 邀请链接沿用旧地址，入群后直接进入聊天中的对应群会话。
   useEffect(() => {
@@ -825,13 +821,12 @@ export default function App() {
   const myPositions: any[] = localConnected ? local.positions : mySnap?.data?.positions ?? [];
   const floating = myPositions.reduce((n: number, p: any) => n + (p.profit || 0), 0);
   const mt5Online = localConnected || Boolean(mySnap && board && board.now - (mySnap.updated || 0) <= 45 && mySnap.data.online !== false);
-  const livePrice = localConnected
-    ? (local.tick?.bid ? (local.tick.bid + local.tick.ask) / 2 : null)
-    : (liveTick && liveTick.bid ? (liveTick.bid + liveTick.ask) / 2 : null);
+  const livePrice = liveTick?.bid ? (liveTick.bid + liveTick.ask) / 2 : null;
+  const trackPrice = REVIEW_BASE_TFS.map((base) => liveRef.current[base]?.at(-1)?.[4]).find((value) => Number.isFinite(value));
   const reviewTrade = entry?.review.trade ?? {};
   const reviewPrice = Number(reviewTrade.close) || Number(reviewTrade.open) || barsClose(entry);
   // 复盘看的是这笔交易的平仓价；行情才看现价。两者不能混在一个裸数字里。
-  const price = mode === 'review' ? reviewPrice : (livePrice ?? barsClose(entry));
+  const price = mode === 'review' ? reviewPrice : (livePrice ?? trackPrice ?? null);
   const priceLabel = mode === 'review' ? '平仓价' : '现价';
   const reviewingOther = mode === 'review' && Boolean(target?.person && target.person !== me?.id);
   const liveAnchor = (() => {
@@ -839,7 +834,7 @@ export default function App() {
     const last = rows[rows.length - 1];
     return last ? last[0] * 1000 : Date.now();
   })();
-  /** 行情页的数据源：优先本机/云端的实时推送，没有就用自己券商轨的历史 K 线。 */
+  /** 历史来自当前数据轨道；本机/云端推送只合并实时增量。 */
   // 服务端 K 线是券商墙钟、交易/复盘时间戳是 UTC：标注按这个差对齐，否则开平仓点会偏。
   const serverOffsetSec = typeof entry?.bar_offset === 'number'
     ? entry.bar_offset
@@ -985,7 +980,7 @@ export default function App() {
       }
       seriesRef.current[base] = merged;
       windowRef.current[base] = { from: merged[0][0] * 1000, to: merged[merged.length - 1][0] * 1000 };
-      chartRef.current?.applySeries(base as BaseTimeframe, merged, cellId);
+      await chartRef.current?.applySeries(base as BaseTimeframe, merged, cellId);
     } catch {
       /* 补不到就留白，不拿别的来源顶 */
     } finally {
@@ -996,20 +991,29 @@ export default function App() {
   /** 实时图分页：同周期只允许一个在途请求；暂时无数据时短暂退避，不认定历史到底。 */
   const livePagingRef = useRef<Set<string>>(new Set());
   const liveFloorRef = useRef<Record<string, number>>({});
+  const [liveHistoryLoading, setLiveHistoryLoading] = useState<Partial<Record<BaseTimeframe, boolean>>>({});
   const liveScopeRef = useRef('');
-  liveScopeRef.current = `${mode}:${localConnected}:${local.epoch}:${liveSymbol}`;
-  const liveOlder = useCallback(async (base: BaseTimeframe) => {
-    if (!localConnected || livePagingRef.current.has(base)) return;
+  liveScopeRef.current = `${mode}:${marketInfo?.source ?? ''}:${liveSymbol}`;
+  const liveOlder = useCallback(async (base: BaseTimeframe, manual = false) => {
+    const source = trackSourceRef.current;
+    if (mode !== 'live' || !source || livePagingRef.current.has(base)) return;
     const rows = liveRef.current[base];
-    if (!rows || rows.length < 10) return;
-    if ((liveFloorRef.current[base] ?? 0) > Date.now()) return;
-    const eaTf: Record<BaseTimeframe, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
-    const period = TF_SECONDS[base];
+    if (!rows?.length) return;
+    if (!manual && (liveFloorRef.current[base] ?? 0) > Date.now()) return;
     const scope = liveScopeRef.current;
-    const valid = () => liveScopeRef.current === scope;
-    const merge = (older: number[][]) => {
+    const valid = () => liveScopeRef.current === scope && trackSourceRef.current === source;
+    const merge = async (older: number[][]) => {
       if (!valid()) return false;
-      if (!prependLiveHistory(liveRef.current, base, older, (tf, data) => chartRef.current?.applySeries(tf, data))) return false;
+      let painted: Promise<void> | undefined;
+      if (!prependLiveHistory(liveRef.current, base, older, (tf, data) => {
+        painted = chartRef.current?.applySeries(tf, data);
+      })) return false;
+      try { await painted; }
+      catch (error) {
+        setError(`历史图表更新失败：${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
+      if (!valid()) return false;
       // 注意：必须传同一个引用。传 {...} 会让 charts prop 变换新对象，
       // ChartWorkspace 的初始化 effect 依赖 [charts] → 整个工作台重建 → 视图跳回最新。
       setLiveBars(liveRef.current);
@@ -1018,45 +1022,31 @@ export default function App() {
       return true;
     };
     livePagingRef.current.add(base);
+    setLiveHistoryLoading((previous) => ({ ...previous, [base]: true }));
     try {
-      // ① 先问本机 MT5：用户终端里往往有几个月的历史，比服务器回填得更早。
-      const earliest = rows[0][0];
-      let got = false;
-      try {
-        const older = await localTerminal.loadOlderBars(eaTf[base], earliest);
-        got = merge(older);
-      } catch (error) {
-        console.warn('[live-paging] EA 取更早 K 线失败', base, error);
-      }
+      // 按行数向前翻轨道，不按日历时间窗口切，也不请求 EA。
+      const page = await readTrackPage((path) => api<TrackPage>(path), {
+        source, symbol: liveSymbol, base, before: rows[0][0], limit: MARKET_LIMIT[base],
+      });
       if (!valid()) return;
-      if (got) return;
-      // ② MT5 给不出（或本地历史也到头）→ 问服务器共享轨道（回填过的历史，最长 5 年）。
-      const want = 3000;
-      const to = earliest - 1;
-      const from = to - (want - 1) * period;
-      try {
-        const data = await api<{ bars: number[][] }>(
-          `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${eaTf[base]}&from=${from}&to=${to}`,
-        );
-        if (!valid()) return;
-        if (Array.isArray(data?.bars) && merge(data.bars)) return;
-      } catch (error) {
-        console.warn('[live-paging] 服务器取更早 K 线失败', base, error);
+      await merge(page.bars);
+      if (!page.has_more && valid()) liveFloorRef.current[base] = Date.now() + 60_000;
+    } catch (error) {
+      if (valid()) {
+        liveFloorRef.current[base] = Date.now() + 15_000;
+        setError(`轨道历史读取失败：${error instanceof Error ? error.message : String(error)}`);
       }
-      if (valid()) liveFloorRef.current[base] = Date.now() + 15_000;
-    } catch {
-      // 忙/超时只短暂退避。
-      if (valid()) liveFloorRef.current[base] = Date.now() + 15_000;
     } finally {
       livePagingRef.current.delete(base);
+      if (valid()) setLiveHistoryLoading((previous) => ({ ...previous, [base]: false }));
     }
-  }, [localConnected, liveSymbol]);
+  }, [mode, liveSymbol]);
 
-  /** 连上 EA、首屏数据就绪后，每个周期先自动补一页更早的历史（之后靠左滑继续）。 */
-  const prefetchedRef = useRef(false);
+  /** 轨道首屏就绪后，每个周期预取一页；离线也能继续向左翻。 */
+  const prefetchedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (mode !== 'live' || !localConnected || !local.history_ready || !liveBars || prefetchedRef.current) return;
-    prefetchedRef.current = true;
+    if (mode !== 'live' || !marketInfo?.source || !liveBars || prefetchedRef.current === marketInfo.source) return;
+    prefetchedRef.current = marketInfo.source;
     const bases: BaseTimeframe[] = ['M1', 'M5', 'M15', 'H1'];
     void (async () => {
       for (const base of bases) {
@@ -1064,12 +1054,26 @@ export default function App() {
         await liveOlder(base).catch(() => undefined);
       }
     })();
-  }, [mode, localConnected, local.history_ready, liveBars, liveOlder]);
+  }, [mode, marketInfo?.source, liveBars, liveOlder]);
   useEffect(() => {
-    // 断开/换账户后重新允许预取
-    prefetchedRef.current = false;
+    // 切换轨道后重新允许预取
     liveFloorRef.current = {};
-  }, [localConnected, local.epoch]);
+    setLiveHistoryLoading({});
+  }, [marketInfo?.source]);
+
+  // 历史通道可能正在回填。可见左边缘仍缺数据时自动重试，不要求用户再拖一下。
+  useEffect(() => {
+    if (mode !== 'live' || !marketInfo?.source) return;
+    const timer = window.setInterval(() => {
+      for (const range of Object.values(chartRef.current?.captureRanges() ?? {})) {
+        const first = liveRef.current[range.base]?.[0]?.[0];
+        if (first === undefined) continue;
+        const span = Math.max(60_000, range.to - range.from);
+        if (range.from - first * 1000 < span * 1.5) void liveOlder(range.base);
+      }
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [mode, marketInfo?.source, liveOlder]);
 
   const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
     const recipe = TIMEFRAMES[info.timeframe];
@@ -1077,7 +1081,7 @@ export default function App() {
     const base = recipe.base;
     const spanMs = Math.max(60_000, info.to - info.from);
     // 实时模式：翻到最左边就把更早的一段补进来（每次 ~1990 根）。
-    if (mode === 'live' && localConnected) {
+    if (mode === 'live') {
       const liveRows = liveRef.current[base];
       if (liveRows?.length) {
         const firstMs = liveRows[0][0] * 1000;
@@ -1103,7 +1107,7 @@ export default function App() {
       if (trimmed.length > 200 && trimmed.length < bars.length) {
         seriesRef.current[base] = trimmed;
         windowRef.current[base] = { from: trimmed[0][0] * 1000, to: trimmed[trimmed.length - 1][0] * 1000 };
-        chartRef.current?.applySeries(base as BaseTimeframe, trimmed, info.cellId);
+        void chartRef.current?.applySeries(base as BaseTimeframe, trimmed, info.cellId).catch((error) => setError(`图表更新失败：${error instanceof Error ? error.message : String(error)}`));
       }
     }
   }, [loadWindow, mode, localConnected, liveOlder]);
@@ -1210,6 +1214,14 @@ export default function App() {
               <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} onClick={() => switchMode('live')}>行情</button>
               <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} aria-pressed={mode === 'review'} disabled={!target && shareId == null && !myHistory.length} onClick={() => switchMode('review')}>复盘</button>
             </span>
+            {mode === 'live' && marketInfo?.source && liveBars && TIMEFRAMES[tf] && Boolean(liveRef.current[TIMEFRAMES[tf].base]?.length) ? (
+              <button type="button" className="tool-btn"
+                disabled={Boolean(liveHistoryLoading[TIMEFRAMES[tf].base])}
+                title={`已加载 ${liveRef.current[TIMEFRAMES[tf].base]?.length ?? 0} 根；当前最早 ${stamp(liveRef.current[TIMEFRAMES[tf].base]![0][0])}；轨道最早 ${marketInfo.tfs?.[TIMEFRAMES[tf].base]?.from ? stamp(marketInfo.tfs[TIMEFRAMES[tf].base]!.from) : '暂无入库历史'}`}
+                onClick={() => void liveOlder(TIMEFRAMES[tf].base, true)}>
+                {liveHistoryLoading[TIMEFRAMES[tf].base] ? '正在读取更早行情…' : `加载更早 · ${(liveRef.current[TIMEFRAMES[tf].base]?.length ?? 0).toLocaleString()}${marketInfo.tfs?.[TIMEFRAMES[tf].base] ? ` / ${marketInfo.tfs[TIMEFRAMES[tf].base]!.bars.toLocaleString()}` : ''} 根`}
+              </button>
+            ) : null}
             {mode === 'review' && (target || shareId != null) ? (
               <button type="button" className="tool-btn" onClick={() => chartRef.current?.focus()}>定位开仓</button>
             ) : null}
@@ -1236,7 +1248,7 @@ export default function App() {
               title={
                 mode === 'live'
                   ? liveBars
-                    ? `实时行情：来自本机 EA 推送，随 tick 更新${liveLag.latest ? `；最新一根 ${new Date(liveLag.latest * 1000).toLocaleString()}` : ''}${Object.entries(liveBars ?? {})
+                    ? `历史来自数据轨道 ${marketInfo?.server || marketInfo?.source || '加载中'}；实时增量随报价更新${liveLag.latest ? `；最新一根 ${stamp(liveLag.latest)}` : ''}${Object.entries(liveBars ?? {})
                         .filter(([, rows]) => rows?.length)
                         .map(([tf, rows]) => `${tf}:${rows.length} 根`)
                         .join(' · ')}`
@@ -1248,7 +1260,7 @@ export default function App() {
                 ? liveBars
                   ? liveLag.stale.length
                     ? `实时 K 线（${liveLag.stale.join(' / ')} 落后）`
-                    : '实时 K 线'
+                    : localConnected || liveTick ? '轨道行情 · 实时更新' : '轨道历史行情'
                   : '历史行情（实时未就绪）'
                 : '复盘回放 · 非实时'}
             </span>
@@ -1274,15 +1286,15 @@ export default function App() {
             </div>
           ) : backfill.phase === 'partial_ready' ? (
             <div className="context-banner" role="status">
-              <b>行情数据已就绪</b>
-              <span>更早的历史需要在 MT5 加载后重新回填{backfill.flooredTfs.length ? `（周期 ${backfill.flooredTfs.join(' / ')} 已到可得边界）` : ''}。</span>
+              <b>本轮采集已结束</b>
+              <span>轨道中已有的历史可直接查看；新增历史入库后会继续提供。</span>
             </div>
           ) : null}
 
           <div className="chart-body">
             {mode === 'live' && liveSeries ? (
               <ChartWorkspace
-                key={`live:${liveBars ? 'push' : 'store'}:${localConnected ? local.instance_id + ':' + local.epoch : 'cloud'}:${liveSymbol}`}
+                key={`live:${marketInfo?.source ?? 'loading'}:${liveSymbol}`}
                 ref={chartRef}
                 charts={liveSeries}
                 provider={liveBars ? liveProvider : undefined}
