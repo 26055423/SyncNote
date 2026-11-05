@@ -3,6 +3,7 @@ import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type
 import { registerBigwolf } from './bigwolfNative';
 import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
+import { centerChartOnTime, panChartByTime, restoreChartLeft } from './viewportPan';
 
 /**
  * Vela 工作区（多窗格 K 线）在同频里的封装。
@@ -183,38 +184,13 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     viewport: timeSyncRef.current,
     crosshair: crosshairSyncRef.current,
   });
-  /**
-   * 设置可见范围，但**保持跨度不变**。
-   *
-   * setVisibleRange 撞到数据边界时会把 from 夹住而 to 不变，跨度就被压缩了，
-   * 看起来像"跟着缩放"。这里写完读回来自检一次，被夹住就把整段窗口平移回去。
-   */
-  const setRangeKeepingSpan = (cell: any, from: number, span: number) => {
-    if (!(span > 0)) return;
-    try {
-      cell.chart?.setVisibleRange?.({ from, to: from + span });
-      const applied = cell.chart?.getVisibleRange?.();
-      if (!applied) return;
-      const appliedSpan = applied.to - applied.from;
-      if (Math.abs(appliedSpan - span) > 1) {
-        // 被边界夹住了：以夹住后的起点为准，把跨度撑回去（再夹一次就接受）。
-        cell.chart.setVisibleRange({ from: applied.from, to: applied.from + span });
-      }
-      const settled = cell.chart?.getVisibleRange?.();
-      if (settled) lastRangeRef.current.set(cell.id, { from: settled.from, to: settled.to });
-    } catch {
-      /* ignore */
-    }
-  };
-  /** 把除 exceptId 之外的格子都居中到 at；每格保持自己的跨度。 */
+  /** 把除 exceptId 之外的格子平移到 at 附近，保持实际蜡烛宽度。 */
   const jumpAllTo = (at: number | null, exceptId?: string) => {
     if (at == null) return;
     for (const cell of wsRef.current?.cells?.() ?? []) {
       if (exceptId && cell.id === exceptId) continue;
-      const range = cell.chart?.getVisibleRange?.();
-      if (!range || !(range.to > range.from)) continue;
-      const span = range.to - range.from;
-      setRangeKeepingSpan(cell, at - span / 2, span);
+      programmaticUntilRef.current.set(cell.id, Date.now() + 250);
+      try { centerChartOnTime(cell.chart, at); } catch { /* ignore */ }
     }
   };
   const activeCenter = (): number | null => {
@@ -227,9 +203,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // 拖动联动：记录每格上一次的可见范围，用「时间增量」平移别的格（不是按根数）。
   // 例如 1m 格拖了 60 根 = 60 分钟，15m 格就会平移 60 分钟 = 4 根。
   const lastRangeRef = useRef<Map<string, { from: number; to: number }>>(new Map());
-  // 我们自己 setVisibleRange 触发的回声要忽略，但只忽略被推的那几格：
+  // 我们自己 panBy 触发的回声要忽略，但只忽略被推的那几格：
   // 按时间窗口一刀切会把源格子自己的连续拖动事件一起吞掉，表现为"拖了半天只跟一下"。
   const programmaticUntilRef = useRef<Map<string, number>>(new Map());
+  const gestureUntilRef = useRef<Map<string, number>>(new Map());
   const panOthers = (exceptId: string, delta: number) => {
     if (!delta) return;
     const until = Date.now() + 250;
@@ -238,8 +215,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       const range = other.chart?.getVisibleRange?.();
       if (!range || !(range.to > range.from)) continue;
       programmaticUntilRef.current.set(other.id, until);
-      // 保持这一格自己的跨度，只平移时间；被数据边界夹住时会把跨度撑回去。
-      setRangeKeepingSpan(other, range.from + delta, range.to - range.from);
+      // 原生 panBy 保持实际蜡烛宽度；setVisibleRange 跨缺口会重新缩放。
+      try { panChartByTime(other.chart, delta); } catch { /* ignore */ }
     }
   };
   const [ready, setReady] = useState(false);
@@ -335,12 +312,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             if (props.provider) {
               // 空 data 强制从 provider 重载中间缺口，保持实时订阅。
               await chart.setMarket({ ...(refresh ? { data: [] } : {}),
-                bars: Math.max(rendered.length + (refresh ? 2 : 0), (chart.market?.bars ?? 0) + (refresh ? 2 : 1)), visibleRange: range });
+                bars: Math.max(rendered.length + (refresh ? 2 : 0), (chart.market?.bars ?? 0) + (refresh ? 2 : 1)) });
             } else {
               await chart.setMarket({ data: rendered.map(toOhlcv), visibleRange: range });
             }
             await chart.historyComplete();
-            if (range) chart.setVisibleRange(range);
+            if (range && props.provider && refresh) restoreChartLeft(chart, range.from);
           } finally { seriesUpdateUntilRef.current.set(cell.id, Date.now() + 100); }
         })());
       }
@@ -393,7 +370,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           const now = cell.chart?.getVisibleRange?.();
           if (now && Math.abs(now.from - target.from) < 1 && Math.abs(now.to - target.to) < 1) continue;
           programmaticUntilRef.current.set(cell.id, Date.now() + 250);
-          cell.chart?.setVisibleRange?.({ from: target.from, to: target.to });
+          restoreChartLeft(cell.chart, target.from);
         } catch { /* ignore */ }
       }
     },
@@ -604,6 +581,16 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         stripRef.current = stripMarks;
 
         const bind = (cell: any) => {
+          if (!cell || cell.__tpBound) return;
+          cell.__tpBound = true;
+          // A quote or a resize may move the active viewport too; only a real gesture leads.
+          cell.host?.addEventListener('pointerdown', () => {
+            gestureUntilRef.current.set(cell.id, Infinity);
+            programmaticUntilRef.current.delete(cell.id);
+          });
+          cell.host?.addEventListener('pointerup', () => gestureUntilRef.current.set(cell.id, Date.now() + 400));
+          cell.host?.addEventListener('pointercancel', () => gestureUntilRef.current.delete(cell.id));
+          cell.host?.addEventListener('wheel', () => gestureUntilRef.current.set(cell.id, Date.now() + 400), { passive: true });
           // 拖动/缩放时把可见范围报上去，由上层决定补哪段、删哪段。
           let lastViewport = 0;
           try {
@@ -615,8 +602,11 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               const previous = lastRangeRef.current.get(cell.id);
               const span = range.to - range.from;
               lastRangeRef.current.set(cell.id, { from: range.from, to: range.to });
+              // Reload/prepend events are data maintenance, not gestures in the active chart.
+              if (Date.now() < (seriesUpdateUntilRef.current.get(cell.id) ?? 0)) return;
               const programmaticUntil = programmaticUntilRef.current.get(cell.id) ?? 0;
-              if (timeSyncRef.current && Date.now() > programmaticUntil && previous && span > 0) {
+              const gesturing = Date.now() < (gestureUntilRef.current.get(cell.id) ?? 0);
+              if (timeSyncRef.current && gesturing && ws.active?.id === cell.id && Date.now() > programmaticUntil && previous && span > 0) {
                 const previousSpan = previous.to - previous.from;
                 if (Math.abs(previousSpan - span) < 1) {
                   const delta = range.from - previous.from;
@@ -640,8 +630,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             jumpAllTo(at, cell.id);
           };
           try {
-            // 不同渲染器暴露点击的方式不一样：优先 onClick，其次通用 on('click')。
-            const renderer = cell.chart?.rendererControl ?? cell.chart?.rendererPort;
+            // 公开的渲染器点击接口不会把拖动结束当作点击。
+            const renderer = cell.chart?.renderer;
             if (typeof renderer?.onClick === 'function') renderer.onClick(handleClick);
           } catch {
             /* 两个都没有时忽略 */
@@ -653,8 +643,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           } catch {
             /* ignore */
           }
-          if (!cell || cell.__tpBound) return;
-          cell.__tpBound = true;
           // 选择列表过滤：bigwolf 的 MACD 副图由代码配对，不从清单里让用户单独加。
           try {
             const original = cell.chart?.availableNativeIndicators?.bind(cell.chart);

@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test:local": "node --test tests/localTerminal.test.mjs tests/localHistorySync.test.mjs tests/liveHistory.test.mjs tests/backfillBars.test.mjs tests/trackHistory.test.mjs"
+    "test:local": "node --test tests/localTerminal.test.mjs tests/localHistorySync.test.mjs tests/liveHistory.test.mjs tests/backfillBars.test.mjs tests/trackHistory.test.mjs tests/viewportPan.test.mjs"
   },
   "dependencies": {
     "@luxalgo/vela": "0.9.3",

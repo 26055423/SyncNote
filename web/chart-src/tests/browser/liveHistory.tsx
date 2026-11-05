@@ -71,6 +71,7 @@ function App() {
     try {
       const chart = (window as any).__tpChart.cells()[0].chart;
       const range = chart.getVisibleRange();
+      const spacing = chart.rendererControl.renderer.coords.getViewport().barSpacing;
       let history: any = null, live: any = null;
       const offHistory = chart.on('history:complete', (event: any) => { history = event; });
       const offBar = chart.on('bar', (event: any) => { live = event; });
@@ -82,10 +83,12 @@ function App() {
       await new Promise((resolve) => requestAnimationFrame(resolve));
       offHistory(); offBar();
       const report = { renderedBars: history?.barsLoaded, expectedBars: 2091,
-        preservedView: Math.abs(range.from-after.from)<1 && Math.abs(range.to-after.to)<1,
+        beforeFrom: range.from, afterFrom: after.from,
+        preservedLeft: Math.abs(range.from-after.from)<=60000,
+        preservedZoom: spacing === chart.rendererControl.renderer.coords.getViewport().barSpacing,
         liveTime: live?.time, expectedLiveTime: bar(3091)[0]*1000, subscriptions: listeners.current.size };
-      if (report.renderedBars!==2091 || !report.preservedView || report.liveTime!==report.expectedLiveTime || !report.subscriptions) throw new Error(JSON.stringify(report));
-      setResult('通过：中间缺失的100根已进入真实图表，实时订阅继续，视窗不变。\n'+JSON.stringify(report,null,2));
+      if (report.renderedBars!==2091 || !report.preservedLeft || !report.preservedZoom || report.liveTime!==report.expectedLiveTime || !report.subscriptions) throw new Error(JSON.stringify(report));
+      setResult('通过：中间缺失的100根已进入真实图表，实时订阅继续，缩放与左侧定位保持。\n'+JSON.stringify(report,null,2));
       chart.setVisibleRange({ from: bar(2950)[0]*1000, to: bar(3091)[0]*1000 });
     } catch (error) { setResult('失败：'+String(error)); }
   };
