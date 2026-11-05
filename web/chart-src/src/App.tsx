@@ -5,7 +5,7 @@ import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
 import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from './liveHistory';
-import { readTrackPage, selectTrackSource, type TrackCatalog, type TrackPage } from './trackHistory';
+import { readTrackPage, selectTrackSource, trackProviderName, type TrackCatalog, type TrackPage } from './trackHistory';
 import { LocalTradePanel } from './LocalTradePanel';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
@@ -357,6 +357,7 @@ export default function App() {
   useEffect(() => {
     for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as keyof ReviewCharts];
     setLiveBars(null);
+    setMarketSeries(null);
     setLiveTick(null);
     trackSourceRef.current = null;
     setMarketInfo(null);
@@ -474,33 +475,8 @@ export default function App() {
     return () => { window.removeEventListener('pagehide', pause); pause(); };
   }, []);
 
-  useEffect(() => {
-    if (localConnected) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const data = await api<{ source?: string | null; tick: any; bars: Record<string, number[][]> }>('/api/live?limit=2');
-        if (!alive) return;
-        if (!trackSourceRef.current || data.source !== trackSourceRef.current) return;
-        if (data.tick) setLiveTick(data.tick);
-        const incoming = toChartBars(data.bars);
-        if (Object.keys(incoming).length) {
-          // 原地合并：LiveProvider 持有的是同一个对象引用，整体替换会让它看不到更新。
-          mergeLiveHistory(liveRef.current, incoming);
-          if (trackSourceRef.current) { setLiveBars(liveRef.current); setLiveRev((n) => n + 1); }
-          for (const listener of liveListeners.current) listener();
-        }
-      } catch {
-        /* 下一轮再试 */
-      }
-    };
-    void tick();
-    const timer = window.setInterval(tick, 3000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [mode, localConnected]);
+  // 旧 /api/live 内存缓存没有原生 source/symbol 身份，不能拿来给轨道补历史。
+  // 未连接本机时直接读取已入库轨道，避免换绑账户或品种后混入旧缓存。
 
   useEffect(() => {
     // 历史首屏始终读当前数据轨道，不受 EA 是否在线或首批缓存深度限制。
@@ -520,6 +496,8 @@ export default function App() {
         if (trackSourceRef.current && trackSourceRef.current !== source) {
           for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as BaseTimeframe];
           setLiveBars(null);
+          setMarketSeries(null);
+          setMarketInfo(null);
           setLiveTick(null);
         }
         trackSourceRef.current = source;
@@ -1298,7 +1276,7 @@ export default function App() {
                 ref={chartRef}
                 charts={liveSeries}
                 provider={liveBars ? liveProvider : undefined}
-                providerName={liveBars ? 'live' : 'market'}
+                providerName={marketInfo?.source ? trackProviderName(marketInfo.source) : 'trackpending'}
                 symbol={liveSymbol}
                 anchorMs={liveBars ? liveAnchor : marketAnchorMs}
                 savedState={null}

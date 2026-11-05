@@ -15,6 +15,16 @@ export interface TrackPage {
   last_bar?: number | null;
 }
 
+// Same page lifetime as Vela's shared BarStore. Never reuse a key for another source.
+const providerNames = new Map<string, string>();
+let nextProviderId = 0;
+/** Short display-friendly keys, with exact case-sensitive source identity in the map. */
+export function trackProviderName(source: string): string {
+  let name = providerNames.get(source);
+  if (!name) { name = 'sntrack' + (++nextProviderId).toString(36); providerNames.set(source, name); }
+  return name;
+}
+
 /** Select one stored broker track; a connected terminal must not borrow another broker. */
 export function selectTrackSource(catalog: TrackCatalog, symbol: string, server?: string): string | null {
   if (server) return catalog.sources.find((track) => track.symbol === symbol && track.server === server)?.id ?? null;

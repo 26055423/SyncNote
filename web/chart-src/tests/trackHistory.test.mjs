@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import { MultiProviderFeed, BarStore } from '@luxalgo/vela';
 
 const source = readFileSync(new URL('../src/trackHistory.ts', import.meta.url), 'utf8');
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { readTrackPage, selectTrackSource } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+const { readTrackPage, selectTrackSource, trackProviderName } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 const row = (time) => [time, 1, 3, 0.5, 2, 10];
 const page = (times) => ({ source: 'srv:A', tf: 'M1', bars: times.map(row), has_more: false, earliest: times[0], next_before: null });
 
@@ -45,4 +46,41 @@ test('wrong source, repeated cursor rows and unsorted history are rejected', asy
   await assert.rejects(readTrackPage(async () => page([1000]), request), /范围/);
   await assert.rejects(readTrackPage(async () => page([120, 60]), request), /范围/);
   await assert.rejects(readTrackPage(async () => page([60, 60]), request), /范围/);
+});
+
+test('track provider identifiers preserve exact source identity without forbidden separators', () => {
+  const sources = ['', 'srv:A', 'srv:a', 'srv:A-B', 'srv:A_B', 'srv:券商:東京', 'srv:💱', 'srv:\ud83d', 'srv:A\0B'];
+  const names = sources.map(trackProviderName);
+  assert.equal(new Set(names).size, sources.length);
+  for (let index = 0; index < sources.length; index += 1) {
+    assert.match(names[index], /^sntrack[a-z0-9]+$/);
+    assert.ok(names[index].length < 20, 'provider identifiers appear in the chart legend');
+    assert.equal(trackProviderName(sources[index]), names[index], 'remounting the same source must keep its cache key');
+  }
+});
+
+test('real Vela shared cache does not borrow bars when switching broker tracks', async () => {
+  const store = new BarStore();
+  const times = Array.from({ length: 600 }, (_, index) => 1700000000000 + index * 60000);
+  const provider = (price) => ({
+    info: () => ({ name: 'fixture', supportedTimeframes: ['1'], capabilities: { enumerate: true, stream: true } }),
+    async listSymbols() { return [{ ticker: 'XAUUSD' }]; },
+    async getBars(_symbol, _tf, range = {}) {
+      let bars = times.map((time) => ({ time, open: price, high: price + 1, low: price - 1, close: price, volume: 1 }));
+      if (range.from !== undefined) bars = bars.filter((bar) => bar.time >= range.from);
+      if (range.to !== undefined) bars = bars.filter((bar) => bar.time <= range.to);
+      return range.limit ? bars.slice(-range.limit) : bars;
+    },
+    subscribe: () => () => {},
+  });
+  // Remount separate feed instances against the same real store, as workspaces do.
+  // Identical provider keys would retain 498 old-price rows plus only two new rows.
+  for (const [sourceId, price] of [['srv:Broker-A', 100], ['srv:Broker-B', 200], ['srv:broker-b', 300]]) {
+    const name = trackProviderName(sourceId);
+    const feed = new MultiProviderFeed(store);
+    feed.registerProvider(name, provider(price));
+    const bars = await feed.load({ symbol: `${name}:XAUUSD`, timeframe: '1', bars: 500 });
+    assert.equal(bars.length, 500);
+    assert.ok(bars.every((bar) => bar.close === price && bar.open === price), `${sourceId} must not contain another broker's cached prices`);
+  }
 });

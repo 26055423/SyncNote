@@ -377,7 +377,6 @@ class Handler(BaseHTTPRequestHandler):
                         live_payload=LIVE.read(uid,max(50,min(3000,limit))) or {'bars':{},'tick':None,'updated':None,'age':None}
                         # 实时 K 线也是券商墙钟，同样换成 UTC，和复盘/历史的坐标一致。
                         feed=bars.feed_of(db,uid)
-                        live_payload['source']=feed['source'] if feed else None
                         shift=bars.source_offset(db,feed['source']) if feed else int(live_payload.get('offset') or 0)
                         if shift:
                             for rows in (live_payload.get('bars') or {}).values():
