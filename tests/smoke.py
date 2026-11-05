@@ -381,7 +381,8 @@ def main():
    ensure(first['series']['M1']['accepted']==5 and first['series']['M1']['state']=='have','closed bars are stored')
    _bars.ingest(conn,feed['source'],feed['account_key'],'XAUUSD',{'M1':{'bars':sample,'complete':True,'from_server':window_from,'to_server':window_from+240}},_now)
    ensure(conn.execute('SELECT count(*) FROM bars WHERE source=?',(feed['source'],)).fetchone()[0]==5,'replaying bars is idempotent')
-   unclosed=_bars.ingest(conn,feed['source'],feed['account_key'],'XAUUSD',{'M5':{'bars':[[int(_now),2400.0,2401.0,2399.0,2400.5,1.0]],'complete':True,'from_server':int(_now),'to_server':int(_now)}},_now)
+   forming_wall=int(_now)+_bars.source_offset(conn,feed['source'])
+   unclosed=_bars.ingest(conn,feed['source'],feed['account_key'],'XAUUSD',{'M5':{'bars':[[forming_wall,2400.0,2401.0,2399.0,2400.5,1.0]],'complete':True,'from_server':forming_wall,'to_server':forming_wall}},_now)
    ensure(unclosed['series']['M5']['accepted']==0 and unclosed['series']['M5']['state']=='pending','forming bars are rejected and not covered')
    ensure(conn.execute("SELECT count(*) FROM bar_coverage WHERE tf='M5'").fetchone()[0]==0,'forming bar range stays missing')
    after=_bars.read(conn,feed['source'],'XAUUSD','M1',window_from,window_to,_now)
@@ -427,6 +428,29 @@ def main():
    alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&limit=2&before=invalid',status=400)
    alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&before=123',status=400)
    anon.request('/api/market/bars?tf=M1&from=1&to=2',status=401)
+   # 回填使用券商墙钟判断闭盘；少返回的前缀/内部缺口不伪记完整覆盖。
+   upload_now=int(time.time());wall_now=upload_now+original_offset
+   recent_start=(wall_now//60-15)*60
+   recent_rows=[[recent_start+i*60,2400.0,2401.0,2399.0,2400.5,7.0] for i in (8,9,12)]
+   recent_rows.append([wall_now+3600,2400.0,2401.0,2399.0,2400.5,7.0])
+   backfill={'website_user_id':a['id'],'account':mt5_account,'server':server_name,'account_key':history_key,
+             'symbol':'XAUUSD','tf':'M1','from_server':recent_start,'to_server':recent_start+15*60,
+             'bars':recent_rows,'complete':True}
+   uploaded=alice.request('/api/market/backfill',backfill)
+   ensure(uploaded['summary']['accepted']==3 and uploaded['summary']['dropped']==1,'broker-wall recent bars accepted while future bar stays unclosed')
+   ensure(uploaded['summary']['complete'] is False,'unproven backfill range never trusts a caller complete flag')
+   with sqlite3.connect(db) as verify_db:
+    verify_db.row_factory=sqlite3.Row
+    stored=verify_db.execute('SELECT t,updated FROM bars WHERE source=? AND symbol=? AND tf=? AND t>=? ORDER BY t',
+                            (feed['source'],'XAUUSD','M1',recent_start)).fetchall()
+    ensure([row['t'] for row in stored]==[row[0] for row in recent_rows[:3]],'only real closed backfill rows are stored')
+    ensure(all(abs(row['updated']-time.time())<30 for row in stored),'backfill audit time stays UTC instead of broker wall time')
+    recent_missing=_bars.missing(verify_db,feed['source'],'XAUUSD','M1',recent_start,recent_start+15*60)
+    ensure(all(any(begin<=stamp<=end for begin,end in recent_missing) for stamp in (recent_start,recent_start+11*60)),
+           'missing returned prefix and internal gap remain eligible for later backfill')
+   empty_backfill={**backfill,'from_server':recent_start-3600,'to_server':recent_start-3000,'bars':[]}
+   empty_result=alice.request('/api/market/backfill',empty_backfill)
+   ensure(empty_result['summary']['state']=='pending' and not empty_result['summary']['complete'],'an empty unproven backfill is not declared a known market closure')
    # ---- 两个源码包：同一套打包器，SyncNote 必须在打包时就被证明没有 DLL / 交易 / socket ----
    for path,product in (('/downloads/syncnote.zip','SyncNote'),('/downloads/synctrade.zip','SyncTrade')):
     with zipfile.ZipFile(io.BytesIO(anon.request(path))) as archive:

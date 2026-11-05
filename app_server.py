@@ -803,7 +803,9 @@ class Handler(BaseHTTPRequestHandler):
                     if not tf:raise Error('周期不正确')
                     if not isinstance(rows,list):raise Error('K 线数据格式不正确')
                     begin,end=data.get('from_server'),data.get('to_server')
-                    series={tf:{'bars':rows,'complete':True,'from_server':begin,'to_server':end}}
+                    # 当前 EA 回传原请求范围，CopyRates 却可能只给出其中一部分。
+                    # 不能把整段请求误记为 have/empty；只按实际已收盘行登记覆盖。
+                    series={tf:{'bars':rows,'complete':False,'from_server':begin,'to_server':end}}
                     try:summary=bars.ingest(db,bars.source_for(server),key,symbol,series,now)
                     except (bars.BarsError,ValueError,TypeError) as e:raise Error('回填入库失败：'+str(e))
                     result={'ok':True,'tf':tf,'summary':(summary.get('series') or {}).get(tf) if isinstance(summary,dict) else None}

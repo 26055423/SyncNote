@@ -5,7 +5,7 @@ import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
 import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from './liveHistory';
-import { readTrackPage, selectTrackSource, trackProviderName, type TrackCatalog, type TrackPage } from './trackHistory';
+import { readTrackPage, readTrackHead, selectTrackSource, trackProviderName, type TrackCatalog, type TrackPage } from './trackHistory';
 import { LocalTradePanel } from './LocalTradePanel';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
@@ -230,6 +230,7 @@ export default function App() {
   const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
   const [marketInfo, setMarketInfo] = useState<{ source: string; server: string; last: number | null; tfs?: TrackCatalog['sources'][number]['tfs'] } | null>(null);
   const trackSourceRef = useRef<string | null>(null);
+  const storedTipsRef = useRef<Partial<Record<BaseTimeframe, number>>>({});
   const liveRef = useRef<ReviewCharts>({});
   const liveListeners = useRef(new Set<() => void>());
   const liveSymbol = localConnected ? local.symbol : 'XAUUSD';
@@ -360,6 +361,7 @@ export default function App() {
     setMarketSeries(null);
     setLiveTick(null);
     trackSourceRef.current = null;
+    storedTipsRef.current = {};
     setMarketInfo(null);
   }, [liveSymbol, board?.user.id]);
 
@@ -449,8 +451,7 @@ export default function App() {
     backfillBars.bindUser(board?.user.id || '');
   }, [board?.user.id]);
 
-  // 连上 EA + 图表就绪 → 自动进入行情回填首填(阻塞式初始化,只锁读轨道功能)。
-  // coverage 已满会很快到 ready;同券商复用别人填过的数据,新用户几秒解锁。
+  // 连上 EA 后只在后台补近7天缺口，不锁轨道图，也不恢复旧的多年回溯。
   // error 态不在此自动重试(否则 error→initializing→error 无退避空转);重连会话变化会被
   // backfillBars 内部 stop 回 idle,那时再由本 effect 重启。
   useEffect(() => {
@@ -459,12 +460,12 @@ export default function App() {
     void backfillBars.start();
   }, [board?.user.id, localConnected, local.history_ready, local.features, backfill.phase]);
 
-  // 个人中心勾了「自动续传」后:连上 EA、图表就绪、且行情首填已完成(ready/partial_ready)才启动,
+  // 个人中心勾了「自动续传」后：近期首轮结束或用户暂停补齐后才启动，
   // 避免与回填争用本机历史读通道(localTerminal 串行互斥)。已在同步中则不重复开。
   useEffect(() => {
     if (!board?.user.auto_history_sync || !localConnected || !local.history_ready) return;
     if (!local.features.includes('history')) return;
-    if (backfill.phase !== 'ready' && backfill.phase !== 'partial_ready') return;
+    if (backfill.phase !== 'ready' && backfill.phase !== 'partial_ready' && backfill.phase !== 'paused') return;
     if (localHistorySync.getSnapshot().enabled) return;
     void localHistorySync.start().catch(() => undefined);
   }, [board?.user.auto_history_sync, localConnected, local.history_ready, local.features, backfill.phase]);
@@ -499,6 +500,7 @@ export default function App() {
           setMarketSeries(null);
           setMarketInfo(null);
           setLiveTick(null);
+          storedTipsRef.current = {};
         }
         trackSourceRef.current = source;
         const pages = await Promise.all(REVIEW_BASE_TFS.map((base) => readTrackPage((path) => api<TrackPage>(path), {
@@ -506,7 +508,11 @@ export default function App() {
         })));
         if (!alive || trackSourceRef.current !== source) return;
         const out: ReviewCharts = {};
-        for (const page of pages) if (page.bars.length) out[page.tf as BaseTimeframe] = page.bars;
+        for (const page of pages) if (page.bars.length) {
+          const base = page.tf as BaseTimeframe;
+          out[base] = page.bars;
+          storedTipsRef.current[base] = page.bars.at(-1)![0];
+        }
         mergeLiveHistory(liveRef.current, out);
         setMarketSeries(Object.keys(out).length ? out : null);
         setMarketInfo({ source, server: pages[0]?.feed?.server ?? '', last: Math.max(0, ...pages.map((page) => page.last_bar ?? 0)) || null,
@@ -521,6 +527,73 @@ export default function App() {
       alive = false;
     };
   }, [mode, localConnected, local.server, local.epoch, liveSymbol, board?.user.id]);
+
+  // 补采入库后刷新轨道尾部。通常每周期只取两根，发现落后一段才拉近期窗口补齐。
+  const refreshTrackRef = useRef<((forceRecent?: boolean) => void) | null>(null);
+  useEffect(() => {
+    const source = marketInfo?.source;
+    if (mode !== 'live' || !source) return;
+    let alive = true;
+    let refreshing = false, pendingRecent = false;
+    let catalogAt = 0;
+    const refresh = async (forceRecent = false) => {
+      if (refreshing) { pendingRecent ||= forceRecent; return; }
+      refreshing = true;
+      try {
+        const pages = await Promise.all(REVIEW_BASE_TFS.map((base) => readTrackHead((path) => api<TrackPage>(path), {
+          source, symbol: liveSymbol, base, period: TF_SECONDS[base], storedTip: storedTipsRef.current[base],
+          forceRecent,
+        })));
+        if (!alive || trackSourceRef.current !== source) return;
+        const changed: BaseTimeframe[] = [];
+        for (const page of pages) {
+          if (!page.bars.length) continue;
+          const base = page.tf as BaseTimeframe;
+          const before = liveRef.current[base]?.length ?? 0;
+          mergeLiveHistory(liveRef.current, { [base]: page.bars });
+          storedTipsRef.current[base] = page.bars.at(-1)![0];
+          if (forceRecent || (liveRef.current[base]?.length ?? 0) > before) changed.push(base);
+        }
+        await Promise.all(changed.map((base) => chartRef.current?.applySeries(base, liveRef.current[base]!, undefined, true)));
+        if (!alive || trackSourceRef.current !== source) return;
+        setMarketInfo((info) => info?.source === source ? { ...info,
+          last: Math.max(info.last ?? 0, ...pages.map((page) => page.last_bar ?? 0)) || null } : info);
+        setLiveRev((n) => n + 1);
+        for (const listener of liveListeners.current) listener();
+        if (forceRecent || Date.now() - catalogAt > 60000) {
+          const catalog = await api<TrackCatalog>('/api/data/sources');
+          if (!alive || trackSourceRef.current !== source) return;
+          catalogAt = Date.now();
+          const entry = catalog.sources.find((track) => track.id === source && track.symbol === liveSymbol);
+          if (entry) setMarketInfo((info) => info?.source === source ? { ...info, tfs: entry.tfs } : info);
+        }
+      } catch (error) { console.warn('[track-head] 轨道近期数据刷新失败，稍后重试', error); }
+      finally {
+        refreshing = false;
+        if (pendingRecent && alive) { pendingRecent = false; void refresh(true); }
+      }
+    };
+    refreshTrackRef.current = (forceRecent) => { void refresh(forceRecent); };
+    const initial = window.setTimeout(() => void refresh(), 700);
+    const timer = window.setInterval(() => void refresh(), 15000);
+    return () => { alive = false; refreshTrackRef.current = null; window.clearTimeout(initial); window.clearInterval(timer); };
+  }, [mode, marketInfo?.source, liveSymbol]);
+  const previousBackfillPhase = useRef(backfill.phase);
+  const previousRepairUpdated = useRef(backfill.repairUpdated);
+  const forceTrackRefreshRef = useRef(false);
+  useEffect(() => {
+    const completed = previousBackfillPhase.current === 'initializing' && (backfill.phase === 'ready' || backfill.phase === 'partial_ready');
+    const repaired = backfill.repairUpdated !== null && backfill.repairUpdated !== previousRepairUpdated.current;
+    previousBackfillPhase.current = backfill.phase;
+    previousRepairUpdated.current = backfill.repairUpdated;
+    forceTrackRefreshRef.current ||= completed || repaired;
+    const timer = window.setTimeout(() => {
+      const forceRecent = forceTrackRefreshRef.current;
+      forceTrackRefreshRef.current = false;
+      refreshTrackRef.current?.(forceRecent);
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [backfill.phase, backfill.lastUpdated, backfill.repairUpdated]);
 
   // 邀请链接沿用旧地址，入群后直接进入聊天中的对应群会话。
   useEffect(() => {
@@ -1247,25 +1320,27 @@ export default function App() {
             </span>
           </div>
 
-          {backfill.locked ? (
-            <div className="context-banner" role="status" aria-live="polite">
-              <b>正在准备行情数据</b>
-              <span>
-                {backfill.message || '正在确保行情数据完整,复盘功能稍后可用…'}
-                {backfill.segments ? ` · 已处理 ${backfill.segments} 段` : ''}
-                {backfill.reachedServer ? ` · 已回溯到 ${new Date(backfill.reachedServer * 1000).toISOString().slice(0, 10)}` : ''}
-              </span>
-            </div>
-          ) : entry?.read_only ? (
+          {mode === 'review' && entry?.read_only ? (
             <div className="context-banner" role="status">
               <b>只读回放</b>
               <span>{entry.owner.name} 的复盘 · 画线与笔记不可修改</span>
               {myHistory.length ? <button type="button" className="link" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>回到我的最近一笔</button> : null}
             </div>
-          ) : backfill.phase === 'partial_ready' ? (
-            <div className="context-banner" role="status">
-              <b>本轮采集已结束</b>
-              <span>轨道中已有的历史可直接查看；新增历史入库后会继续提供。</span>
+          ) : backfill.phase === 'initializing' ? (
+            <div className="context-banner sync-status" role="status" aria-live="polite">
+              <b>后台补齐近期行情</b>
+              <span>只检查近7天缺口，可继续看图；交易指令优先。已写入 {backfill.segments} 段。</span>
+              <button type="button" className="link" onClick={() => backfillBars.pause()}>暂停补齐</button>
+            </div>
+          ) : backfill.phase === 'paused' ? (
+            <div className="context-banner sync-status" role="status">
+              <b>近期补齐已暂停</b><span>轨道中已有的历史仍可查看。</span>
+              <button type="button" className="link" onClick={() => void backfillBars.resume()}>继续补齐</button>
+            </div>
+          ) : backfill.phase === 'error' || backfill.phase === 'partial_ready' ? (
+            <div className="context-banner sync-status" role="status">
+              <b>近期补齐待重试</b><span>{backfill.message}</span>
+              <button type="button" className="link" onClick={() => void backfillBars.start()}>重试近期补齐</button>
             </div>
           ) : null}
 

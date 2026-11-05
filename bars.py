@@ -305,6 +305,8 @@ def _apply_coverage(db, source, symbol, tf, start, end, state, now):
 def ingest(db, source, account_key_value, symbol, series, now=None):
   """写入一批 K 线。series 的键是周期别名（M1/1m…），值是 {bars, complete, error, from_server, to_server}。"""
   now = time.time() if now is None else now
+  # 输入 K 线是券商墙钟；只有闭盘判断使用墙钟当前时间，审计 updated 仍为 UTC。
+  wall_now = now + source_offset(db, source)
   if not isinstance(series, dict) or not series:
     raise BarsError('没有可入库的 K 线')
   symbol = str(symbol or '').strip()
@@ -317,7 +319,7 @@ def ingest(db, source, account_key_value, symbol, series, now=None):
       continue
     if not isinstance(payload, dict):
       raise BarsError('K 线分段格式不正确：' + str(name))
-    rows, dropped = _clean_bars(tf, payload.get('bars') or [], now)
+    rows, dropped = _clean_bars(tf, payload.get('bars') or [], wall_now)
     error = payload.get('error')
     period = tf_seconds(tf)
     accepted = 0
@@ -336,7 +338,7 @@ def ingest(db, source, account_key_value, symbol, series, now=None):
     if isinstance(begin, int) and isinstance(end, int) and end >= begin:
       # 未收盘的部分不算“扫过”：被裁到最后一根已收盘 bar，避免把未来的一段标成
       # empty/have —— 那会让真正收盘后的那根永远补不回来。
-      closed_end = min(end, now - period)
+      closed_end = min(end, wall_now - period)
       if begin > closed_end:
         summary[tf] = {'accepted': accepted, 'dropped': dropped, 'state': 'pending',
                        'from_server': begin, 'to_server': end, 'complete': bool(complete)}
@@ -352,18 +354,31 @@ def ingest(db, source, account_key_value, symbol, series, now=None):
         if complete:
           _apply_coverage(db, source, symbol, tf, begin, closed_end, 'have' if accepted else 'empty', now)
         elif accepted:
-          _apply_coverage(db, source, symbol, tf, rows[0][0], min(rows[-1][0], closed_end), 'have', now)
-        state = 'have' if accepted else 'empty'
+          # 未证明请求完整时，只登记真正收到的连续 K 线，不吞掉缺失前缀或内部缺口。
+          run_start = last = None
+          for row in rows:
+            stamp = row[0]
+            if stamp < begin or stamp > closed_end:
+              continue
+            if run_start is None:
+              run_start = stamp
+            elif stamp - last > period:
+              _apply_coverage(db, source, symbol, tf, run_start, last, 'have', now)
+              run_start = stamp
+            last = stamp
+          if run_start is not None:
+            _apply_coverage(db, source, symbol, tf, run_start, last, 'have', now)
+        state = 'have' if accepted else 'empty' if complete else 'pending'
         if account_key_value:
           db.execute(
             'INSERT INTO bar_attempt(account_key,source,symbol,tf,from_t,to_t,state,attempts,updated) VALUES(?,?,?,?,?,?,?,1,?)'
             ' ON CONFLICT(account_key,source,symbol,tf,from_t) DO UPDATE SET attempts=bar_attempt.attempts+1,state=excluded.state,updated=excluded.updated',
-            (account_key_value, source, symbol, tf, begin, end, 'ok', now),
+            (account_key_value, source, symbol, tf, begin, end, 'ok' if complete else 'partial', now),
           )
       summary[tf] = {'accepted': accepted, 'dropped': dropped, 'state': state,
                      'from_server': begin, 'to_server': end, 'complete': bool(complete)}
     else:
-      summary[tf] = {'accepted': accepted, 'dropped': dropped, 'state': 'have' if accepted else 'empty',
+      summary[tf] = {'accepted': accepted, 'dropped': dropped, 'state': 'have' if accepted else 'empty' if complete else 'pending',
                      'from_server': None, 'to_server': None, 'complete': bool(complete)}
   if not summary:
     raise BarsError('没有可识别的周期')

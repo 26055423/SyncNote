@@ -6,7 +6,7 @@ import { MultiProviderFeed, BarStore } from '@luxalgo/vela';
 
 const source = readFileSync(new URL('../src/trackHistory.ts', import.meta.url), 'utf8');
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { readTrackPage, selectTrackSource, trackProviderName } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+const { readTrackPage, readTrackHead, selectTrackSource, trackProviderName } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 const row = (time) => [time, 1, 3, 0.5, 2, 10];
 const page = (times) => ({ source: 'srv:A', tf: 'M1', bars: times.map(row), has_more: false, earliest: times[0], next_before: null });
 
@@ -38,6 +38,25 @@ test('personal and connected-broker tracks never silently fall back to another b
   assert.equal(selectTrackSource(catalog, 'XAUUSD'), 'srv:personal-empty');
   assert.equal(selectTrackSource(catalog, 'XAUUSD', 'A'), 'srv:A');
   assert.equal(selectTrackSource(catalog, 'XAUUSD', 'B'), null);
+});
+
+test('a stale stored tip refreshes the missing recent candles instead of retaining only the live bar', async () => {
+  const limits = [];
+  const result = await readTrackHead(async (url) => {
+    const limit = Number(new URL('https://test.local'+url).searchParams.get('limit')); limits.push(limit);
+    return limit === 2 ? page([1060, 1120]) : page([180, 240, 300, 1060, 1120]);
+  }, { source: 'srv:A', symbol: 'XAUUSD', base: 'M1', period: 60, storedTip: 120 });
+  assert.deepEqual(limits, [2, 10082]);
+  assert.deepEqual(result.bars.map((bar) => bar[0]), [180, 240, 300, 1060, 1120]);
+});
+
+test('normal stored increments keep the head request small and stay on the same track', async () => {
+  const requests = [];
+  const result = await readTrackHead(async (url) => { requests.push(url); return page([120, 180]); },
+    { source: 'srv:A', symbol: 'XAUUSD', base: 'M1', period: 60, storedTip: 120 });
+  assert.equal(requests.length, 1);
+  assert.equal(new URL('https://test.local'+requests[0]).searchParams.get('limit'), '2');
+  assert.equal(result.bars.at(-1)[0], 180);
 });
 
 test('wrong source, repeated cursor rows and unsorted history are rejected', async () => {

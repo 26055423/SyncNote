@@ -73,7 +73,7 @@ export interface ChartHandle {
   /** 把收藏的工具同步给所有格子的原生工具栏。 */
   setFavorites(types: string[]): void;
   /** 用新的一段 K 线替换某个基础周期，并按各格子的周期重绘（保持视窗）。 */
-  applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string): Promise<void>;
+  applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string, refresh?: boolean): Promise<void>;
 }
 
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
@@ -126,6 +126,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   viewportRef.current = props.onViewport;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<any>(null);
+  const seriesUpdateUntilRef = useRef(new Map<string, number>());
   const anchorRef = useRef(anchorMs);
   const favoritesRef = useRef<string[]>(props.favorites ?? []);
   const markIdsRef = useRef<Set<string>>(new Set());
@@ -310,7 +311,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         }
       }
     },
-    async applySeries(base, bars, onlyCellId) {
+    async applySeries(base, bars, onlyCellId, refresh = false) {
       dataRef.current = { ...dataRef.current, [base]: bars };
       const updates: Promise<void>[] = [];
       for (const cell of wsRef.current?.cells?.() ?? []) {
@@ -327,15 +328,20 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         const chart = cell.chart;
         const range = chart.getVisibleRange?.();
         updates.push((async () => {
-          // Vela 0.9.3 的图表没有 setBars；那是 renderer 的底层接口。
-          // 实时图只扩深度，不能传 data（离线 data 会停止实时订阅）。
-          if (props.provider) {
-            await chart.setMarket({ bars: Math.max(rendered.length, (chart.market?.bars ?? 0) + 1), visibleRange: range });
-          } else {
-            await chart.setMarket({ data: rendered.map(toOhlcv), visibleRange: range });
-          }
-          await chart.historyComplete();
-          if (range) chart.setVisibleRange(range);
+          seriesUpdateUntilRef.current.set(cell.id, Infinity);
+          try {
+            // Vela 0.9.3 的图表没有 setBars；那是 renderer 的底层接口。
+            // 非空离线 data 会停止实时订阅，实时图通常只扩深度。
+            if (props.provider) {
+              // 空 data 强制从 provider 重载中间缺口，保持实时订阅。
+              await chart.setMarket({ ...(refresh ? { data: [] } : {}),
+                bars: Math.max(rendered.length + (refresh ? 2 : 0), (chart.market?.bars ?? 0) + (refresh ? 2 : 1)), visibleRange: range });
+            } else {
+              await chart.setMarket({ data: rendered.map(toOhlcv), visibleRange: range });
+            }
+            await chart.historyComplete();
+            if (range) chart.setVisibleRange(range);
+          } finally { seriesUpdateUntilRef.current.set(cell.id, Date.now() + 100); }
         })());
       }
       await Promise.all(updates);
@@ -508,6 +514,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         onSyncs?.(stateWithTimeSync(ws));
 
         const focusOne = (cell: any) => {
+          if (Date.now() < (seriesUpdateUntilRef.current.get(cell.id) ?? 0)) return;
           const tf = cell?.chart?.market?.timeframe ?? '15';
           const minutes = timeframeMinutes(tf) ?? 15;
           const width = minutes * 60_000;

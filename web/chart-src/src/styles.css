@@ -1234,3 +1234,4 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .data-chip.is-live { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-bg); }
 .data-chip.is-wait { border-color: var(--warn-line); color: var(--warn-ink); background: var(--warn-bg); }
 .data-chip.is-review { border-color: var(--line-strong); color: var(--text); }
+.context-banner.sync-status { background: var(--panel); border-color: var(--line); color: var(--text); }

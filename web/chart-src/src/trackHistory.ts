@@ -48,3 +48,15 @@ export async function readTrackPage(
   }
   return page;
 }
+
+/** Refresh only the stored tip normally; fetch the recent week if the old tip fell behind. */
+export async function readTrackHead(
+  read: (path: string) => Promise<TrackPage>,
+  request: { source: string; symbol: string; base: BaseTimeframe; period: number; storedTip?: number; forceRecent?: boolean },
+): Promise<TrackPage> {
+  const head = await readTrackPage(read, { ...request, limit: 2 });
+  if (request.forceRecent || (request.storedTip !== undefined && head.bars[0]?.[0] > request.storedTip + request.period)) {
+    return readTrackPage(read, { ...request, limit: Math.min(20000, Math.ceil(7 * 86400 / request.period) + 2) });
+  }
+  return head;
+}
