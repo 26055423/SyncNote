@@ -110,6 +110,23 @@ def history_for(db,person):
  clock=db.execute('SELECT * FROM broker_clocks WHERE person=?',(person,)).fetchone()
  rows=[json.loads(row[0]) for row in db.execute('SELECT payload FROM trades WHERE person=?',(person,))]
  return [utc_trade(row,clock) for row in rows if row.get('history_status') not in ('invalidated','context_unavailable','context_unverified')]
+
+def history_snapshot(db,person,live_data=None):
+ """Account freshness and persisted trade-history acknowledgements are separate clocks."""
+ history=history_for(db,person)
+ synced=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=?',(person,)).fetchone()[0]
+ snap=db.execute('SELECT payload,updated FROM snapshots WHERE person=?',(person,)).fetchone()
+ if live_data:
+  data=dict(live_data);updated=time.time()
+ elif snap:
+  data=json.loads(snap['payload']);updated=snap['updated']
+ elif history or synced is not None:
+  data={'source':'history-only','online':False,'positions':[]}
+  updated=synced if synced is not None else max((t.get('closed') or 0 for t in history),default=0)
+ else:return None
+ # A hub keeps only its latest 500 trades. It must not hide the full persisted journal.
+ data['history']=history
+ return {'data':data,'updated':updated,'history_synced_at':synced}
 def review_bars(db,person,trade,data,now):
  """复盘上传顺带回填 K 线（P0 不新增 EA 端点）。回填失败不影响复盘本身。"""
  source=bars.source_of_trade(trade or {})
@@ -615,17 +632,9 @@ class Handler(BaseHTTPRequestHandler):
                             can=r['id']==uid or bool(r['share_data']);can_review=can and (r['id']==uid or bool(r['share_reviews']))
                             members.append({'id':r['id'],'name':r['nickname'],'username':r['username'],'avatar':r['avatar'],'can_view':can,'can_review':can_review,'reviewed':journal.reviewed(db,r['id']) if can else []})
                             if not can:continue
-                            allowed.append(r['id']);snap=db.execute('SELECT * FROM snapshots WHERE person=?',(r['id'],)).fetchone()
-                            live=HUB.live(r['id'])
-                            if live:
-                                # EA 直连服务器时，内存里的实时状态优先于落库快照。
-                                live['history']=live.get('history') or history_for(db,r['id'])
-                                snapshots[r['id']]={'data':live,'updated':time.time()}
-                            elif snap:
-                                payload=json.loads(snap['payload']);payload['history']=history_for(db,r['id']);snapshots[r['id']]={'data':payload,'updated':snap['updated']}
-                            else:
-                                history=history_for(db,r['id'])
-                                if history:snapshots[r['id']]={'data':{'history':history,'source':'history-only','online':False,'positions':[]},'updated':max((t.get('closed') or 0 for t in history),default=0)}
+                            allowed.append(r['id'])
+                            snapshot=history_snapshot(db,r['id'],HUB.live(r['id']))
+                            if snapshot:snapshots[r['id']]=snapshot
                         marks=','.join('?' for _ in allowed);events=[dict(r) for r in db.execute(f'SELECT * FROM events WHERE person IN ({marks}) ORDER BY id DESC LIMIT 100',allowed)]
                         mutual=[r['id'] for r in following];chat=[uid]+mutual;cm=','.join('?' for _ in chat)
                         messages=[dict(r) for r in db.execute(f'SELECT * FROM messages WHERE person IN ({cm}) ORDER BY id DESC LIMIT 100',chat)][::-1];names={r['id']:r['nickname'] for r in [u]+following}

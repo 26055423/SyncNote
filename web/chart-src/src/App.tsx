@@ -170,9 +170,9 @@ export default function App() {
     const raw = params.get('share');
     return raw && /^\d+$/.test(raw) ? Number(raw) : null;
   });
-  const [tab, setTab] = useState<Tab>(() => (params.get('ticket') || params.get('share') ? 'review' : 'trade'));
+  const [tab, setTab] = useState<Tab>(() => (params.get('panel') === 'sync' ? 'trade' : params.get('ticket') || params.get('share') ? 'review' : 'trade'));
   const [error, setError] = useState('');
-  const [railOpen, setRailOpen] = useState(() => window.innerWidth > 900);
+  const [railOpen, setRailOpen] = useState(() => params.get('panel') === 'sync' || window.innerWidth > 900);
   const [feedFilter, setFeedFilter] = useState<'all' | 'share' | 'chat' | 'unread'>('all');
   const [feedLimit, setFeedLimit] = useState(80);
   const [chatReadAt, setChatReadAt] = useState<number>(() => {
@@ -465,7 +465,7 @@ export default function App() {
   useEffect(() => {
     if (!board?.user.auto_history_sync || !localConnected || !local.history_ready) return;
     if (!local.features.includes('history')) return;
-    if (backfill.phase !== 'ready' && backfill.phase !== 'partial_ready' && backfill.phase !== 'paused') return;
+    if (backfill.phase !== 'ready' && backfill.phase !== 'partial_ready' && backfill.phase !== 'paused' && backfill.phase !== 'error') return;
     if (localHistorySync.getSnapshot().enabled) return;
     void localHistorySync.start().catch(() => undefined);
   }, [board?.user.auto_history_sync, localConnected, local.history_ready, local.features, backfill.phase]);

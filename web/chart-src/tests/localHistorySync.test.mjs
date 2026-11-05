@@ -108,12 +108,13 @@ test('history consent starts off, and import contains raw history without accoun
 });
 
 test('a failed HTTP upload preserves the exact batch for explicit safe retry and never advances the cursor', async () => {
-  const { sync, uploads, reads, stored } = fixture({ upload: (body, count) => {
+  const { sync, uploads, reads, stored, scheduled } = fixture({ upload: (body, count) => {
     if (count === 1) throw new Error('network');
     return { ok: true, batch_id: body.batch_id, account_key: body.account_key };
   } });
   await sync.start();
   assert.equal(sync.getSnapshot().status, 'error');
+  assert.equal(scheduled.size, 0, 'failed HTTP writes are never automatically retried');
   unconfirmedPlan(stored);
   sync.retry();
   await new Promise((resolve) => setImmediate(resolve));
@@ -121,6 +122,69 @@ test('a failed HTTP upload preserves the exact batch for explicit safe retry and
   assert.strictEqual(uploads[0].body, uploads[1].body);
   assert.equal(reads.length, 1);
   assert.equal(stored.size, 1);
+});
+
+test('a locally busy read waits and retries the identical fixed range without advancing or writing', async () => {
+  const subject = fixture({ read: (page, count) => {
+    if (count === 1) throw Object.assign(new Error('local read already in progress'), { code: 'history_read_busy' });
+    return page;
+  } });
+  await subject.sync.start();
+  assert.equal(subject.sync.getSnapshot().enabled, true);
+  assert.equal(subject.sync.getSnapshot().status, 'reading');
+  assert.equal(subject.uploads.length, 0);
+  const before = JSON.stringify(unconfirmedPlan(subject.stored));
+  assert.deepEqual([...subject.scheduled.values()].map((timer) => timer.ms), [1500]);
+  subject.advance(1500);await subject.wake();
+  assert.deepEqual(subject.reads[1].range, subject.reads[0].range);
+  assert.equal(subject.reads[1].cursor, subject.reads[0].cursor);
+  assert.equal(subject.uploads.length, 1);
+  assert.equal(JSON.parse(before).saved_at, 0);
+  assert.equal(subject.sync.getSnapshot().status, 'idle');
+});
+
+test('busy between pages retains the acknowledged cursor and does not upload that page twice', async () => {
+  const subject = fixture({ read: (page, count) => {
+    if (count === 1) return { ...page, has_more: true, next_cursor: 'acknowledged-first-page', through_server: page.range.from_server+60 };
+    if (count === 2) throw Object.assign(new Error('local read already in progress'), { code: 'history_read_busy' });
+    return page;
+  } });
+  await subject.sync.start();
+  assert.equal(subject.uploads.length, 1);
+  const checkpoint = JSON.parse([...subject.stored.values()][0]);
+  assert.equal(checkpoint.cursor, 'acknowledged-first-page');
+  assert.equal(checkpoint.window_complete, false);
+  assert.equal(subject.sync.getSnapshot().status, 'reading');
+  await subject.wake();
+  assert.deepEqual(subject.reads[2].range, subject.reads[1].range);
+  assert.equal(subject.reads[2].cursor, 'acknowledged-first-page');
+  assert.equal(subject.uploads.length, 2);
+  assert.notEqual(subject.uploads[0].body.batch_id, subject.uploads[1].body.batch_id);
+});
+
+test('read timeouts and busy-like HTTP write failures remain errors without automatic retries', async () => {
+  const timedOut = fixture({ read: () => { throw new Error('HISTORY_TIMEOUT'); } });
+  await timedOut.sync.start();
+  assert.equal(timedOut.sync.getSnapshot().status, 'error');
+  assert.equal(timedOut.scheduled.size, 0);
+  assert.equal(timedOut.uploads.length, 0);
+  const write = fixture({ upload: () => { throw Object.assign(new Error('failed HTTP write'), { code: 'history_read_busy' }); } });
+  await write.sync.start();
+  assert.equal(write.sync.getSnapshot().status, 'error');
+  assert.equal(write.scheduled.size, 0);
+  assert.equal(write.uploads.length, 1);
+  unconfirmedPlan(write.stored);
+});
+
+test('stopping a deferred busy read clears its timer and ignores a late timer callback', async () => {
+  const subject = fixture({ read: () => { throw Object.assign(new Error('local read already in progress'), { code: 'history_read_busy' }); } });
+  await subject.sync.start();
+  const callback = [...subject.scheduled.values()][0].callback;
+  subject.sync.stop();
+  assert.equal(subject.scheduled.size, 0);
+  callback();await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(subject.reads.length, 1);
+  assert.equal(subject.uploads.length, 0);
 });
 
 test('wrong ACK identity or batch does not persist any progress', async () => {
@@ -332,4 +396,27 @@ test('another account review is skipped, and incomplete bars are explicitly mark
   await missing.sync.start();
   assert.equal(missing.reviewUploads[0].charts.M1.length, 0);
   assert.equal(missing.reviewUploads[0].errors.M1, 'history_unavailable');
+});
+
+test('a busy review read retains its exact task and never uploads fabricated missing-history errors', async () => {
+  const job = { ticket: 'trade-1', symbol: 'EURUSD', opened_server: 1700000000, closed_server: 1700000300,
+    account: '1001', server: 'Demo-Server', source_account_key: ACCOUNT_KEY };
+  const subject = fixture({ job, reviewRead: (page, count) => {
+    if (count === 2) throw Object.assign(new Error('local read already in progress'), { code: 'history_read_busy' });
+    return page;
+  } });
+  await subject.sync.start();
+  assert.equal(subject.uploads.length, 1, 'history page has already been ACKed');
+  assert.equal(subject.reviewUploads.length, 0, 'busy is not missing history');
+  assert.equal(subject.sync.getSnapshot().status, 'reading');
+  assert.deepEqual([...subject.scheduled.values()].map((timer) => timer.ms), [1500]);
+  const firstM1 = subject.reviewReads[0];
+  await subject.wake();
+  assert.equal(subject.uploads.length, 1, 'deferred review must not re-upload the history batch');
+  assert.equal(subject.reviewUploads.length, 1);
+  assert.equal(subject.reviewUploads[0].ticket, job.ticket);
+  assert.deepEqual(subject.reviewReads[2].range, firstM1.range);
+  assert.ok(Object.values(subject.reviewUploads[0].errors).every((error) => error === ''));
+  assert.equal(subject.sync.getSnapshot().status, 'idle');
+  assert.equal([...subject.scheduled.values()][0].ms, 30000);
 });

@@ -453,6 +453,22 @@ function olderHistoryFixture() {
   return { ...setup, socket, respond };
 }
 
+test('a local read conflict returns an explicit busy code before sending another frame', async () => {
+  for (const kind of ['history', 'bars']) {
+    const { client, socket } = olderHistoryFixture();
+    const controller = new AbortController();
+    const range = { from_server: 1700000000, to_server: 1700100000 };
+    const pending = kind === 'history' ? client.requestHistoryPage(range, '', controller.signal)
+      : client.requestReviewBars('EURUSD', '1m', range, controller.signal);
+    const before = socket.sent.length;
+    const blocked = new AbortController();
+    await assert.rejects(client.requestHistoryPage(range, '', blocked.signal), (error) => error.code === 'history_read_busy');
+    await assert.rejects(client.requestReviewBars('EURUSD', '1m', range, blocked.signal), (error) => error.code === 'history_read_busy');
+    assert.equal(socket.sent.length, before, 'no request or trade frame was sent for either rejected read');
+    controller.abort();await assert.rejects(pending, /取消/);
+  }
+});
+
 test('older live bars cross an empty closure window and retain a one-bar UTC page', async () => {
   const { client, socket, respond } = olderHistoryFixture();
   const read = client.loadOlderBars('1m', 1700000000);

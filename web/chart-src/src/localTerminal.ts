@@ -416,7 +416,7 @@ export class LocalTerminal {
     if (this.state.phase !== 'connected' || !this.state.features.includes('history')) return Promise.reject(new Error('当前 EA 不支持笔记历史同步，请使用 SyncTrade（SyncNote Pro）或独立 SyncNote EA。'));
     if (!this.state.history_ready) return Promise.reject(new Error('请等待图表初始化完成后再同步笔记。'));
     if (signal.aborted) return Promise.reject(new Error('笔记同步已取消。'));
-    if (this.noteReads.size || this.reviewReads.size) return Promise.reject(new Error('已有一页笔记历史正在读取。'));
+    if (this.noteReads.size || this.reviewReads.size) return Promise.reject(Object.assign(new Error('已有一页笔记历史正在读取。'), { code: 'history_read_busy' }));
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const cancel = () => {
@@ -483,7 +483,7 @@ export class LocalTerminal {
   requestReviewBars(symbol: string, tf: string, range: { from_server: number; to_server: number }, signal: AbortSignal): Promise<NoteReviewBars> {
     if (this.state.phase !== 'connected' || !this.state.features.includes('history') || !this.state.history_ready) return Promise.reject(new Error('本机历史读取尚未就绪。'));
     if (signal.aborted) return Promise.reject(new Error('复盘同步已取消。'));
-    if (this.noteReads.size || this.reviewReads.size) return Promise.reject(new Error('已有笔记历史读取任务。'));
+    if (this.noteReads.size || this.reviewReads.size) return Promise.reject(Object.assign(new Error('已有笔记历史读取任务。'), { code: 'history_read_busy' }));
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const cancel = () => {

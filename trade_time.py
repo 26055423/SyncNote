@@ -33,6 +33,10 @@ def offset_for(db, source):
 def utc_trade(trade, clock=None):
     result=dict(trade)
     clock=dict(clock) if clock else None
+    # History imports carry their own broker identity. A person's old WebBridge
+    # clock must not override another broker or erase an already stored UTC date.
+    history_broker=result.get('server') if result.get('source')=='syncnote-history.v1' else None
+    if history_broker and clock and clock.get('broker')!=history_broker:clock=None
     if result.get('time_basis')=='utc' and not result.get('time_estimated'):return result
     raw=result.get('closed_server',result.get('closed'))
     result['closed_server']=raw
@@ -40,7 +44,7 @@ def utc_trade(trade, clock=None):
     result['time_verified']=False
     result['time_estimated']=False
     if raw is None:return result
-    rule=RULES.get(clock['broker']) if clock else None
+    rule=RULES.get(history_broker or (clock['broker'] if clock else None))
     observed=bool(clock and clock.get('offset') is not None and clock['observed_from']-10<=raw-clock['offset']<=clock['observed_to']+10)
     estimated=False
     if observed:
@@ -55,6 +59,8 @@ def utc_trade(trade, clock=None):
             instant=a.timestamp()
             if datetime.fromtimestamp(instant,zone).replace(tzinfo=None)!=wall:return result
         else:instant=raw-rule['offset_seconds']
+    elif history_broker and isinstance(result.get('history_offset_seconds'),int) and not isinstance(result['history_offset_seconds'],bool) and -43200<=result['history_offset_seconds']<=50400:
+        instant=raw-result['history_offset_seconds'];estimated=True
     elif clock and clock.get('offset') is not None:
         instant=raw-clock['offset']
         if not clock['observed_from']-10<=instant<=clock['observed_to']+10:return result

@@ -76,6 +76,8 @@ const EMPTY: HistorySyncState = { enabled: false, status: 'off', message: '', pa
 const DAY = 86400;
 const HISTORY_DAYS = 365;
 const FULL_RECONCILE_MS = DAY * 1000;
+const READ_BUSY_RETRY_MS = 1500;
+const readBusy = (error: unknown) => error !== null && typeof error === 'object' && 'code' in error && error.code === 'history_read_busy';
 const sameSession = (state: LocalTerminalState) => [state.instance_id, state.account_id, state.server, state.epoch].join('\n');
 export async function historyAccountKey(server: string, account: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${server}\n${account}`));
@@ -178,6 +180,19 @@ export class LocalHistorySync {
       && this.dependencies.terminal.getSnapshot().phase === 'connected'
       && sameSession(this.dependencies.terminal.getSnapshot()) === this.session;
   }
+  private deferRead(generation: number, retry: () => void, message: string) {
+    if (!this.active(generation)) return;
+    this.update({ status: 'reading', message });
+    this.wakeup = this.dependencies.schedule(() => {
+      this.wakeup = null;
+      if (this.active(generation)) retry();
+    }, READ_BUSY_RETRY_MS);
+  }
+  private finishWindow(generation: number) {
+    if (!this.active(generation)) return;
+    this.update({ status: 'idle', full_run: false, message: '当前窗口已同步；每 30 秒回查最近一天，每隔约 24 小时全量核对最近 365 天，补齐较早成交及费用更正。' });
+    this.wakeup = this.dependencies.schedule(() => { this.wakeup = null; void this.pump(generation); }, 30000);
+  }
   private async pump(generation: number) {
     if (!this.active(generation) || !this.checkpoint || this.runningGeneration === generation) return;
     this.runningGeneration = generation;
@@ -204,7 +219,16 @@ export class LocalHistorySync {
         if (!this.pending) {
           const checkpoint: Checkpoint = this.checkpoint!;
           this.update({ status: 'reading', message: checkpoint.full_run ? '正在全量核对最近 365 天的全品种历史，每页最多 100 条…' : '正在回查最近一天的全品种历史，每页最多 100 条…' });
-          const page = await this.dependencies.terminal.requestHistoryPage(checkpoint.range, checkpoint.cursor, signal);
+          let page: NoteHistoryPage;
+          try { page = await this.dependencies.terminal.requestHistoryPage(checkpoint.range, checkpoint.cursor, signal); }
+          catch (error) {
+            if (!this.active(generation)) return;
+            // This code is produced locally BEFORE a read frame is sent. Never
+            // apply the same retry policy to HTTP writes, read timeouts or EA errors.
+            if (!readBusy(error)) throw error;
+            this.deferRead(generation, () => { void this.pump(generation); }, '本机历史通道正忙，稍后继续读取；同步范围和游标保持不变。');
+            return;
+          }
           if (!this.active(generation)) return;
           this.validatePage(page, checkpoint);
           const lastTicket = page.deals.length ? String(page.deals[page.deals.length - 1].deal_ticket ?? page.deals[page.deals.length - 1].ticket ?? '0') : checkpoint.last_deal_ticket || '0';
@@ -232,10 +256,9 @@ export class LocalHistorySync {
         this.pending = null;
         this.update({ pages: this.state.pages + 1, deals: this.state.deals + pending.body.deals.length, last_synced: saved.saved_at, last_full: saved.last_full || null });
         if (saved.window_complete) {
-          await this.processReview(generation, saved);
+          const deferred = await this.processReview(generation, saved);
           if (!this.active(generation)) return;
-          this.update({ status: 'idle', full_run: false, message: '当前窗口已同步；每 30 秒回查最近一天，每隔约 24 小时全量核对最近 365 天，补齐较早成交及费用更正。' });
-          this.wakeup = this.dependencies.schedule(() => { this.wakeup = null; void this.pump(generation); }, 30000);
+          if (!deferred) this.finishWindow(generation);
           return;
         }
       }
@@ -254,11 +277,11 @@ export class LocalHistorySync {
       || page.through_server < checkpoint.range.from_server - 1 || page.through_server > checkpoint.range.to_server
       || (page.has_more && (!page.next_cursor || page.next_cursor === checkpoint.cursor))) throw new Error('EA 历史分页格式或进度无效，未上传。');
   }
-  private async processReview(generation: number, checkpoint: Checkpoint) {
+  private async processReview(generation: number, checkpoint: Checkpoint, retryJob?: ReviewJob): Promise<boolean | void> {
     if (!this.dependencies.reviewJob || !this.dependencies.uploadReview || !this.active(generation)) return;
     const signal = this.controller!.signal;
     try {
-      const response = await this.dependencies.reviewJob(signal);
+      const response = retryJob ? { ok: true, website_user_id: this.userId, review_job: retryJob } : await this.dependencies.reviewJob(signal);
       if (!this.active(generation)) return;
       if (response.ok !== true || response.website_user_id !== this.userId) throw new Error('网站复盘任务所属账户已改变。');
       const job = response.review_job;
@@ -294,6 +317,17 @@ export class LocalHistorySync {
           charts[name] = rows.map((row) => row.slice(0, 5));
         } catch (error) {
           if (!this.active(generation)) return;
+          if (readBusy(error)) {
+            // Keep the same task in memory. Busy is not evidence of missing bars,
+            // and no partial/error review is uploaded for this unissued read.
+            this.update({ review_message: '本机历史通道正忙，保留当前复盘任务稍后读取。' });
+            this.deferRead(generation, () => {
+              void this.processReview(generation, checkpoint, job).then((deferred) => {
+                if (!deferred) this.finishWindow(generation);
+              });
+            }, '交易历史已同步，等待本机通道后继续补齐复盘图。');
+            return true;
+          }
           errors[name] = error instanceof Error && /^[a-z_]+$/i.test(error.message) ? error.message.toLowerCase() : 'history_unavailable';
         }
       }
