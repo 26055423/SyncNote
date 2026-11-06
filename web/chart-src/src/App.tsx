@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, money, quotePrice, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
 import { BarReplayControls } from './BarReplayControls';
-import { ChartHistoryMenu, FullscreenButton } from './ChartToolsMenu';
+import { FullscreenButton } from './ChartToolsMenu';
 import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
@@ -271,8 +271,6 @@ export default function App() {
   const windowRef = useRef<Record<string, { from: number; to: number }>>({});
   const fetchingRef = useRef<Set<string>>(new Set());
   const reviewEpochRef = useRef(0);
-  const [reviewLoading, setReviewLoading] = useState<Record<string, boolean>>({});
-  const [reviewNotice, setReviewNotice] = useState('');
   /** 某一边已经没有更早/更新的数据时，60 秒内不再追问（避免拖到尽头后每次事件都发请求）。 */
   const edgeBlockRef = useRef<Record<string, number>>({});
   /** 补段要知道“现在看的是哪笔/哪个品种”，放 ref 避免回调拿到旧值。 */
@@ -938,8 +936,6 @@ export default function App() {
     windowRef.current = {};
     fetchingRef.current.clear();
     edgeBlockRef.current = {};
-    setReviewLoading({});
-    setReviewNotice('');
     if (mode !== 'review' || !entry || entry.review.status !== 'ready' || !ready) return;
     const payload = entry.review.charts || {};
     const anchor = anchorSeconds ?? Math.round(Date.now() / 1000);
@@ -1003,19 +999,17 @@ export default function App() {
     for (const tf of REVIEW_BASE_TFS) hydrateWindow(tf, series[tf] ?? []);
   }, [series]);
 
-  const loadWindow = useCallback(async (base: BaseTimeframe, direction: ReviewDirection, manual = false) => {
+  const loadWindow = useCallback(async (base: BaseTimeframe, direction: ReviewDirection) => {
     const replay = chartRef.current?.replayStatus(); if (replay?.active || replay?.armed || replay?.busy) return null;
     const epoch = reviewEpochRef.current;
     const key = `${epoch}:${base}`;
     if (fetchingRef.current.has(key)) return null;
     fetchingRef.current.add(key);
-    setReviewLoading((previous) => ({ ...previous, [base]: true }));
     try {
       const data = await readReviewPage(api, ctxRef.current, base, direction, seriesRef.current[base] ?? []);
       if (epoch !== reviewEpochRef.current) return null;
       if (!data.bars?.length) {
         edgeBlockRef.current[base + ':' + direction] = Date.now() + 60_000;
-        if (manual) setReviewNotice(direction === 'left' ? '已到该轨道最早入库数据' : '该轨道暂无更多已入库数据');
         return null;
       }
       const merged = mergeReviewBars(seriesRef.current[base] ?? [], data.bars);
@@ -1024,36 +1018,21 @@ export default function App() {
       if (data.has_more === false && direction !== 'latest') edgeBlockRef.current[base + ':' + direction] = Date.now() + 60_000;
       await chartRef.current?.applySeries(base, merged);
       if (epoch !== reviewEpochRef.current) return null;
-      if (manual) setReviewNotice(`已加载至 ${stamp(merged[merged.length - 1][0])}`);
       return data.bars[data.bars.length - 1][0];
     } catch (error) {
       if (epoch === reviewEpochRef.current) {
         edgeBlockRef.current[base + ':' + direction] = Date.now() + 15_000;
-        if (manual) setReviewNotice(`服务器历史读取失败：${error instanceof Error ? error.message : String(error)}`);
       }
       return null;
     } finally {
       fetchingRef.current.delete(key);
-      if (epoch === reviewEpochRef.current) setReviewLoading((previous) => ({ ...previous, [base]: false }));
     }
   }, []);
 
-  const reviewLatest = async () => {
-    const epoch = reviewEpochRef.current;
-    setReviewNotice('正在读取同一轨道的最新入库数据…');
-    const tips = await Promise.all(REVIEW_BASE_TFS.map((base) => loadWindow(base, 'latest')));
-    if (epoch !== reviewEpochRef.current) return;
-    const tip = tips.find((value) => value != null);
-    if (tip != null) {
-      chartRef.current?.focus(tip * 1000);
-      setReviewNotice(`最新入库 ${stamp(tip)}`);
-    } else setReviewNotice('未读取到更多服务器历史，请稍后重试');
-  };
 
   /** 实时图分页：同周期只允许一个在途请求；暂时无数据时短暂退避，不认定历史到底。 */
   const livePagingRef = useRef<Set<string>>(new Set());
   const liveFloorRef = useRef<Record<string, number>>({});
-  const [liveHistoryLoading, setLiveHistoryLoading] = useState<Partial<Record<BaseTimeframe, boolean>>>({});
   const liveScopeRef = useRef('');
   liveScopeRef.current = `${mode}:${marketInfo?.source ?? ''}:${liveSymbol}`;
   const liveOlder = useCallback(async (base: BaseTimeframe, manual = false) => {
@@ -1085,7 +1064,6 @@ export default function App() {
       return true;
     };
     livePagingRef.current.add(base);
-    setLiveHistoryLoading((previous) => ({ ...previous, [base]: true }));
     try {
       // 按行数向前翻轨道，不按日历时间窗口切，也不请求 EA。
       const page = await readTrackPage((path) => api<TrackPage>(path), {
@@ -1101,7 +1079,6 @@ export default function App() {
       }
     } finally {
       livePagingRef.current.delete(base);
-      if (valid()) setLiveHistoryLoading((previous) => ({ ...previous, [base]: false }));
     }
   }, [mode, liveSymbol]);
 
@@ -1121,7 +1098,6 @@ export default function App() {
   useEffect(() => {
     // 切换轨道后重新允许预取
     liveFloorRef.current = {};
-    setLiveHistoryLoading({});
   }, [marketInfo?.source]);
 
   // 历史通道可能正在回填。可见左边缘仍缺数据时自动重试，不要求用户再拖一下。
@@ -1292,34 +1268,6 @@ export default function App() {
               <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} disabled={replayActive} onClick={() => switchMode('live')}>行情</button>
               <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} aria-pressed={mode === 'review'} disabled={replayActive || (!target && shareId == null && !myHistory.length)} onClick={() => switchMode('review')}>复盘</button>
             </span>
-            {!replayActive && ((mode === 'live' && marketInfo?.source && liveBars) || (mode === 'review' && (target || shareId != null))) && (
-              <ChartHistoryMenu>
-            {mode === 'live' && marketInfo?.source && liveBars && TIMEFRAMES[tf] && Boolean(liveRef.current[TIMEFRAMES[tf].base]?.length) ? (
-              <button type="button" className="tool-btn"
-                disabled={Boolean(liveHistoryLoading[TIMEFRAMES[tf].base])}
-                title={`已加载 ${liveRef.current[TIMEFRAMES[tf].base]?.length ?? 0} 根；当前最早 ${stamp(liveRef.current[TIMEFRAMES[tf].base]![0][0])}；轨道最早 ${marketInfo.tfs?.[TIMEFRAMES[tf].base]?.from ? stamp(marketInfo.tfs[TIMEFRAMES[tf].base]!.from) : '暂无入库历史'}`}
-                onClick={() => void liveOlder(TIMEFRAMES[tf].base, true)}>
-                {liveHistoryLoading[TIMEFRAMES[tf].base] ? '正在读取更早行情…' : `加载更早 · ${(liveRef.current[TIMEFRAMES[tf].base]?.length ?? 0).toLocaleString()}${marketInfo.tfs?.[TIMEFRAMES[tf].base] ? ` / ${marketInfo.tfs[TIMEFRAMES[tf].base]!.bars.toLocaleString()}` : ''} 根`}
-              </button>
-            ) : null}
-            {mode === 'review' && (target || shareId != null) ? (
-              <>
-                <button type="button" className="tool-btn" onClick={() => chartRef.current?.focus()}>定位开仓</button>
-                <button type="button" className="tool-btn" disabled={!series || Boolean(reviewLoading[TIMEFRAMES[tf]?.base])}
-                  onClick={() => void loadWindow(TIMEFRAMES[tf].base, 'left', true)}>加载更早</button>
-                <button type="button" className="tool-btn" disabled={!series || Boolean(reviewLoading[TIMEFRAMES[tf]?.base])}
-                  onClick={() => void loadWindow(TIMEFRAMES[tf].base, 'right', true)}>加载后续</button>
-                <button type="button" className="tool-btn" disabled={!series || Object.values(reviewLoading).some(Boolean)}
-                  title="读取该交易同一券商轨道的最新已收盘K线，无需连接EA；保留复盘画线与开仓定位"
-                  onClick={() => void reviewLatest()}>最新入库</button>
-                <span className="save-hint review-history-status" role="status">{reviewNotice || (Object.values(reviewLoading).some(Boolean) ? '读取服务器历史…' : '')}</span>
-              </>
-            ) : null}
-            {mode === 'live' && !liveBars && marketSeries ? (
-              <span className="badge">历史行情{marketInfo?.last ? ' · 最新 ' + stamp(marketInfo.last) : ''}</span>
-            ) : null}
-              </ChartHistoryMenu>
-            )}
             <BarReplayControls chart={chartRef} onActiveChange={setReplayActive} />
             <span className="spacer" />
             <button
