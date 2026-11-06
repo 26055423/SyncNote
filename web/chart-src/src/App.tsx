@@ -1205,10 +1205,6 @@ export default function App() {
             <span className="stat-k">{priceLabel}</span>
             <b className={price != null ? 'stat-v' : 'stat-v dim'}>{price != null ? quotePrice(price) : '—'}</b>
           </span>
-          <span className={`status-chip ${localConnected ? 'on' : mt5Online ? 'sync' : 'off'}`} title={localConnected ? '本机直连' : mt5Online ? '云端同步 · 只读' : 'MT5 未连接'}>
-            <i aria-hidden="true" />
-            {localConnected ? '本机直连' : mt5Online ? '云端同步 · 只读' : 'MT5 未连接'}
-          </span>
           {/* 没有任何账户数据源时不显示净值/余额，避免把云端旧快照当成本机状态。 */}
           {reviewingOther || !(localConnected || mt5Online) ? null : (
             <>
