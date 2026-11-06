@@ -1385,6 +1385,80 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .replay-pick-menu button:hover { background: var(--hover); }
 .replay-pick-menu button:disabled { color: var(--dim); cursor: not-allowed; }
 
+/* One shared row for identity, chart controls and account actions. */
+.app:has(> .unified-topbar) { grid-template-rows: 44px minmax(0, 1fr) auto 32px; }
+.topbar.unified-topbar {
+  position: relative; z-index: 90; min-height: 44px; height: 44px;
+  flex-wrap: nowrap; gap: 10px; padding: 0 10px; overflow: visible;
+}
+.unified-topbar .brand { flex: none; white-space: nowrap; }
+.unified-topbar .brand small { display: none; }
+.unified-topbar .status-row { flex: none; gap: 8px; }
+.unified-topbar .top-actions { flex: none; width: auto; margin-left: 0; gap: 5px; }
+.unified-topbar .top-actions > a,
+.unified-topbar .top-actions > button,
+.unified-topbar .top-actions .settings-trigger { height: 28px; padding: 0 8px; font-size: 12px; }
+.unified-topbar .unified-chart-tools {
+  flex: 1; min-width: 0; min-height: 0; height: 100%; padding: 0 8px;
+  flex-wrap: nowrap; gap: 5px; overflow: visible; background: transparent;
+  border: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+}
+.unified-chart-tools > * { flex: none; }
+.unified-chart-tools .spacer { display: none; }
+.unified-chart-tools > .fav-tools {
+  flex: 0 1 auto; min-width: 34px; overflow-x: auto; scrollbar-width: none;
+}
+.unified-chart-tools .fav-tools::-webkit-scrollbar { display: none; }
+.unified-chart-tools .fav-tools > * { flex: none; }
+.unified-chart-tools .tool-btn, .unified-chart-tools .tp-btn { height: 28px; padding: 3px 7px; white-space: nowrap; }
+.native-chart-tools { display: flex; align-items: center; }
+.native-chart-tools .vela-widget-topbar {
+  display: flex !important; height: 30px; min-height: 0; padding: 0;
+  border: 0; gap: 2px; white-space: nowrap;
+}
+.native-chart-tools .vela-topbar-right:empty { display: none; }
+.native-chart-tools .vela-widget-topbar > button { height: 28px; padding-left: 6px; padding-right: 6px; }
+.unified-chart-tools .replay-bar { flex: none; width: auto; flex-wrap: nowrap; white-space: nowrap; }
+@media (max-width: 1800px) { .unified-topbar .account-stat { display: none; } }
+@media (max-width: 1500px) {
+  .unified-chart-tools .save-hint { display: none; }
+  .unified-topbar .top-actions .settings-trigger > span { display: none; }
+}
+@media (max-width: 1200px) {
+  .topbar.unified-topbar { gap: 7px; padding: 0 7px; }
+  .unified-topbar .status-row .stat-k { display: none; }
+  .unified-topbar .status-chip { font-size: 0; gap: 0; padding: 0; border: 0; background: transparent; }
+  .unified-topbar .top-actions > a { font-size: 0; }
+  .unified-topbar .top-actions > a::before { content: '日历'; font-size: 12px; }
+}
+@media (max-width: 900px) {
+  .app:has(> .unified-topbar) { grid-template-rows: 44px minmax(0, 1fr) auto 0; }
+}
+/* Horizontal overflow keeps even phone/replay controls in one row. Fixed
+   popovers escape the scroll container instead of being clipped by it. */
+.topbar.unified-topbar:has(.replay-bar) { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.unified-topbar:has(.replay-bar) .unified-chart-tools { flex: none; }
+.unified-topbar:has(.replay-bar) .tp-panel,
+.unified-topbar:has(.replay-bar) .lp-panel,
+.unified-topbar:has(.replay-bar) .settings-panel,
+.unified-topbar:has(.replay-bar) .replay-pick-menu { position: fixed; top: 48px; }
+.unified-topbar:has(.replay-bar) .tp-panel,
+.unified-topbar:has(.replay-bar) .replay-pick-menu { left: 8px; right: auto; }
+.unified-topbar:has(.replay-bar) .lp-panel,
+.unified-topbar:has(.replay-bar) .settings-panel { left: auto; right: 8px; }
+@media (max-width: 900px) {
+  .topbar.unified-topbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .unified-topbar::-webkit-scrollbar { display: none; }
+  .unified-topbar .unified-chart-tools { flex: none; }
+  .unified-chart-tools > .fav-tools { flex: none; max-width: none; }
+  .unified-topbar .tp-panel,
+  .unified-topbar .lp-panel,
+  .unified-topbar .settings-panel,
+  .unified-topbar .replay-pick-menu { position: fixed; top: 48px; max-height: calc(100dvh - 60px); overflow-y: auto; }
+  .unified-topbar .tp-panel, .unified-topbar .replay-pick-menu { left: 8px; right: auto; }
+  .unified-topbar .lp-panel, .unified-topbar .settings-panel { left: auto; right: 8px; }
+}
+
 /* 回放选起点：选择线右侧压暗（示意"这些 K 线将被隐藏/不参与指标") */
 .replay-ghost {
   position: absolute; top: 0; bottom: 0; right: 0; z-index: 20;

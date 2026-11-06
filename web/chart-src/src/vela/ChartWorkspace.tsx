@@ -97,6 +97,8 @@ const TIME_SYNC_KEY = 'sn-time-sync';
 const CROSSHAIR_SYNC_KEY = 'sn-crosshair-sync';
 
 interface Props {
+  /** Mount the native style/indicators/undo controls in the shared page header. */
+  toolbarHost?: HTMLDivElement | null;
   charts: ReviewCharts;
   symbol: string;
   anchorMs: number;
@@ -520,6 +522,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    // A rebuilt workspace owns a new native toolbar; remount it once ready.
+    setReady(false);
     let disposed = false;
 
     (async () => {
@@ -859,6 +863,33 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     };
     // charts 的一次性数据：换交易时整个组件重挂载（key 由上层控制）。
   }, [charts, symbol]);
+
+  // Reuse Vela's actual controls and listeners instead of duplicating its APIs.
+  // The workspace keeps owning the menus/dialogs and destroys the toolbar.
+  useEffect(() => {
+    const target = props.toolbarHost;
+    if (!ready || !target) return;
+    let disposed = false;
+    let toolbar: HTMLElement | null = null;
+    let parent: HTMLElement | null = null;
+    let next: ChildNode | null = null;
+    void Promise.all([import('@luxalgo/vela/ui'), import('@luxalgo/vela')]).then(([ui, vela]) => {
+      if (disposed) return;
+      toolbar = hostRef.current?.querySelector<HTMLElement>('.vela-widget-topbar') ?? null;
+      if (!toolbar) return;
+      parent = toolbar.parentElement;
+      next = toolbar.nextSibling;
+      ui.ensureUIHost(target, vela.resolveTheme(theme));
+      target.lang = chartLocale;
+      target.appendChild(toolbar);
+    }).catch(() => { /* Keep the original toolbar usable if mounting fails. */ });
+    return () => {
+      disposed = true;
+      if (toolbar?.parentElement === target && parent?.isConnected) {
+        parent.insertBefore(toolbar, next?.parentNode === parent ? next : null);
+      }
+    };
+  }, [ready, props.toolbarHost, theme, chartLocale]);
 
   // 外观三项跟着「设置」实时切换：主题、显示时区、图表语言。
   // `ready` 之前 ws 还没建好，等就绪后这套 effect 会再跑一次把初始值补上。
