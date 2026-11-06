@@ -1346,3 +1346,34 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .vela-ws-toolbar .vela-dtb-btn[title*='同步画图'],
 .vela-ws-toolbar .vela-dtb-btn[aria-label*='Sync draw'],
 .vela-ws-toolbar .vela-dtb-btn[title*='Sync draw'] { display: none !important; }
+
+/* 回放控制条：浮在图表底部中间，不占布局高度 */
+.replay-bar {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  z-index: 45; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  max-width: calc(100% - 24px);
+  padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--panel); box-shadow: var(--shadow);
+  font-size: 12px; color: var(--text);
+}
+.replay-bar .tool-btn { padding: 4px 9px; }
+.replay-bar label { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); }
+.replay-bar select { background: var(--well); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font: inherit; }
+.replay-bar .replay-clock { color: var(--dim); font-variant-numeric: tabular-nums; }
+.replay-bar [role='alert'] { color: var(--bad); }
+@media (max-width: 900px) {
+  .replay-bar { bottom: 8px; padding: 5px 8px; gap: 4px; font-size: 11px; left: 8px; right: 8px; transform: none; max-width: none; }
+}
+
+.replay-pick { position: relative; }
+.replay-pick-menu {
+  position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 60;
+  min-width: 168px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); box-shadow: var(--shadow);
+}
+.replay-pick-menu button {
+  border: 0; background: transparent; color: var(--text); text-align: left;
+  padding: 7px 9px; border-radius: 6px; font-size: 12.5px;
+}
+.replay-pick-menu button:hover { background: var(--hover); }
+.replay-pick-menu button:disabled { color: var(--dim); cursor: not-allowed; }

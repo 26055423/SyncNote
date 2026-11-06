@@ -1273,11 +1273,9 @@ export default function App() {
                 title={replayActive ? '重新选择回放起点' : '在历史 K 线上逐根回放'}
                 onClick={() => chartRef.current?.replaySelect()}
               >
-                {replayActive ? '重选起点' : '回放'}
+                回放
               </button>
             </span>
-            {/* 常驻挂载：它负责轮询回放状态（隐藏自己的入口按钮，入口在上面分段控件里）。 */}
-            <BarReplayControls chart={chartRef} onActiveChange={setReplayActive} hideEntry />
             <span className="spacer" />
             <button
               type="button"
@@ -1345,6 +1343,21 @@ export default function App() {
           ) : null}
 
           <div className="chart-body">
+            {/* 回放控制条浮在图表底部；组件常驻以轮询状态。 */}
+            <BarReplayControls
+              chart={chartRef}
+              onActiveChange={setReplayActive}
+              onEarliest={async () => {
+                // 「最早可用日期」：先把视口挪到当前数据最早一根，再从视图开始。
+                const base = TIMEFRAMES[tf]?.base;
+                const rows = (mode === 'live' ? liveRef.current[base] : seriesRef.current[base]) ?? [];
+                const first = rows[0]?.[0];
+                if (!first) throw new Error('当前周期还没有可回放的历史');
+                chartRef.current?.focus(first * 1000);
+                await new Promise((resolve) => window.setTimeout(resolve, 400));
+                await chartRef.current?.replayStartFromView();
+              }}
+            />
             {mode === 'live' && liveSeries ? (
               <ChartWorkspace
                 key={`live:${marketInfo?.source ?? 'loading'}:${liveSymbol}`}
