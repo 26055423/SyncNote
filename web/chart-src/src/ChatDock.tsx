@@ -73,6 +73,9 @@ export function ChatDock({ visible = true, current, onShareCurrent, onError, ope
   const [details, setDetails] = useState(false);
   const [groupEntry, setGroupEntry] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  /** 触屏长按显示消息操作（桌面仍是 hover 显示）。 */
+  const [actionFor, setActionFor] = useState<string | number | null>(null);
+  const pressTimer = useRef<number | null>(null);
   const [reactionPicker, setReactionPicker] = useState<number | string | null>(null);
   const [jumpTarget, setJumpTarget] = useState<number | string | null>(null);
   const [pendingNew, setPendingNew] = useState(false);
@@ -362,7 +365,30 @@ export function ChatDock({ visible = true, current, onShareCurrent, onError, ope
               const interactive = message.kind !== 'recalled' && typeof message.id === 'number';
               return <Fragment key={message.id}>
                 {(!prev || day !== stamp(prev.created).slice(0, 10)) && <div className="dc-date-divider"><span>{day}</span></div>}
-                <article tabIndex={-1} id={`dc-message-${activeKey}-${message.id}`} className={`dc-message ${grouped ? 'is-grouped' : ''} ${me && message.mentions?.includes(me.id) ? 'is-mentioned' : ''}`}>
+                <article
+                  tabIndex={-1}
+                  id={`dc-message-${activeKey}-${message.id}`}
+                  className={`dc-message ${grouped ? 'is-grouped' : ''} ${me && message.mentions?.includes(me.id) ? 'is-mentioned' : ''} ${actionFor === message.id ? 'is-actions-open' : ''}`}
+                  onTouchStart={() => {
+                    if (pressTimer.current) window.clearTimeout(pressTimer.current);
+                    pressTimer.current = window.setTimeout(() => setActionFor(message.id), 450);
+                  }}
+                  onTouchEnd={() => {
+                    if (pressTimer.current) { window.clearTimeout(pressTimer.current); pressTimer.current = null; }
+                  }}
+                  onTouchMove={() => {
+                    if (pressTimer.current) { window.clearTimeout(pressTimer.current); pressTimer.current = null; }
+                  }}
+                  onContextMenu={(event) => {
+                    if (window.matchMedia('(hover: none)').matches) { event.preventDefault(); setActionFor(message.id); }
+                  }}
+                  onClick={(event) => {
+                    // 点消息本身（不是操作按钮）时收起长按菜单。
+                    if (!actionFor) return;
+                    if ((event.target as HTMLElement).closest('.dc-message-actions')) return;
+                    setActionFor(null);
+                  }}
+                >
                   <div className="dc-message-avatar">{!grouped && <Avatar name={author} avatar={avatar} />}</div>
                   <div className="dc-message-content">
                     {message.reply && <button type="button" className="dc-reply-preview" onClick={() => { setSearch(''); setJumpTarget(message.reply!.id); }} title="跳转到原消息"><Icon name="reply" /><b>{message.reply.name}</b><span>{message.reply.text || '复盘分享'}</span></button>}

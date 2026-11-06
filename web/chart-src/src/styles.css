@@ -1136,6 +1136,9 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   .status-row .account-stat { display: none; }
 }
 @media (hover: none) {
+/* 触屏：消息操作默认隐藏，长按那一行才出现（桌面仍靠 hover）。 */
+.dc-message-actions { display: none; }
+.dc-message.is-actions-open .dc-message-actions { display: flex; flex-wrap: wrap; }
   .dc-message-actions { position: static; align-self: flex-start; opacity: 1; pointer-events: auto; box-shadow: none; background: none; border-color: var(--line-soft); margin-top: 3px; }
   .dc-message { flex-wrap: wrap; }
   .dc-message-actions { margin-left: 48px; }
