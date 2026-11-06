@@ -1276,6 +1276,61 @@ export default function App() {
                 回放
               </button>
             </span>
+            <BarReplayControls
+              chart={chartRef}
+              onActiveChange={setReplayActive}
+              onRandom={async () => {
+                // 随机起点：在「所有数据轨道的覆盖并集」里随机，再用 /api/market/bars 回查一次，
+                // 确认真有 K 线才跳；查空就换一个时点重试（用户无感）。
+                const base = TIMEFRAMES[tf]?.base;
+                const tfName: Record<string, '1m' | '5m' | '15m' | '1h'> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
+                const name = base ? tfName[base] : undefined;
+                if (!name) throw new Error('当前周期不支持随机回放');
+                const seconds = TF_SECONDS[base!];
+                const catalog = await api<{ sources: Array<{ tfs?: Record<string, { from: number; to: number; bars: number }> }> }>('/api/data/sources');
+                const windows = (catalog.sources ?? [])
+                  .map((row) => row.tfs?.[base!])
+                  .filter((info): info is { from: number; to: number; bars: number } => Boolean(info && info.bars > 0 && info.to > info.from))
+                  .map((info) => ({ from: info.from, to: info.to, weight: Math.max(1, info.bars) }));
+                if (!windows.length) {
+                  // 目录还没建（新库/刚接入）：退回到当前已加载的序列里随机，别让用户卡在弹错上。
+                  const rows = (mode === 'live' ? liveRef.current[base!] : seriesRef.current[base!]) ?? [];
+                  if (rows.length < 10) throw new Error('还没有可回放的 K 线');
+                  const pick = rows[Math.floor(Math.random() * rows.length)][0];
+                  chartRef.current?.focus(pick * 1000);
+                  await new Promise((resolve) => window.setTimeout(resolve, 400));
+                  await chartRef.current?.replayStartFromView();
+                  return;
+                }
+                const total = windows.reduce((sum, w) => sum + w.weight, 0);
+                for (let attempt = 0; attempt < 8; attempt += 1) {
+                  let roll = Math.random() * total;
+                  const win = windows.find((w) => (roll -= w.weight) <= 0) ?? windows[windows.length - 1];
+                  const spot = win.from + Math.floor(Math.random() * Math.max(1, win.to - win.from));
+                  const look = await api<{ bars: number[][] }>(
+                    `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${name}&from=${spot}&to=${spot + seconds * 60}`,
+                  ).catch(() => null);
+                  const first = look?.bars?.[0]?.[0];
+                  if (first) {
+                    chartRef.current?.focus(first * 1000);
+                    await new Promise((resolve) => window.setTimeout(resolve, 400));
+                    await chartRef.current?.replayStartFromView();
+                    return;
+                  }
+                }
+                throw new Error('随机到的区间暂时没有 K 线，请再试一次');
+              }}
+              onEarliest={async () => {
+                // 「最早可用日期」：先把视口挪到当前数据最早一根，再从视图开始。
+                const base = TIMEFRAMES[tf]?.base;
+                const rows = (mode === 'live' ? liveRef.current[base] : seriesRef.current[base]) ?? [];
+                const first = rows[0]?.[0];
+                if (!first) throw new Error('当前周期还没有可回放的历史');
+                chartRef.current?.focus(first * 1000);
+                await new Promise((resolve) => window.setTimeout(resolve, 400));
+                await chartRef.current?.replayStartFromView();
+              }}
+            />
             <span className="spacer" />
             <button
               type="button"
@@ -1343,62 +1398,6 @@ export default function App() {
           ) : null}
 
           <div className="chart-body">
-            {/* 回放控制条浮在图表底部；组件常驻以轮询状态。 */}
-            <BarReplayControls
-              chart={chartRef}
-              onActiveChange={setReplayActive}
-              onRandom={async () => {
-                // 随机起点：在「所有数据轨道的覆盖并集」里随机，再用 /api/market/bars 回查一次，
-                // 确认真有 K 线才跳；查空就换一个时点重试（用户无感）。
-                const base = TIMEFRAMES[tf]?.base;
-                const tfName: Record<string, '1m' | '5m' | '15m' | '1h'> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
-                const name = base ? tfName[base] : undefined;
-                if (!name) throw new Error('当前周期不支持随机回放');
-                const seconds = TF_SECONDS[base!];
-                const catalog = await api<{ sources: Array<{ tfs?: Record<string, { from: number; to: number; bars: number }> }> }>('/api/data/sources');
-                const windows = (catalog.sources ?? [])
-                  .map((row) => row.tfs?.[base!])
-                  .filter((info): info is { from: number; to: number; bars: number } => Boolean(info && info.bars > 0 && info.to > info.from))
-                  .map((info) => ({ from: info.from, to: info.to, weight: Math.max(1, info.bars) }));
-                if (!windows.length) {
-                  // 目录还没建（新库/刚接入）：退回到当前已加载的序列里随机，别让用户卡在弹错上。
-                  const rows = (mode === 'live' ? liveRef.current[base!] : seriesRef.current[base!]) ?? [];
-                  if (rows.length < 10) throw new Error('还没有可回放的 K 线');
-                  const pick = rows[Math.floor(Math.random() * rows.length)][0];
-                  chartRef.current?.focus(pick * 1000);
-                  await new Promise((resolve) => window.setTimeout(resolve, 400));
-                  await chartRef.current?.replayStartFromView();
-                  return;
-                }
-                const total = windows.reduce((sum, w) => sum + w.weight, 0);
-                for (let attempt = 0; attempt < 8; attempt += 1) {
-                  let roll = Math.random() * total;
-                  const win = windows.find((w) => (roll -= w.weight) <= 0) ?? windows[windows.length - 1];
-                  const spot = win.from + Math.floor(Math.random() * Math.max(1, win.to - win.from));
-                  const look = await api<{ bars: number[][] }>(
-                    `/api/market/bars?symbol=${encodeURIComponent(liveSymbol)}&tf=${name}&from=${spot}&to=${spot + seconds * 60}`,
-                  ).catch(() => null);
-                  const first = look?.bars?.[0]?.[0];
-                  if (first) {
-                    chartRef.current?.focus(first * 1000);
-                    await new Promise((resolve) => window.setTimeout(resolve, 400));
-                    await chartRef.current?.replayStartFromView();
-                    return;
-                  }
-                }
-                throw new Error('随机到的区间暂时没有 K 线，请再试一次');
-              }}
-              onEarliest={async () => {
-                // 「最早可用日期」：先把视口挪到当前数据最早一根，再从视图开始。
-                const base = TIMEFRAMES[tf]?.base;
-                const rows = (mode === 'live' ? liveRef.current[base] : seriesRef.current[base]) ?? [];
-                const first = rows[0]?.[0];
-                if (!first) throw new Error('当前周期还没有可回放的历史');
-                chartRef.current?.focus(first * 1000);
-                await new Promise((resolve) => window.setTimeout(resolve, 400));
-                await chartRef.current?.replayStartFromView();
-              }}
-            />
             {mode === 'live' && liveSeries ? (
               <ChartWorkspace
                 key={`live:${marketInfo?.source ?? 'loading'}:${liveSymbol}`}

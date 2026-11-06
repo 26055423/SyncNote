@@ -1347,12 +1347,9 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .vela-ws-toolbar .vela-dtb-btn[aria-label*='Sync draw'],
 .vela-ws-toolbar .vela-dtb-btn[title*='Sync draw'] { display: none !important; }
 
-/* 回放控制条：浮在图表底部中间，不占布局高度 */
+/* 回放控制条：就在顶部工具栏里，紧跟「行情 | 回放」 */
 .replay-bar {
-  position: absolute; left: 8px; right: 8px; bottom: 8px;
-  z-index: 45; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 10px;
-  background: var(--panel); box-shadow: var(--shadow);
+  display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
   font-size: 12px; color: var(--text);
 }
 .replay-bar .tool-btn { padding: 4px 9px; }
@@ -1361,7 +1358,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .replay-bar .replay-clock { color: var(--dim); font-variant-numeric: tabular-nums; }
 .replay-bar [role='alert'] { color: var(--bad); }
 @media (max-width: 900px) {
-  .replay-bar { bottom: 8px; padding: 5px 8px; gap: 4px; font-size: 11px; left: 8px; right: 8px; transform: none; max-width: none; }
+  .replay-bar { gap: 4px; font-size: 11px; width: 100%; }
 }
 
 .replay-pick { position: relative; }
