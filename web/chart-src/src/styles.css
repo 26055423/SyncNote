@@ -1472,3 +1472,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .chart-toolbar .native-chart-tools { order: 9; margin-left: auto; display: flex; min-width: 0; }
 .chart-toolbar .vela-widget-topbar { display: flex; align-items: center; }
 .chart-toolbar .vela-topbar-right { margin-left: auto; }
+
+/* 指标按钮挪到「品种」和「周期」之间：隐藏 Vela 自己的那个，保留 DOM 供点击 */
+.chart-toolbar .vela-widget-indicators { display: none; }
+.chart-toolbar .indicator-trigger { display: inline-flex; align-items: center; gap: 4px; }

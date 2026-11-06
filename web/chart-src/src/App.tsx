@@ -1195,6 +1195,24 @@ export default function App() {
           )}
         </div>
         <div className="chart-toolbar unified-chart-tools">
+          {/* 指标按钮由我们放在「品种」和「周期」之间；真正的 Vela 指标面板按钮被隐藏，
+              点这里代它触发（DOM 仍在，picker 逻辑不用重写）。 */}
+          <button
+            type="button"
+            className="tool-btn indicator-trigger"
+            title="指标"
+            aria-label="指标"
+            onClick={() => {
+              const nativeButton = document.querySelector<HTMLButtonElement>('.vela-widget-indicators');
+              nativeButton?.click();
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 17l5-6 4 4 6-8" />
+              <path d="M3 21h18" />
+            </svg>
+            指标
+          </button>
           <TfMenu disabled={replayActive} current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
           <div className="native-chart-tools" ref={setNativeToolbarHost} />
           <DrawingFavs
