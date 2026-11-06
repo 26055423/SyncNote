@@ -12,7 +12,6 @@ import sync_history
 import ea_hub
 import journal
 import market
-import share_link
 from trade_time import utc_trade, record_clock
 from datetime import datetime, timezone
 import hashlib, hmac, json, math, os, re, secrets, sqlite3, time, io, zipfile, struct
@@ -93,7 +92,6 @@ with connect() as db:
             db.execute('ALTER TABLE friend_edges ADD COLUMN '+_col+' INTEGER NOT NULL DEFAULT 0')
     auth_security.initialize(db)
     journal.initialize(db)
-    share_link.initialize(db)
     sync_history.initialize(db)
     bars.initialize(db)
     market.initialize(db)
@@ -386,20 +384,6 @@ class Handler(BaseHTTPRequestHandler):
                     last_history=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=?',(link['user_id'],)).fetchone()[0]
                     online=bool((snap and time.time()-snap['updated']<=45 and json.loads(snap['payload']).get('online',True)) or (last_history and time.time()-last_history<=90))
                     return self.reply({'online':online,'last_sync':max(snap['updated'] if snap else 0,last_history or 0) or None,'mode':'history' if last_history else 'snapshot'})
-            if path=='/api/public/review':
-                # 对外链接：token 即凭证，不需要登录；只返回那一笔交易的冻结快照。
-                token=q.get('token',[''])[0]
-                with connect() as db:
-                    try:return self.reply(share_link.read(db,token))
-                    except share_link.ShareError as e:raise Error(str(e),404)
-            if path.startswith('/s/'):
-                # 公开分享页：/s/<token>，页面自己再去拉 /api/public/review。
-                token=path[3:].strip('/')
-                if not re.fullmatch(r'[A-Za-z0-9_-]{8,80}',token):raise Error('页面不存在',404)
-                body=(ROOT/'web'/'share.html').read_bytes()
-                self.send_response(200)
-                for k,v in [('Content-Type','text/html; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'")]:self.send_header(k,v)
-                self.end_headers();self.wfile.write(body);return
             if path.startswith('/api/'):
                 with connect() as db:
                     u=self.user(db);uid=u['id']
@@ -600,10 +584,6 @@ class Handler(BaseHTTPRequestHandler):
                     if path=='/api/groups/members':
                         return self.reply({'members':groups.members(db,str(q.get('group',[''])[0]),uid)})
                     if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
-                    if path=='/api/share-links':
-                        ticket=str(q.get('ticket',[''])[0])
-                        journal.trade(db,uid,ticket)
-                        return self.reply({**share_link.active(db,uid,ticket),'base':'/s/'})
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
                         return self.reply({**(journal.notes(db,target) if can else {'categories':journal.DEFAULT_TAGS,'notes':{}}),'can_view':can,'editable':target==uid})
@@ -671,7 +651,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))],'reviewed':journal.reviewed(db,uid)})
                     raise Error('接口不存在',404)
             assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/local-ea':'local-ea.html','/local-ea.css':'local-ea.css','/admin':'admin.html','/admin.js':'admin.js','/admin.css':'admin.css','/downloads/SyncNoteSync.mq5':'SyncNoteSync.mq5'}
-            for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','profile-prefs.js','style.css','favicon.svg','welcome.js','share.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
+            for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','profile-prefs.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
             if re.fullmatch(r'/avatars/avatar(?:[1-9]|1[0-2])\.svg',path):assets[path]=path.lstrip('/')
             # 首页就是交易台；旧看板挪到 /board。
             if path in ('/','/chart','/chart/'):
@@ -949,17 +929,6 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/chart/state':
                         ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
                         result=chart.clear_state(db,uid,ticket) if data.get('clear') is True else chart.save_state(db,uid,ticket,data.get('state'))
-                    elif path=='/api/share-links':
-                        ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
-                        if data.get('revoke') is True:
-                            result=share_link.revoke(db,uid,ticket)
-                        else:
-                            clock=db.execute('SELECT * FROM broker_clocks WHERE person=?',(uid,)).fetchone()
-                            review=journal.review(db,uid,ticket,clock,utc_trade)
-                            note=journal.notes(db,uid)['notes'].get(str(ticket))
-                            try:created=share_link.create(db,uid,ticket,review,note,u)
-                            except share_link.ShareError as e:raise Error(str(e),409)
-                            result={**created,'url':'/s/'+created['token']}
                     elif path=='/api/reviews/share':
                         ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
                         result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''),data.get('snapshot'))

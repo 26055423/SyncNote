@@ -205,25 +205,6 @@ def main():
    alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'snapshot':{'timeframe':'5'}},status=400)
    alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'snapshot':{'anchor_ms':'now'}},status=400)
    alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'snapshot':{'anchor_ms':1700000000000,'document':{'version':9}}},status=400)
-   # 对外链接需要这笔交易已经有 K 线：写一份最小的复盘载荷。
-   review_payload={'opened_server':1700000000,'time_basis':'server','charts':{'M5':[[1700000000,1.0,2.0,0.5,1.5,10],[1700000300,1.5,2.5,1.0,2.0,12]]}}
-   with sqlite3.connect(db) as conn:
-    conn.execute("INSERT OR REPLACE INTO trade_reviews(person,ticket,status,payload,updated) VALUES(?,?,'ready',?,?)",(a['id'],'fixture-1',json.dumps(review_payload),time.time()))
-    conn.commit()
-   # 对外链接：token 即凭证，不带登录也能读；撤销后立刻 404；范围只有这一笔。
-   link=alice.request('/api/share-links',{'ticket':'fixture-1'})
-   ensure(link['token'] and link['url']=='/s/'+link['token'],'share link created')
-   public=anon.request('/api/public/review?token='+link['token'])
-   ensure(public['trade']['ticket']=='fixture-1','public share keeps only that ticket')
-   ensure(public['note']['body']=='等回调确认再入场','public share carries the note')
-   ensure(bool(public['charts']),'public share carries charts')
-   ensure('owner' not in public and 'person' not in public['trade'],'public share leaks no account fields')
-   again=alice.request('/api/share-links',{'ticket':'fixture-1'})
-   ensure(again['token']==link['token'],'second request reuses the link')
-   bob.request('/api/share-links',{'ticket':'fixture-1'},status=404)
-   ensure(alice.request('/api/share-links',{'ticket':'fixture-1','revoke':True})['revoked'],'share link revoked')
-   anon.request('/api/public/review?token='+link['token'],status=404)
-   anon.request('/s/'+link['token'],status=200)
    alice_token=alice.request('/api/mt5/token',{})['token']
    bob_token=bob.request('/api/mt5/token',{})['token']
    people=admin.request('/api/admin/users')['users']

@@ -9,7 +9,6 @@ import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from 
 import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from './liveHistory';
 import { readTrackPage, readTrackHead, selectTrackSource, trackProviderName, type TrackCatalog, type TrackPage } from './trackHistory';
 import { readReviewPage, mergeReviewBars, type ReviewDirection } from './reviewHistory';
-import { ShareLinkButton } from './ShareLinkButton';
 import { LocalTradePanel } from './LocalTradePanel';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
@@ -1713,7 +1712,6 @@ export default function App() {
                       ) : <p className="dim">这是好友的复盘，笔记与画线只读。</p>}
 
                       {!entry.read_only ? <button type="button" className="tool-btn review-share-trigger" onClick={() => openReviewShare()}>分享复盘给好友或群聊</button> : null}
-                      {!entry.read_only ? <ShareLinkButton ticket={String(entry.review.trade.ticket)} /> : null}
                     </>
                   ) : target ? <p className="dim">正在加载这笔复盘…</p> : (
                     <div className="rail-empty">
