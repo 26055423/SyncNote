@@ -1238,3 +1238,39 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .data-chip.is-wait { border-color: var(--warn-line); color: var(--warn-ink); background: var(--warn-bg); }
 .data-chip.is-review { border-color: var(--line-strong); color: var(--text); }
 .context-banner.sync-status { background: var(--panel); border-color: var(--line); color: var(--text); }
+
+/* ---------------------------------------------------------------- 手机 / 窄屏 */
+/* 目标：< 860px 时图表独占一屏，右栏改成抽屉覆盖，工具栏单行横滑，不再挤成 2×2 小格。 */
+@media (max-width: 900px) {
+  /* 顶栏：换行 + 收紧留白 */
+  .topbar { flex-wrap: wrap; gap: 6px 10px; padding: 6px 10px; }
+  .brand small { display: none; }
+  .metrics { gap: 10px; font-size: 12px; }
+  .top-actions { gap: 6px; }
+  .top-actions > a, .top-actions > button, .top-actions .settings-trigger { height: 28px; padding: 0 8px; font-size: 12px; }
+
+  /* 工具栏：单行横向滚动，别占三行高度 */
+  .chart-toolbar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; padding: 4px 8px; scrollbar-width: none; }
+  .chart-toolbar::-webkit-scrollbar { display: none; }
+  .chart-toolbar > * { flex: 0 0 auto; }
+  .chart-toolbar .spacer { flex: 1 0 12px; min-width: 12px; }
+  .chart-toolbar .save-hint { display: none; }
+
+  /* 右栏：抽屉，覆盖在图表之上，不再挤占宽度 */
+  .main { position: relative; }
+  .rail:not(.is-collapsed) {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(92vw, 420px); z-index: 70;
+    box-shadow: -18px 0 42px var(--shadow, rgba(0, 0, 0, .45));
+  }
+  /* 折叠时留在文档流里，否则图标条会盖住 K 线右侧的价格轴。 */
+  .rail.is-collapsed { position: static; box-shadow: none; z-index: auto; width: 54px; flex-basis: 54px; height: auto; }
+  .rail.is-wide { width: min(92vw, 420px); flex-basis: auto; }
+
+  /* 底部持仓/历史矮一点，把高度还给图表 */
+  .dock-body { max-height: 132px; }
+  .dock.is-open .dock-body { max-height: 45vh; }
+
+  /* 弹层尽量铺满 */
+  .modal { width: min(94vw, 520px); max-height: 86vh; }
+}

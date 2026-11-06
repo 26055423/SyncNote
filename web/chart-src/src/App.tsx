@@ -193,7 +193,9 @@ export default function App() {
   const [shareRequest, setShareRequest] = useState<{ ticket: string; snapshot: unknown; initialRecipient?: { kind: 'dm' | 'group'; id: string } } | null>(null);
   const [chat, setChat] = useState('');
   const [tf, setTf] = useState('15');
-  const [layout, setLayout] = useState('4');
+  const [layout, setLayout] = useState(() => (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches ? '1' : '4'));
+  /** 窄屏（手机）：一格图表、右栏抽屉、底部抽屉默认收起。 */
+  const [narrow, setNarrow] = useState(() => (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches ? true : false));
   const [syncs, setSyncs] = useState<Partial<Record<SyncKind, boolean>>>({});
   const [favs, setFavs] = useState<string[]>(() => {
     try {
@@ -1130,6 +1132,26 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [mode, marketInfo?.source, liveOlder]);
 
+  /** 窄屏没有横向空间放 2×2：首次进入手机宽度时切成单格，回到宽屏不强行改回。 */
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(max-width: 900px)');
+    setNarrow(mq.matches);
+    if (mq.matches) {
+      chartRef.current?.setLayout('1');
+      setLayout('1');
+    }
+    const onChange = (event: MediaQueryListEvent) => {
+      setNarrow(event.matches);
+      if (event.matches) {
+        chartRef.current?.setLayout('1');
+        setLayout('1');
+      }
+    };
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+
   const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
     const recipe = TIMEFRAMES[info.timeframe];
     if (!recipe) return;
@@ -1356,6 +1378,7 @@ export default function App() {
               <ChartWorkspace
                 key={`live:${marketInfo?.source ?? 'loading'}:${liveSymbol}`}
                 ref={chartRef}
+                forceLayout={narrow ? '1' : undefined}
                 charts={liveSeries}
                 provider={liveBars ? liveProvider : undefined}
                 providerName={marketInfo?.source ? trackProviderName(marketInfo.source) : 'trackpending'}
@@ -1377,6 +1400,7 @@ export default function App() {
               <ChartWorkspace
                 key={shareId != null ? `share:${shareId}` : `${target?.person}:${target?.ticket}`}
                 ref={chartRef}
+                forceLayout={narrow ? '1' : undefined}
                 charts={series ?? entry!.review.charts}
                 symbol={trade.symbol || 'XAUUSD'}
                 anchorMs={anchorMs}

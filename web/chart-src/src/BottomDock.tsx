@@ -35,7 +35,8 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
       if (saved === '0') return false;
       if (saved === '1') return true;
     } catch { /* 忽略 */ }
-    return window.innerHeight >= 760;
+    // 手机上默认收起：把高度还给图表（用户手动展开过就记住）。
+    return window.innerWidth > 900 && window.innerHeight >= 760;
   });
   const [sortDesc, setSortDesc] = useState(true);
   const [limit, setLimit] = useState(200);

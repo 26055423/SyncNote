@@ -98,6 +98,8 @@ interface Props {
   onTool?: (type: string | null) => void;
   /** 某个格子的可见范围变了（已节流）：上层据此补段/删段。 */
   onViewport?: (info: { cellId: string; timeframe: string; from: number; to: number }) => void;
+  /** 窄屏强制布局（例如手机上一格）：回放存档后再套用一次。 */
+  forceLayout?: string;
   /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
@@ -473,6 +475,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             // 直接套用会让"面板已经换成浅色、K 线还是黑的"。主题由本站设置统一决定，
             // 所以回放前把渲染器配置剥掉。
             ws.applyState(stripTheme(savedState, providerName, symbol));
+          // 手机上一格就够：存档里可能是 2×2，回放后强制改回单格。
+          if (props.forceLayout) {
+            try { ws.setLayout?.(props.forceLayout); } catch { /* ignore */ }
+          }
           } catch {
             /* 存档不兼容时退回默认布局，不阻塞看图 */
           }
