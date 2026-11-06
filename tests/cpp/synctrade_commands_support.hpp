@@ -6,7 +6,7 @@ class CSyncTradeRisk{
  void Close(){}
  bool Healthy(){return fake_risk_healthy;}
  bool LossAllowed(const string&,double cap,string& error){fake_events.push_back("risk:loss");if(!fake_risk_healthy||(cap>0&&!fake_loss_allowed)){error="Synthetic daily loss lookup denied";return false;}return true;}
- bool Reserve(const string&,std::int64_t,int cap,string& error){fake_events.push_back("risk:reserve");if(!fake_risk_healthy||!fake_reserve_ok||fake_reserved>=cap){error="Synthetic reservation refused";return false;}fake_reserved++;return true;}
+ bool Reserve(const string&,std::int64_t,int cap,string& error){fake_events.push_back("risk:reserve");if(!fake_risk_healthy||!fake_reserve_ok||(cap>0&&fake_reserved>=cap)){error="Synthetic reservation refused";return false;}fake_reserved++;return true;}
  bool Release(const string&,string& error){fake_events.push_back("risk:release");if(!fake_release_ok){fake_risk_healthy=false;error="Synthetic release failed";return false;}if(fake_reserved>0)fake_reserved--;return true;}
  int Reserved(std::int64_t){return fake_reserved;}
 };

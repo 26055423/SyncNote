@@ -37,8 +37,10 @@ class CommandHandlerTests(unittest.TestCase):
   folder=Path(cls.temp.name);cpp=folder/'commands.cpp';cls.executable=folder/('commands.exe' if os.name=='nt' else 'commands')
   source=(ROOT/'bridge/SyncTrade.mq5').read_text(encoding='utf-8-sig')
   inputs='\n'.join(re.findall(r'^input\s+(.+?;)',source,re.M))
-  selected=['LocalDemo','LocalReal','LocalHedging','LocalManageAllowed','LocalCanTrade','NewOrderAction','NettingOrderAllowed','ExposureAllowed','OpeningAllowed','VolumeValid','PriceValid','StopsValid','PendingStopsValid','PendingSideValid','SetFill','HandleTradeCommand']
-  fragments=[(ROOT/'tests/cpp/synctrade_runtime.hpp').read_text(encoding='utf-8'),cpp_source(inputs),cpp_source((ROOT/'bridge/SyncNoteLocalJson.mqh').read_text(encoding='utf-8-sig'))]
+  no_quotas=re.search(r'^#define\s+LOCAL_NO_QUOTAS\s+[^\r\n]+',source,re.M)
+  if not no_quotas:raise AssertionError('Production quota policy declaration not found')
+  selected=['LocalDemo','LocalReal','LocalHedging','LocalManageAllowed','LocalCanTrade','BlockReason','NewOrderAction','NettingOrderAllowed','ExposureAllowed','OpeningAllowed','VolumeValid','PriceValid','StopsValid','PendingStopsValid','PendingSideValid','SetFill','HandleTradeCommand']
+  fragments=[(ROOT/'tests/cpp/synctrade_runtime.hpp').read_text(encoding='utf-8'),no_quotas.group(0),cpp_source(inputs),cpp_source((ROOT/'bridge/SyncNoteLocalJson.mqh').read_text(encoding='utf-8-sig'))]
   policy=ROOT/'bridge/SyncNoteLocalSafety.mqh'
   if policy.exists():fragments.append(cpp_source(policy.read_text(encoding='utf-8-sig')))
   fragments.append((ROOT/'tests/cpp/synctrade_commands_support.hpp').read_text(encoding='utf-8'))
@@ -55,14 +57,14 @@ class CommandHandlerTests(unittest.TestCase):
   result=subprocess.run([str(self.executable),scenario],input=json.dumps(request),capture_output=True,text=True,check=True)
   return json.loads(result.stdout)
 
- def test_demo_and_explicit_real_trading_reach_submission(self):
-  for scenario in ('demo','real_enabled'):
+ def test_current_quota_policy_does_not_gate_account_type_or_legacy_opt_in_flags(self):
+  for scenario in ('demo','real_enabled','trading_off','real_off','real_zero_cap','contest'):
    with self.subTest(scenario=scenario):
     result=self.run_command(scenario);self.assertEqual(result['sends'],1,result)
     self.assertEqual(result['result']['state'],'completed',result)
 
- def test_permission_real_switch_and_deadline_fail_closed(self):
-  for scenario in ('trading_off','real_off','real_zero_cap','contest','permissions_off','expired','journal_failed','expires_during_flush','account_changes_during_flush'):
+ def test_permission_deadline_and_durable_intent_fail_closed(self):
+  for scenario in ('permissions_off','expired','journal_failed','expires_during_flush','account_changes_during_flush'):
    with self.subTest(scenario=scenario):
     result=self.run_command(scenario);self.assertEqual(result['sends'],0,result)
     self.assertEqual(result['result']['state'],'rejected',result)
@@ -89,8 +91,8 @@ class CommandHandlerTests(unittest.TestCase):
   self.assertEqual(result['sends'],0,result)
   self.assertEqual(result['result']['state'],'rejected',result)
 
- def test_real_risk_failures_block_before_any_broker_call(self):
-  for scenario in ('real_risk_unhealthy','real_loss_unavailable','real_reserve_failed'):
+ def test_real_ledger_health_and_durability_failures_block_before_any_broker_call(self):
+  for scenario in ('real_risk_unhealthy','real_reserve_failed'):
    with self.subTest(scenario=scenario):
     result=self.run_command(scenario);self.assertEqual(result['sends'],0,result)
     self.assertEqual(result['result']['state'],'rejected',result)
@@ -127,11 +129,18 @@ class CommandHandlerTests(unittest.TestCase):
   self.assertEqual(result['reserved'],0,result)
   self.assertIn('risk:release',result['events'])
 
- def test_exposure_and_unreadable_inventory_fail_closed(self):
-  for scenario in ('position_symbol_unavailable','order_symbol_unavailable','pending_exposure_limit','netting_existing_order'):
+ def test_quota_unrestricted_skips_local_lot_exposure_and_daily_loss_gates(self):
+  for scenario in ('demo','real_enabled','real_loss_unavailable','position_symbol_unavailable','order_symbol_unavailable','pending_exposure_limit'):
    with self.subTest(scenario=scenario):
-    result=self.run_command(scenario);self.assertEqual(result['sends'],0,result)
-    self.assertEqual(result['result']['state'],'rejected',result)
+    result=self.run_command(scenario,volume=.2);self.assertEqual(result['sends'],1,result)
+    self.assertEqual(result['result']['state'],'completed',result)
+    self.assertNotIn('risk:loss',result['events'],result)
+
+ def test_broker_lot_rules_and_netting_existing_order_still_fail_closed(self):
+  result=self.run_command('netting_existing_order');self.assertEqual(result['sends'],0,result)
+  self.assertEqual(result['result']['state'],'rejected',result)
+  off_grid=self.run_command(volume=.015);self.assertEqual(off_grid['sends'],0,off_grid)
+  self.assertEqual(off_grid['result']['state'],'rejected',off_grid)
 
  def test_real_account_change_before_send_releases_the_old_reservation(self):
   result=self.run_command('real_account_changes_during_flush')

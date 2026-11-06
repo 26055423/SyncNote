@@ -1,7 +1,7 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.010"
+#property version "1.011"
 #property description "Read-only history, review charts and shared K-line track backfill. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 
@@ -11,11 +11,10 @@ input int SyncSeconds=15;
 input int HistoryDays=365;
 input int OverlapSeconds=3600;
 input int ReconcileHours=24; // Periodically replay the whole configured range for older corrections.
-input bool UploadBars=true;   // 把历史 K 线连续回填进服务器共享数据轨道(供无 MT5 的用户复盘)
-input int BarsBackfillYears=5; // 回填最多回溯多少年(夹在"最早交易"与此上限之间)
+input bool UploadBars=true;   // 当前图表品种近7天K线与持续增量；不恢复旧多年回溯任务
 
 CSyncNoteHistory g_snh;
-string g_sn_origin="",g_sn_account="",g_sn_server="",g_sn_key="",g_sn_state_path="",g_sn_binding_path="";
+string g_sn_origin="",g_sn_account="",g_sn_server="",g_sn_key="",g_sn_state_path="",g_sn_binding_path="",g_sn_sync_scope="";
 string g_sn_cursor="",g_sn_pending="",g_sn_batch="";
 long g_sn_from=0,g_sn_to=0,g_sn_completed=0,g_sn_last_full=0;
 bool g_sn_full_run=false,g_sn_paused=false;
@@ -24,16 +23,6 @@ int g_sn_failures=0,g_sn_ack_batches=0;
 string g_sn_review_ticket="",g_sn_review_symbol="";
 long g_sn_review_opened=0,g_sn_review_closed=0;
 int g_sn_review_attempts=0;
-// --- 历史 K 线连续回填(共享数据轨道)---
-// 四周期各一个游标(券商墙钟秒),从最新往回填到 floor;到 floor 或 EA 给不出更早即完成。
-string g_sn_bf_state_path="";
-long g_sn_bf_floor=0;                 // 回填下界(最早交易-100根 与 N 年 取较晚)
-long g_sn_bf_cursor[4];               // M1/M5/M15/H1 当前游标
-bool g_sn_bf_floored[4];              // 该周期已到可得边界
-bool g_sn_bf_done=false,g_sn_bf_inited=false;
-int g_sn_bf_tf=0;                     // 当前轮到哪个周期
-ulong g_sn_bf_next=0;                 // 下次推进 K 线回填的时刻(和成交上传错开)
-
 bool SNOriginValid(string &origin)
 {
  while(StringLen(origin)>0&&StringSubstr(origin,StringLen(origin)-1)=="/")origin=StringSubstr(origin,0,StringLen(origin)-1);
@@ -102,6 +91,7 @@ void SNPause(const string reason)
 {
  g_sn_paused=true;g_snh.Reset();g_sn_pending="";g_sn_batch="";g_sn_review_ticket="";
  Print("SyncNote paused: ",reason); // No connection code or response body is logged.
+ SNPaint();
 }
 void SNBackoff(const string reason)
 {
@@ -155,7 +145,7 @@ void SNTryReview()
    else for(int j=0;j<count;j++)
    {
     if(rows!="")rows+=",";
-    rows+="["+IntegerToString((long)rates[j].time)+","+SNJNumber(rates[j].open)+","+SNJNumber(rates[j].high)+","+SNJNumber(rates[j].low)+","+SNJNumber(rates[j].close)+"]";
+    rows+="["+IntegerToString((long)rates[j].time)+","+SNJNumber(rates[j].open)+","+SNJNumber(rates[j].high)+","+SNJNumber(rates[j].low)+","+SNJNumber(rates[j].close)+","+IntegerToString((long)rates[j].tick_volume)+"]";
    }
   }
   if(reason=="history_unavailable")waiting=true;
@@ -171,107 +161,8 @@ void SNTryReview()
  if(code==200)g_sn_review_ticket="";
  else {Print("SyncNote: review upload pending; HTTP ",code);g_sn_review_ticket="";} // Server keeps the unacknowledged job for a later history ACK.
 }
-// --- 历史 K 线连续回填(共享数据轨道)---
-// 对齐 SyncTrade 的 backfillBars:四周期从最新往回填满到 floor,查 coverage 跳已填(同券商复用),
-// 每段 ≤2000 根,到 floor 或 EA 给不出更早即完成。纯 CopyRates+WebRequest,守只读不变量。
-int SNBarsTfSeconds(const int idx){int s[]={60,300,900,3600};return s[idx];}
-string SNBarsTfName(const int idx){string n[]={"M1","M5","M15","H1"};return n[idx];}
-ENUM_TIMEFRAMES SNBarsTfPeriod(const int idx){ENUM_TIMEFRAMES p[]={PERIOD_M1,PERIOD_M5,PERIOD_M15,PERIOD_H1};return p[idx];}
-bool SNBarsSaveState()
-{
- string body="SYNCNOTE_BARS_1\n"+g_sn_key+"\n"+IntegerToString(g_sn_bf_floor)+"\n";
- for(int i=0;i<4;i++)body+=IntegerToString(g_sn_bf_cursor[i])+"\n"+(g_sn_bf_floored[i]?"1":"0")+"\n";
- body+=(g_sn_bf_done?"1":"0")+"\n";
- string checksum=SNJHash(body);if(checksum=="")return false;
- string temp=g_sn_bf_state_path+".next";
- if(!SNWriteExact(temp,body+checksum+"\n"))return false;
- return FileMove(temp,0,g_sn_bf_state_path,FILE_REWRITE);
-}
-void SNBarsLoadState()
-{
- for(int i=0;i<4;i++){g_sn_bf_cursor[i]=0;g_sn_bf_floored[i]=false;}
- g_sn_bf_floor=0;g_sn_bf_done=false;
- if(!FileIsExist(g_sn_bf_state_path))return;
- int f=FileOpen(g_sn_bf_state_path,FILE_READ|FILE_TXT|FILE_ANSI,0,CP_UTF8);if(f==INVALID_HANDLE)return;
- string fields[];ArrayResize(fields,13);
- for(int i=0;i<13;i++){if(FileIsEnding(f)){FileClose(f);return;}fields[i]=FileReadString(f);}
- FileClose(f);
- string b="";for(int i=0;i<12;i++)b+=fields[i]+"\n";
- if(fields[0]!="SYNCNOTE_BARS_1"||fields[1]!=g_sn_key||SNJHash(b)!=fields[12])return;
- long v;if(!SNJSignedPositive(fields[2],v))return;g_sn_bf_floor=v;
- for(int i=0;i<4;i++){if(SNJSignedPositive(fields[3+i*2],v))g_sn_bf_cursor[i]=v;g_sn_bf_floored[i]=(fields[4+i*2]=="1");}
- g_sn_bf_done=(fields[11]=="1");
-}
-void SNBarsInit()
-{
- long now=(long)TimeTradeServer();if(now<1)return;
- g_sn_bf_floor=MathMax(1,now-(long)MathMax(1,BarsBackfillYears)*365*86400);
- for(int i=0;i<4;i++){g_sn_bf_cursor[i]=now;g_sn_bf_floored[i]=false;}
- g_sn_bf_done=false;SNBarsLoadState();g_sn_bf_inited=true;
-}
-// 返回下一个还没填完的周期索引,没有则 -1。
-int SNBarsNextTf()
-{
- for(int i=0;i<4;i++)if(!g_sn_bf_floored[i]&&g_sn_bf_cursor[i]>g_sn_bf_floor)return i;
- return -1;
-}
-// 推进一段 K 线回填(查 coverage → CopyRates → POST backfill)。每拍最多发两个 WebRequest。
-void SNBarsPump()
-{
- if(!UploadBars||g_sn_bf_done||!SNStillBound())return;
- int idx=SNBarsNextTf();
- if(idx<0){if(!g_sn_bf_done){g_sn_bf_done=true;SNBarsSaveState();}return;}
- int period=SNBarsTfSeconds(idx);string tf=SNBarsTfName(idx);
- long to=g_sn_bf_cursor[idx];long from=MathMax(to-2000*period,g_sn_bf_floor);
- if(from>=to){g_sn_bf_cursor[idx]=g_sn_bf_floor;SNBarsSaveState();return;}
- string auth=",\"account_key\":"+SNJQuote(g_sn_key)+",\"account\":"+SNJQuote(g_sn_account)+",\"server\":"+SNJQuote(g_sn_server);
- // 用当前图表品种作回填品种(SyncNote 挂在哪个品种图上就填哪个)。
- string symbol=Symbol();
- // ① 查这段填过没(同券商别人填的直接跳)。失败不致命:退回按整段拉。
- // 可能有多个空洞:本轮只填最右那个,游标前移到该洞左界(advance_to),左侧其余洞下一轮再填,不丢段。
- long fetch_from=from,fetch_to=to,advance_to=from;
- string covbody="{\"symbol\":"+SNJQuote(symbol)+",\"tf\":"+SNJQuote(tf)+",\"from\":"+IntegerToString(from)+",\"to\":"+IntegerToString(to)+auth+"}";
- string covreply;int covcode=SNPost("/api/market/coverage",covbody,covreply);
- if(covcode==200)
- {
-  string holesraw;long hf=0,ht=0;
-  if(SNJTop(covreply,"holes",holesraw)&&holesraw=="0"){g_sn_bf_cursor[idx]=from;SNBarsSaveState();return;} // 整段已覆盖
-  string hfs,hts;
-  if(SNJTop(covreply,"hole_from",hfs)&&SNJTop(covreply,"hole_to",hts)&&SNJSignedPositive(hfs,hf)&&SNJSignedPositive(hts,ht)&&ht>hf)
-  {fetch_from=MathMax(hf,from);fetch_to=MathMin(ht,to);advance_to=fetch_from;}
- }
- else if(covcode==401||covcode==403||covcode==409){SNPause("K 线回填鉴权被拒;核对连接码");return;}
- // ② 拉这段 K 线。
- if(!SymbolSelect(symbol,true)){g_sn_bf_floored[idx]=true;SNBarsSaveState();return;}
- MqlRates rates[];ArraySetAsSeries(rates,false);
- // MT5 可得历史的起点:窗口比这更早时夹到起点,不要整段失败。
- long first=(long)SeriesInfoInteger(symbol,SNBarsTfPeriod(idx),SERIES_FIRSTDATE);
- long period_sec=SNBarsTfSeconds(idx);
- if(first>0 && fetch_from<first) fetch_from=first-first%period_sec;
- int count=CopyRates(symbol,SNBarsTfPeriod(idx),(datetime)fetch_from,(datetime)fetch_to,rates);
- if(count<1)
- {
-  // 整个窗口都早于可得历史才算到底;周末/休市的空窗(窗口内一根都没有)只跳过这一段,
-  // 游标继续往左走,下次会拿到有数据的窗口。
-  if(first>0 && first>=fetch_to){g_sn_bf_floored[idx]=true;SNBarsSaveState();Print("SyncNote bars: ",tf," reached available floor");return;}
-  g_sn_bf_cursor[idx]=(fetch_from>g_sn_bf_floor)?fetch_from:g_sn_bf_floor;SNBarsSaveState();return;
- }
- if(count>2000)count=2000;
- string rows="";
- for(int j=0;j<count;j++)
- {
-  if(rows!="")rows+=",";
-  rows+="["+IntegerToString((long)rates[j].time)+","+SNJNumber(rates[j].open)+","+SNJNumber(rates[j].high)+","+SNJNumber(rates[j].low)+","+SNJNumber(rates[j].close)+","+IntegerToString((long)rates[j].tick_volume)+"]";
- }
- // ③ 回填入库(连续填满;服务器 bars.ingest 幂等去重,墙钟进墙钟出)。
- string body="{\"symbol\":"+SNJQuote(symbol)+",\"tf\":"+SNJQuote(tf)+",\"from_server\":"+IntegerToString(fetch_from)+",\"to_server\":"+IntegerToString(fetch_to)+",\"bars\":["+rows+"]"+auth+"}";
- string reply;int code=SNPost("/api/market/backfill",body,reply);
- // 游标前移到 advance_to(洞左界;无洞=整段 from)。防卡:必须严格小于 to,否则退到 from。
- long next_cursor=(advance_to<to)?advance_to:from;
- if(code==200){g_sn_bf_cursor[idx]=next_cursor;SNBarsSaveState();}
- else if(code==401||code==403||code==409){SNPause("K 线回填鉴权被拒;核对连接码");}
- else Print("SyncNote bars: backfill ",tf," pending; HTTP ",code); // 不前移游标,下拍重试
-}
+#include "SyncNoteBars.mqh"
+
 void SNStartRange()
 {
  if(g_sn_from==0)
@@ -325,18 +216,8 @@ void SNUploadPending()
 }
 void SNPaint()
 {
- string bars_line="";
- if(UploadBars)
- {
-  if(g_sn_bf_done)bars_line="\nK 线轨道: 已完整";
-  else if(g_sn_bf_inited)
-  {
-   int idx=SNBarsNextTf();
-   bars_line=idx<0?"\nK 线轨道: 已完整":"\nK 线轨道回填中: "+SNBarsTfName(idx)+" 已回溯到 "+TimeToString((datetime)g_sn_bf_cursor[idx],TIME_DATE);
-  }
-  else bars_line="\nK 线轨道: 待初始化";
- }
- Comment("SyncNote · 只读历史同步\n",g_sn_account," @ ",g_sn_server,
+ string bars_line=UploadBars?SNBarsStatus():"";
+ Comment("SyncNote 1.011 · 只读历史同步\n",g_sn_account," @ ",g_sn_server,
   "\n网站: ",g_sn_origin,"\n无交易、无 DLL、无本机监听；不上传余额/净值/实时持仓",
   "\n已确认批次: ",g_sn_ack_batches,"；历史范围: ",HistoryDays," 天",bars_line,
   g_sn_paused?"\n已暂停：请核对账号和连接码后重新挂载。":"\nMT5 运行时自动同步；浏览器可以关闭。");
@@ -356,9 +237,10 @@ int OnInit()
  FolderCreate("SyncNote");
  g_sn_binding_path="SyncNote\\binding-"+StringSubstr(token_hash,0,24)+".txt";
  g_sn_state_path="SyncNote\\history-"+StringSubstr(g_sn_key,0,24)+"-"+StringSubstr(scope,0,16)+".state";
- g_sn_bf_state_path="SyncNote\\bars-"+StringSubstr(g_sn_key,0,24)+".state";
  if(!SNBindToken()){Print("SyncNote: connection code is locally bound to another account or storage failed. Generate a new connection code.");return INIT_FAILED;}
  if(!SNLoadState()){Print("SyncNote: checkpoint invalid; safely restarting configured history range (server deduplicates)");g_sn_from=0;g_sn_to=0;g_sn_cursor="";g_sn_completed=0;g_sn_last_full=0;g_snh.Reset();}
+ g_sn_sync_scope=scope;
+ if(UploadBars)SNBarsInit(g_sn_sync_scope);
  if(!EventSetMillisecondTimer(200))return INIT_FAILED;
  SNPaint();return INIT_SUCCEEDED;
 }
@@ -377,13 +259,20 @@ void OnTimer()
  if(g_snh.Failed()){string error=g_snh.Error();g_snh.Reset();SNBackoff(error);return;}
  if(!g_snh.Busy()&&!g_snh.Ready()&&g_sn_pending=="")
  {
-  // 成交历史已填完这一轮:利用间隙推进一段 K 线回填(与成交上传错开,每拍只发自己的 WebRequest)。
-  if(!g_sn_bf_inited)SNBarsInit();
-  if(UploadBars&&!g_sn_bf_done&&now>=g_sn_bf_next)
+  // Bind/confirm history first. Bar uploads must never pause a fresh unbound code.
+  if(now>=g_sn_next_upload)SNStartRange();
+  else
   {
-   SNBarsPump();g_sn_bf_next=GetTickCount64()+(ulong)MathMax(3,SyncSeconds)*1000;return;
+   if(UploadBars&&g_sn_ack_batches>0)
+   {
+    if(!g_sn_bf_inited)SNBarsInit(g_sn_sync_scope);
+    if(g_sn_bf_inited&&now>=g_sn_bf_next)
+    {
+     SNBarsPump();g_sn_bf_next=GetTickCount64()+(ulong)MathMax(3,SyncSeconds)*1000;
+    }
+   }
+   return;
   }
-  if(now<g_sn_next_upload)return;SNStartRange();
  }
  g_snh.Pump(32);
  if(g_snh.Ready())SNBuildPending();

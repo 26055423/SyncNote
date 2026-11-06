@@ -3,7 +3,7 @@
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading requires local pairing consent and durable journals; account-type and quota gates are disabled.
 #property copyright "SyncTrade"
-#property version "1.105"
+#property version "1.106"
 #property strict
 #property description "Windows localhost EA. Local pairing consent required; no account-type or quota gates."
 
@@ -38,7 +38,7 @@ input int InpTickPushMs=100;                           // Tick push interval (50
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.105"
+#define LOCAL_VERSION "1.106"
 // Only account-type and volume/exposure/daily quotas are removed. Other protections remain.
 #define LOCAL_NO_QUOTAS true
 #define JOURNAL_MAX 10000

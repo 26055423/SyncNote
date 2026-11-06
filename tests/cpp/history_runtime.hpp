@@ -43,21 +43,23 @@ struct FakeDeal{std::uint64_t ticket,position,order;std::int64_t stamp;int type,
 std::vector<FakeDeal> fake_deals;
 std::vector<std::uint64_t> fake_selected;
 std::set<std::uint64_t> fake_missing_positions;
+std::set<std::uint64_t> fake_timestamp_failures;
 std::int64_t fake_login=1001;
 string fake_server="Synthetic-Demo";
 int fake_queries=0,fake_error=0;
 bool fake_change_during_query=false;
+bool fake_change_during_select=false;
 const FakeDeal* FakeFind(std::uint64_t ticket){for(const auto& d:fake_deals)if(d.ticket==ticket)return &d;return nullptr;}
 std::int64_t AccountInfoInteger(int){return fake_login;}
 string AccountInfoString(int){return fake_server;}
 void ResetLastError(){fake_error=0;}
 int GetLastError(){return fake_error;}
-bool HistorySelect(datetime from,datetime to){fake_selected.clear();for(const auto& d:fake_deals)if(d.stamp/1000>=from&&d.stamp/1000<=to)fake_selected.push_back(d.ticket);return true;}
+bool HistorySelect(datetime from,datetime to){fake_selected.clear();if(fake_change_during_select){fake_login++;return true;}for(const auto& d:fake_deals)if(d.stamp/1000>=from&&d.stamp/1000<=to)fake_selected.push_back(d.ticket);return true;}
 bool HistorySelectByPosition(std::uint64_t position){fake_queries++;fake_selected.clear();if(fake_change_during_query)fake_login++;if(fake_missing_positions.count(position)){fake_error=4401;return false;}for(const auto& d:fake_deals)if(d.position==position)fake_selected.push_back(d.ticket);return true;}
 int HistoryDealsTotal(){return ArraySize(fake_selected);}
 std::uint64_t HistoryDealGetTicket(int i){return i<0||i>=ArraySize(fake_selected)?0:fake_selected[i];}
 bool HistoryDealSelect(std::uint64_t ticket){fake_selected.clear();if(!FakeFind(ticket)){fake_error=4401;return false;}fake_selected.push_back(ticket);return true;}
-std::int64_t HistoryDealGetInteger(std::uint64_t ticket,IntegerProperty p){const auto* d=FakeFind(ticket);if(!d){fake_error=4401;return 0;}switch(p){case DEAL_TIME_MSC:return d->stamp;case DEAL_TIME:return d->stamp/1000;case DEAL_ORDER:return static_cast<std::int64_t>(d->order);case DEAL_POSITION_ID:return static_cast<std::int64_t>(d->position);case DEAL_TYPE:return d->type;case DEAL_ENTRY:return d->entry;default:return 0;}}
-bool HistoryDealGetInteger(std::uint64_t ticket,IntegerProperty p,std::int64_t& out){if(!FakeFind(ticket)){fake_error=4401;return false;}out=HistoryDealGetInteger(ticket,p);return true;}
+std::int64_t HistoryDealGetInteger(std::uint64_t ticket,IntegerProperty p){const auto* d=FakeFind(ticket);if(!d){fake_error=4401;return 0;}if(p==DEAL_TIME_MSC&&fake_timestamp_failures.count(ticket)){fake_error=4403;return 0;}switch(p){case DEAL_TIME_MSC:return d->stamp;case DEAL_TIME:return d->stamp/1000;case DEAL_ORDER:return static_cast<std::int64_t>(d->order);case DEAL_POSITION_ID:return static_cast<std::int64_t>(d->position);case DEAL_TYPE:return d->type;case DEAL_ENTRY:return d->entry;default:return 0;}}
+bool HistoryDealGetInteger(std::uint64_t ticket,IntegerProperty p,std::int64_t& out){if(!FakeFind(ticket)||(p==DEAL_TIME_MSC&&fake_timestamp_failures.count(ticket))){fake_error=4403;return false;}out=HistoryDealGetInteger(ticket,p);return true;}
 double HistoryDealGetDouble(std::uint64_t ticket,DoubleProperty p){const auto* d=FakeFind(ticket);if(!d)return 0;switch(p){case DEAL_VOLUME:return d->volume;case DEAL_PRICE:return d->price;case DEAL_PROFIT:return d->profit;default:return 0;}}
 string HistoryDealGetString(std::uint64_t ticket,StringProperty p){const auto* d=FakeFind(ticket);return p==DEAL_SYMBOL&&d&&d->type<2?"XAUUSD":"";}

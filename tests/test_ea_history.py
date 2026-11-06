@@ -114,4 +114,16 @@ class HistoryRuntimeTests(unittest.TestCase):
   self.assertIn('ACCOUNT_CHANGED',result.get('error',''))
   self.assertNotIn('pages',result)
 
+ def test_timestamp_read_failure_on_resume_cannot_skip_a_deal_or_ack_the_window(self):
+  result=self.scenario('timestamp_failure_resume')
+  self.assertIn('HISTORY_TIMESTAMP_FAILED',result.get('error',''))
+  self.assertEqual(result['completed_pages'],1)
+  self.assertNotIn('pages',result)
+
+ def test_account_switch_during_empty_select_cannot_ack_an_empty_window(self):
+  result=self.scenario('account_change_empty_select')
+  self.assertIn('ACCOUNT_CHANGED',result.get('error',''))
+  self.assertEqual(result['completed_pages'],0)
+  self.assertNotIn('pages',result)
+
 if __name__=='__main__':unittest.main()

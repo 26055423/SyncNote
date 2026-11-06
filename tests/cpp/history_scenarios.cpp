@@ -1,6 +1,10 @@
 constexpr std::int64_t START=1700000000;
 void Fixture(const string& name){
- if(name=="same_second"){
+ if(name=="account_change_empty_select"){
+  fake_change_during_select=true;
+ }else if(name=="timestamp_failure_resume"){
+  for(int i=0;i<120;i++)fake_deals.push_back({static_cast<std::uint64_t>(10001+i),0,0,(START+1+i)*1000,2,0});
+ }else if(name=="same_second"){
   for(int i=149;i>=0;i--)fake_deals.push_back({9007199254740993ULL+static_cast<std::uint64_t>(i),0,0,START*1000+100,2,0});
  }else if(name=="many_positions"){
   for(int i=0;i<4;i++){auto p=static_cast<std::uint64_t>(5001+i);fake_deals.push_back({static_cast<std::uint64_t>(510+i*2),p,p,(START+1+i)*1000,0,0});fake_deals.push_back({static_cast<std::uint64_t>(511+i*2),p,p,(START+61+i)*1000,1,1,2410,.1,100});}
@@ -25,12 +29,13 @@ int main(int argc,char** argv){
    if(pumps>20000)throw std::runtime_error("pager did not terminate");
   }
   if(history.Failed()){
-   std::cout<<"{\"error\":"<<SNJQuote(history.Error())<<",\"queries\":"<<fake_queries<<",\"max_queries_per_pump\":"<<max_queries<<"}";return 0;
+   std::cout<<"{\"error\":"<<SNJQuote(history.Error())<<",\"completed_pages\":"<<page_count<<",\"queries\":"<<fake_queries<<",\"max_queries_per_pump\":"<<max_queries<<"}";return 0;
   }
   if(!history.Ready())throw std::runtime_error("pager not ready");
   if(page_count++)pages+=",";
   pages+="{\"deals\":"+history.DealsJson()+",\"through_server\":"+IntegerToString(history.ThroughServer())+",\"has_more\":"+(history.HasMore()?string("true"):string("false"))+",\"cursor\":"+SNJQuote(history.NextCursor())+"}";
   more=history.HasMore();cursor=history.NextCursor();
+  if(scenario=="timestamp_failure_resume"&&page_count==1)fake_timestamp_failures.insert(10051);
  }
  std::cout<<"{\"pages\":"<<pages<<"],\"queries\":"<<fake_queries<<",\"max_queries_per_pump\":"<<max_queries<<",\"pumps\":"<<pumps<<"}";
 }

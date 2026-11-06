@@ -24,12 +24,14 @@ def source_package(root,product='legacy'):
   if len(body)>2*1024*1024:raise ValueError('EA source is too large')
   files[name]=body
   source=body.decode('utf-8-sig')
-  for include in re.findall(r'^\s*#include\s+"([^"\r\n]+)"',source,re.M):
+  for include in re.findall(r'^\s*#\s*include\s+"([^"\r\n]+)"',source,re.M):
    collect((path.parent/include).relative_to(base))
  collect(Path(entry))
  if product=='syncnote':
   for name,body in files.items():
-   if re.search(r'^\s*#import\b|\b(?:OrderSend|OrderSendAsync|CTrade|SocketCreate)\s*\(',body.decode('utf-8-sig'),re.M):raise ValueError('SyncNote must remain read-only without DLL or trade execution dependencies')
+   source=body.decode('utf-8-sig')
+   if re.search(r'^\s*#\s*include\s*<',source,re.M):raise ValueError('SyncNote includes must be local quoted source files so every dependency is packaged')
+   if re.search(r'^\s*#\s*import\b|\bCTrade\b|\b(?:OrderSend|OrderSendAsync|SocketCreate)\s*\(',source,re.M):raise ValueError('SyncNote must remain read-only without DLL or trade execution dependencies')
  for name in docs:
   files[name]=(base/name).read_bytes()
  manifest={'format':1,'product':folder,'entry':entry,'files':{name:hashlib.sha256(body).hexdigest() for name,body in sorted(files.items())}}

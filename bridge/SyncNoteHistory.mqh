@@ -155,6 +155,9 @@ public:
    long select_from=m_after_msc>0?MathMax(m_window_from,m_after_msc/1000):m_window_from;
    ResetLastError();
    if(!HistorySelect((datetime)select_from,(datetime)m_window_to)){Fail("HISTORY_SELECT_FAILED: "+IntegerToString(GetLastError()));return;}
+   // HistorySelect may block while MT5 changes account. An empty result must
+   // not reach Finish under the previous account's authorization.
+   if(!Bound()){Fail("ACCOUNT_CHANGED");return;}
    int total=HistoryDealsTotal();
    if(total>SNH_SLICE_LIMIT)
    {
@@ -166,7 +169,12 @@ public:
    for(int i=0;i<total;i++)
    {
     ulong ticket=HistoryDealGetTicket(i);if(ticket==0){Fail("HISTORY_TICKET_FAILED");return;}
-    m_tickets[i]=ticket;m_stamps[i]=HistoryDealGetInteger(ticket,DEAL_TIME_MSC);
+    long stamp=0;
+    // A failed scalar getter returns zero. On a resumed page that looks older
+    // than the cursor and would be silently skipped, falsely confirming coverage.
+    if(!HistoryDealGetInteger(ticket,DEAL_TIME_MSC,stamp)||stamp<select_from*1000||stamp>m_window_to*1000+999)
+    {Fail("HISTORY_TIMESTAMP_FAILED: retry same cursor");return;}
+    m_tickets[i]=ticket;m_stamps[i]=stamp;
    }
    if(total==0)
    {

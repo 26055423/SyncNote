@@ -437,6 +437,8 @@ def main():
              'symbol':'XAUUSD','tf':'M1','from_server':recent_start,'to_server':recent_start+15*60,
              'bars':recent_rows,'complete':True}
    uploaded=alice.request('/api/market/backfill',backfill)
+   ensure((uploaded['account_key'],uploaded['account'],uploaded['server'],uploaded['source'],uploaded['symbol'])==
+          (history_key,mt5_account,server_name,'srv:'+server_name,'XAUUSD'),'backfill ACK echoes the authenticated account, source and symbol')
    ensure(uploaded['summary']['accepted']==3 and uploaded['summary']['dropped']==1,'broker-wall recent bars accepted while future bar stays unclosed')
    ensure(uploaded['summary']['complete'] is False,'unproven backfill range never trusts a caller complete flag')
    with sqlite3.connect(db) as verify_db:
@@ -451,6 +453,8 @@ def main():
    empty_backfill={**backfill,'from_server':recent_start-3600,'to_server':recent_start-3000,'bars':[]}
    empty_result=alice.request('/api/market/backfill',empty_backfill)
    ensure(empty_result['summary']['state']=='pending' and not empty_result['summary']['complete'],'an empty unproven backfill is not declared a known market closure')
+   direct_result=anon.request('/api/market/backfill',empty_backfill,extra=history_bearer)
+   ensure(direct_result['account_key']==history_key and direct_result['summary']==empty_result['summary'],'SyncNote Bearer backfill uses the same conservative ingest and exact ACK')
    # ---- 两个源码包：同一套打包器，SyncNote 必须在打包时就被证明没有 DLL / 交易 / socket ----
    for path,product in (('/downloads/syncnote.zip','SyncNote'),('/downloads/synctrade.zip','SyncTrade')):
     with zipfile.ZipFile(io.BytesIO(anon.request(path))) as archive:

@@ -101,7 +101,7 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 - 服务已改名：`syncnote.service`、`syncnote-pull`、`nginx/syncnote.conf`；Cookie 仍是 `tongpin_session`（兼容保留）。
 - **云端不提供下单通道**：`ea_hub` 只收行情/账户。本机 EA（`bridge/SyncNoteLocal.mq5`）默认只读、仅模拟对冲账户允许交易，协议 `tongpin-local.v1`。
 - **本机 EA 首版只支持市价单**：协议没有挂单创建，网页的「限价 / 止损」按钮是禁用状态。
-- 上述首版边界指旧 `SyncNoteLocal`。当前 `SyncTrade` 1.105 支持市价与限价/止损挂单，本机配对授权后固定取消账户类型及本地手数/敞口/每日额度门槛，身份字段为 `quota_unrestricted:true`；不授予净额管理权限，日志、券商规则、点差/偏离、配对和未知结果不重试继续保留。`SyncNote` 仍保持只读。详见 `bridge/SyncTrade_README.md`。
+- 上述首版边界指旧 `SyncNoteLocal`。当前 `SyncTrade` 1.106 支持市价与限价/止损挂单，本机配对授权后固定取消账户类型及本地手数/敞口/每日额度门槛，身份字段为 `quota_unrestricted:true`；不授予净额管理权限，日志、券商规则、点差/偏离、配对和未知结果不重试继续保留。`SyncNote` 仍保持只读。详见 `bridge/SyncTrade_README.md`。
 - 顶栏价格：有实时行情时用 tick 中间价，否则取最后一根 K 线收盘。
 - 8788（EA hub）仍是明文 TCP；上 TLS 需要 EA 改用 `SocketTLSHandshake`。
 - 服务器 SSH 已关闭密码登录（只认密钥）；ufw 未启用（靠云安全组），fail2ban 未安装。
