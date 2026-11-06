@@ -264,6 +264,9 @@ export default function App() {
 
   const chartRef = useRef<ChartHandle>(null);
   const [replayActive, setReplayActive] = useState(false);
+  /** 回放「选起点」状态 + 鼠标横坐标：用来把选择线右侧的 K 线压成半透明。 */
+  const [replayArmed, setReplayArmed] = useState(false);
+  const [ghostX, setGhostX] = useState<number | null>(null);
   const saveTimer = useRef<number | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
   /** 拖动补段的滑动窗口：每个基础周期当前已加载的 K 线（秒）与范围（毫秒）。 */
@@ -1279,6 +1282,7 @@ export default function App() {
             <BarReplayControls
               chart={chartRef}
               onActiveChange={setReplayActive}
+              onArmedChange={setReplayArmed}
               onRandom={async () => {
                 // 随机起点：在「所有数据轨道的覆盖并集」里随机，再用 /api/market/bars 回查一次，
                 // 确认真有 K 线才跳；查空就换一个时点重试（用户无感）。
@@ -1397,7 +1401,18 @@ export default function App() {
             </div>
           ) : null}
 
-          <div className="chart-body">
+          <div
+            className="chart-body"
+            onPointerMove={(event) => {
+              if (!replayArmed) return;
+              const rect = event.currentTarget.getBoundingClientRect();
+              setGhostX(Math.max(0, Math.min(rect.width, event.clientX - rect.left)));
+            }}
+            onPointerLeave={() => setGhostX(null)}
+          >
+            {replayArmed && ghostX != null ? (
+              <div className="replay-ghost" style={{ left: ghostX }} aria-hidden="true" />
+            ) : null}
             {mode === 'live' && liveSeries ? (
               <ChartWorkspace
                 key={`live:${marketInfo?.source ?? 'loading'}:${liveSymbol}`}

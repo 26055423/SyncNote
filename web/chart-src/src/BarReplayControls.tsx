@@ -71,13 +71,15 @@ const MODES: Array<{ key: StartMode; label: string; hint: string; Icon: () => Re
  * 回放控制条：顶部工具栏内联，紧跟「行情 | 回放」。
  * 左边是「模式 + 执行」按钮，右边小三角切模式；随后是播放/逐根/速度/时钟/退出。
  */
-export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom }: {
+export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom, onArmedChange }: {
   chart: RefObject<ChartHandle | null>;
   onActiveChange: (active: boolean) => void;
   /** 跳到「最早可用日期」再开始回放；由上层按当前数据算最早一根。 */
   onEarliest?: () => Promise<void>;
   /** 随机挑一个「数据库里确实有数据」的时点开始回放。 */
   onRandom?: () => Promise<void>;
+  /** 是否处于「选起点」状态：上层据此画右侧半透明遮罩。 */
+  onArmedChange?: (armed: boolean) => void;
 }) {
   const [state, setState] = useState(idle);
   const [speed, setSpeed] = useState(1000);
@@ -97,10 +99,11 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom 
       const next = chart.current?.replayStatus() ?? idle;
       setState(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
       onActiveChange(next.active || next.armed || next.busy);
+      onArmedChange?.(Boolean(next.armed));
     };
     read(); const timer = window.setInterval(read, 200);
     return () => window.clearInterval(timer);
-  }, [chart, onActiveChange]);
+  }, [chart, onActiveChange, onArmedChange]);
 
   useEffect(() => {
     if (!menu) return;

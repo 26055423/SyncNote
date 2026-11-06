@@ -1384,3 +1384,11 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 }
 .replay-pick-menu button:hover { background: var(--hover); }
 .replay-pick-menu button:disabled { color: var(--dim); cursor: not-allowed; }
+
+/* 回放选起点：选择线右侧压暗（示意"这些 K 线将被隐藏/不参与指标") */
+.replay-ghost {
+  position: absolute; top: 0; bottom: 0; right: 0; z-index: 20;
+  pointer-events: none;
+  border-left: 1px dashed var(--accent-ink, var(--accent));
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+}
