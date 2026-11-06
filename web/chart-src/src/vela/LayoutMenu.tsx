@@ -43,7 +43,7 @@ const SYNC_ROWS: { kind: SyncKindId; label: string; title?: string }[] = [
   { kind: 'timeframe', label: '周期' },
   { kind: 'crosshair', label: '十字线' },
   { kind: 'viewport', label: '时间定位', title: '点击图表时让其他窗口对齐同一时刻，保持各自缩放；不会统一可见日期范围。' },
-  { kind: 'drawings', label: '绘图' },
+  { kind: 'drawings', label: '绘图同步到所有图表' },
 ];
 
 export function LayoutMenu({

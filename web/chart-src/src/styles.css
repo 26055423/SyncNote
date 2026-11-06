@@ -225,7 +225,7 @@ button { font: inherit; cursor: pointer; }
 .tool-btn.is-active { border-color: var(--accent); color: var(--accent-ink); }
 .save-hint { color: var(--dim); font-size: 11px; min-width: 72px; text-align: right; }
 .top-actions .lp { position: relative; }
-.top-actions .lp-panel { left: auto; right: 0; width: min(392px, calc(100vw - 24px)); max-height: calc(100dvh - 90px); overflow: auto; }
+.top-actions .lp-panel { left: auto; right: 0; width: min(322px, calc(100vw - 24px)); max-height: calc(100dvh - 90px); overflow: auto; }
 .lp.is-compact .lp-trigger { padding: 6px 9px; }
 .chart-fullscreen { display: inline-flex; position: relative; }
 .chart-fullscreen > button { display: inline-flex; align-items: center; justify-content: center; }
@@ -398,7 +398,7 @@ table.mini tr:last-child td { border-bottom: 0; }
 .tp-caret { color: var(--dim); font-size: 10px; }
 .tp-scope { font-size: 9px; color: var(--accent-ink); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 999px; padding: 0 4px; margin-left: 2px; line-height: 14px; }
 
-.lp-panel { width: 392px; display: flex; flex-direction: column; gap: 12px; }
+.lp-panel { width: 322px; display: flex; flex-direction: column; gap: 12px; }
 .lp-section { display: flex; flex-direction: column; gap: 6px; }
 .lp-section-title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
 .lp-canvas { display: grid; grid-template-columns: repeat(4, 64px); gap: 6px; }
