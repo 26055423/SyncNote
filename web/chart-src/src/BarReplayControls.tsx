@@ -8,11 +8,13 @@ const idle: ReplayUiState = { available: false, active: false, playing: false, a
  * 回放控制条：浮在图表底部，功能对齐 TradingView 的回放栏。
  * 入口是顶部「行情 | 回放」分段控件；这里只负责选起点和控制播放。
  */
-export function BarReplayControls({ chart, onActiveChange, onEarliest }: {
+export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom }: {
   chart: RefObject<ChartHandle | null>;
   onActiveChange: (active: boolean) => void;
   /** 跳到「最早可用日期」再开始回放；由上层按当前数据算最早一根。 */
   onEarliest?: () => Promise<void>;
+  /** 随机挑一个「数据库里确实有数据」的时点开始回放。 */
+  onRandom?: () => Promise<void>;
 }) {
   const [state, setState] = useState(idle);
   const [speed, setSpeed] = useState(1000);
@@ -72,6 +74,14 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest }: {
               onClick={() => { setMenu(false); setError(''); void onEarliest?.().catch(error => setError(error instanceof Error ? error.message : String(error))); }}
             >
               最早可用日期
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!onRandom}
+              onClick={() => { setMenu(false); setError(''); void onRandom?.().catch(error => setError(error instanceof Error ? error.message : String(error))); }}
+            >
+              随机K线
             </button>
           </div>
         ) : null}
