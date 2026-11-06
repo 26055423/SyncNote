@@ -5,6 +5,105 @@ string g_sn_pair_secret="",g_sn_pair_code="",g_sn_pair_claim="",g_sn_pair_name="
 ulong g_sn_pair_next=0,g_sn_pair_until=0;
 int g_sn_pair_decision=0;
 bool g_sn_pair_rejected=false;
+int g_sn_panel_width=330,g_sn_panel_button_y=190,g_sn_panel_labels=0,g_sn_panel_text_end=1000;
+int SNPanelFont(){return MathMax(10,MathMin(24,PanelFontSize));}
+string SNPanelName(const string part){return "SyncNote.panel."+IntegerToString(ChartID())+"."+part;}
+void SNPanelDelete()
+{
+ ObjectDelete(0,SNPanelName("background"));
+ for(int i=0;i<g_sn_panel_labels;i++)ObjectDelete(0,SNPanelName(IntegerToString(i)));
+ g_sn_panel_labels=0;
+}
+void SNPanelLabel(const string text,const int font,const color ink,int &y,int &count,const string face="Microsoft YaHei")
+{
+ uint measured_width=0,measured_height=0;
+ TextSetFont(face,-font*10);
+ TextGetSize(text,measured_width,measured_height);
+ int line_height=MathMax((int)MathCeil(font*1.55),(int)measured_height)+5;
+ if(y+line_height>g_sn_panel_text_end)return;
+ string name=SNPanelName(IntegerToString(count++));
+ if(ObjectFind(0,name)<0)ObjectCreate(0,name,OBJ_LABEL,0,0,0);
+ ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+ ObjectSetInteger(0,name,OBJPROP_XDISTANCE,22);ObjectSetInteger(0,name,OBJPROP_YDISTANCE,y);
+ ObjectSetInteger(0,name,OBJPROP_COLOR,ink);ObjectSetInteger(0,name,OBJPROP_FONTSIZE,font);
+ ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+ ObjectSetString(0,name,OBJPROP_FONT,face);ObjectSetString(0,name,OBJPROP_TEXT,text);
+ ObjectSetString(0,name,OBJPROP_TOOLTIP,text+"\n"+g_sn_origin+"\n"+g_sn_account+" @ "+g_sn_server+"\n"+g_sn_pair_name);
+ y+=line_height;
+}
+void SNPanelText(const string text,const int font,const color ink,int &y,int &count)
+{
+ string line="";int width=MathMax(1,g_sn_panel_width-28);
+ TextSetFont("Microsoft YaHei",-font*10);
+ for(int i=0;i<StringLen(text);i++)
+ {
+  string ch=StringSubstr(text,i,1);uint w=0,h=0;
+  bool measured=TextGetSize(line+ch,w,h);
+  if(ch=="\n"||(line!=""&&(measured?(int)w>width:StringLen(line)*font>width)))
+  {SNPanelLabel(line,font,ink,y,count);line="";if(ch=="\n")continue;}
+  line+=ch;
+ }
+ if(line!="")SNPanelLabel(line,font,ink,y,count);
+}
+void SNPanelPaint()
+{
+ int available=(int)ChartGetInteger(0,CHART_WIDTH_IN_PIXELS);
+ g_sn_panel_width=MathMax(1,MathMin(660,available-24));
+ int chart_height=(int)ChartGetInteger(0,CHART_HEIGHT_IN_PIXELS);
+ bool compact=chart_height<380,short_panel=chart_height<280;
+ bool waiting_code=g_sn_token==""&&!g_sn_paused&&!g_sn_pair_rejected&&g_sn_pair_error==""&&g_sn_pair_secret!=""&&g_sn_pair_claim==""&&GetTickCount64()<g_sn_pair_until;
+ bool buttons=ConnectionCode==""&&SNStillBound()&&(g_sn_token==""||g_sn_paused);
+ int button_height=MathMax(36,SNPanelFont()*2+8);
+ g_sn_panel_text_end=chart_height-22-(buttons?button_height+8:0);
+ string bg=SNPanelName("background");
+ if(ObjectFind(0,bg)<0)ObjectCreate(0,bg,OBJ_RECTANGLE_LABEL,0,0,0);
+ ObjectSetInteger(0,bg,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+ ObjectSetInteger(0,bg,OBJPROP_XDISTANCE,10);ObjectSetInteger(0,bg,OBJPROP_YDISTANCE,10);
+ ObjectSetInteger(0,bg,OBJPROP_XSIZE,g_sn_panel_width);
+ ObjectSetInteger(0,bg,OBJPROP_BGCOLOR,C'20,28,38');ObjectSetInteger(0,bg,OBJPROP_COLOR,clrSlateGray);
+ ObjectSetInteger(0,bg,OBJPROP_BORDER_TYPE,BORDER_FLAT);ObjectSetInteger(0,bg,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,bg,OBJPROP_HIDDEN,true);
+ int y=18,count=0,font=SNPanelFont(),small=MathMax(10,font-2);
+ SNPanelText(compact?"SyncNote 1.013":"SyncNote 1.013 · 只读同步",font,clrWhite,y,count);
+ if(!short_panel||!waiting_code)SNPanelText("MT5 "+g_sn_account+(compact?"":" @ "+g_sn_server),small,clrSilver,y,count);
+ if(!compact)SNPanelText(g_sn_origin,small,clrSilver,y,count);
+ if(g_sn_paused)
+ {
+  SNPanelText("同步已暂停",font,clrOrange,y,count);
+  SNPanelText(SNStillBound()?"请核对网站授权，或重新配对。":"MT5 账户已变更，请重新挂载 EA。",small,clrWhite,y,count);
+ }
+ else if(g_sn_token=="")
+ {
+  if(g_sn_pair_rejected)SNPanelText("已拒绝配对，请重新生成配对码。",font,clrOrange,y,count);
+  else if(g_sn_pair_error!="")SNPanelText(g_sn_pair_error,font,clrOrange,y,count);
+  else if(g_sn_pair_secret=="")SNPanelText("正在申请配对码…\n请将网站加入 WebRequest 白名单。",font,clrWhite,y,count);
+  else if(GetTickCount64()>=g_sn_pair_until)SNPanelText("配对码已过期，请重新生成。",font,clrOrange,y,count);
+  else if(g_sn_pair_claim!="")
+  {
+   SNPanelText("请求配对的同频账号",small,clrSilver,y,count);
+   SNPanelText(g_sn_pair_name,font,clrAqua,y,count);
+   SNPanelText("核对账号后，允许同步成交与K线。",small,clrWhite,y,count);
+  }
+  else
+  {
+   if(chart_height>=220)SNPanelText(compact?"同步配对码":"同步配对码 · 10分钟有效",small,clrSilver,y,count);
+   string digits=StringSubstr(g_sn_pair_code,0,4)+" "+StringSubstr(g_sn_pair_code,4);
+   int code_font=MathMin(36,font*2);uint w=0,h=0;
+   while(code_font>10){TextSetFont("Consolas",-code_font*10);TextGetSize(digits,w,h);if((int)w<=g_sn_panel_width-28&&y+MathMax((int)MathCeil(code_font*1.55),(int)h)+5<=g_sn_panel_text_end)break;code_font--;}
+   SNPanelLabel(digits,code_font,clrAqua,y,count,"Consolas");
+   SNPanelText("网页填码后回此处授权",small,clrWhite,y,count);
+  }
+ }
+ else
+ {
+  SNPanelText(g_sn_paused?"同步已暂停，请核对账号或重新配对。":"已授权只读同步",font,g_sn_paused?clrOrange:clrAqua,y,count);
+  SNPanelText("已确认 "+IntegerToString(g_sn_ack_batches)+" 批 · 历史 "+IntegerToString(HistoryDays)+" 天",small,clrWhite,y,count);
+  if(UploadBars&&!compact)SNPanelText(SNBarsStatus(),small,clrSilver,y,count);
+  if(!compact)SNPanelText("无交易权限、无DLL；关闭网页后仍续传。",small,clrSilver,y,count);
+ }
+ for(int i=count;i<g_sn_panel_labels;i++)ObjectDelete(0,SNPanelName(IntegerToString(i)));
+ g_sn_panel_labels=count;g_sn_panel_button_y=MathMin(y+4,MathMax(18,chart_height-button_height-12));
+ ObjectSetInteger(0,bg,OBJPROP_YSIZE,MathMax(1,MathMin(chart_height-20,buttons?g_sn_panel_button_y+button_height+8-10:y-2)));
+}
 
 bool SNPairTokenValid(const string token)
 {
@@ -36,11 +135,19 @@ void SNPairButton(const string action,const string label,const int x)
  string name=SNPairButtonName(action);
  if(ObjectFind(0,name)<0)ObjectCreate(0,name,OBJ_BUTTON,0,0,0);
  ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
- ObjectSetInteger(0,name,OBJPROP_XDISTANCE,x);ObjectSetInteger(0,name,OBJPROP_YDISTANCE,225);
- ObjectSetInteger(0,name,OBJPROP_XSIZE,155);ObjectSetInteger(0,name,OBJPROP_YSIZE,30);
- ObjectSetInteger(0,name,OBJPROP_FONTSIZE,10);ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);
+ int columns=g_sn_pair_claim!=""&&!g_sn_pair_rejected&&GetTickCount64()<g_sn_pair_until?(g_sn_panel_width>=550?3:2):1;
+ int slot=x<100?0:(x<300?1:2),width=MathMax(1,(g_sn_panel_width-24-(columns-1)*8)/columns);
+ ObjectSetInteger(0,name,OBJPROP_XDISTANCE,22+slot*(width+8));ObjectSetInteger(0,name,OBJPROP_YDISTANCE,g_sn_panel_button_y);
+ ObjectSetInteger(0,name,OBJPROP_XSIZE,width);ObjectSetInteger(0,name,OBJPROP_YSIZE,MathMax(36,SNPanelFont()*2+8));
+ ObjectSetInteger(0,name,OBJPROP_FONTSIZE,SNPanelFont());ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);
+ ObjectSetInteger(0,name,OBJPROP_STATE,false);
+ ObjectSetString(0,name,OBJPROP_FONT,"Microsoft YaHei");
  ObjectSetInteger(0,name,OBJPROP_BGCOLOR,clrDarkSlateGray);ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
- ObjectSetString(0,name,OBJPROP_TEXT,label);
+ string caption=label;
+ if(action=="allow"&&columns==2)caption=g_sn_panel_width<300?"允许":"允许同步";
+ if(action=="reset"&&width<SNPanelFont()*12)caption="重新配对";
+ ObjectSetString(0,name,OBJPROP_TEXT,caption);
+ ObjectSetString(0,name,OBJPROP_TOOLTIP,label);
 }
 void SNPairDeleteButtons()
 {
@@ -50,7 +157,7 @@ void SNPairButtons()
 {
  if(ConnectionCode!=""||!SNStillBound()){SNPairDeleteButtons();return;}
  if(g_sn_pair_claim!=""&&g_sn_token==""&&!g_sn_pair_rejected&&GetTickCount64()<g_sn_pair_until)
- {SNPairButton("allow","允许只读同步",10);SNPairButton("deny","拒绝",175);SNPairButton("reset","重新生成配对码",340);}
+ {SNPairButton("allow","允许只读同步",10);SNPairButton("deny","拒绝",175);if(g_sn_panel_width>=550)SNPairButton("reset","重新生成配对码",340);else ObjectDelete(0,SNPairButtonName("reset"));}
  else
  {
   ObjectDelete(0,SNPairButtonName("allow"));ObjectDelete(0,SNPairButtonName("deny"));
@@ -134,6 +241,7 @@ void SNPairPump()
 }
 void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)
 {
+ if(id==CHARTEVENT_CHART_CHANGE){SNPaint();return;}
  if(id!=CHARTEVENT_OBJECT_CLICK||ConnectionCode!=""||!SNStillBound())return;
  if(sparam==SNPairButtonName("reset")){SNPairReset();SNPaint();return;}
  if(g_sn_token!=""||g_sn_pair_claim==""||GetTickCount64()>=g_sn_pair_until)return;

@@ -6,7 +6,7 @@ window.assistantPanel = () => `
 <form id="syncnote-pair-form">
   <label for="syncnote-device-code">SyncNote 图表上的 8 位同步配对码<input id="syncnote-device-code" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="off" placeholder="00000000" required aria-describedby="syncnote-pair-help syncnote-pair-feedback"></label>
   <button id="syncnote-device-submit" type="submit" class="primary-button">配对只读同步</button>
-  <p id="syncnote-pair-help" class="profile-hint">在 MT5 挂载 SyncNote 1.012，ConnectionCode 留空。填入 EA 显示的配对码，再回 MT5 核对同频账号并允许同步。配对码 10 分钟内有效。</p>
+  <p id="syncnote-pair-help" class="profile-hint">在 MT5 挂载 SyncNote 1.013，ConnectionCode 留空。填入 EA 显示的配对码，再回 MT5 核对同频账号并允许同步。配对码 10 分钟内有效。</p>
   <p id="syncnote-pair-feedback" class="form-feedback" role="status" aria-live="polite"></p>
 </form>
 <ol class="connect-steps">

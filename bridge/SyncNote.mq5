@@ -1,7 +1,7 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.012"
+#property version "1.013"
 #property description "Read-only history, review charts and shared K-line track backfill. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 
@@ -12,6 +12,7 @@ input int HistoryDays=365;
 input int OverlapSeconds=3600;
 input int ReconcileHours=24; // Periodically replay the whole configured range for older corrections.
 input bool UploadBars=true;   // 当前图表品种近7天K线与持续增量；不恢复旧多年回溯任务
+input int PanelFontSize=14;   // 状态面板正文字号，10~24；配对码使用双倍字号
 
 CSyncNoteHistory g_snh;
 string g_sn_origin="",g_sn_account="",g_sn_server="",g_sn_key="",g_sn_state_path="",g_sn_binding_path="",g_sn_sync_scope="";
@@ -230,12 +231,10 @@ bool SNPrepareSync()
 #include "SyncNotePairing.mqh"
 void SNPaint()
 {
- string bars_line=UploadBars?SNBarsStatus():"";
+ Comment("");
+ SNPanelPaint();
  SNPairButtons();
- Comment("SyncNote 1.012 · 只读历史同步\n",g_sn_account," @ ",g_sn_server,
-  "\n网站: ",g_sn_origin,"\n无交易、无 DLL、无本机监听；不上传余额/净值/实时持仓",
-  "\n已确认批次: ",g_sn_ack_batches,"；历史范围: ",HistoryDays," 天",bars_line,
-  g_sn_token==""?"\n"+SNPairStatus():(g_sn_paused?"\n已暂停：请核对账号；可重新配对。":"\n已授权只读同步；MT5 运行时自动续传，浏览器可以关闭。"));
+ ChartRedraw();
 }
 int OnInit()
 {
@@ -267,7 +266,7 @@ int OnInit()
  if(!EventSetMillisecondTimer(200))return INIT_FAILED;
  SNPaint();return INIT_SUCCEEDED;
 }
-void OnDeinit(const int reason){EventKillTimer();SNPairDeleteButtons();Comment("");}
+void OnDeinit(const int reason){EventKillTimer();SNPairDeleteButtons();SNPanelDelete();Comment("");}
 void OnTimer()
 {
  if(g_sn_paused)return;
