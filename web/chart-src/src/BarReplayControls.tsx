@@ -3,7 +3,7 @@ import type { ChartHandle, ReplayUiState } from './vela/ChartWorkspace';
 import { stamp } from './api';
 
 const idle: ReplayUiState = { available: false, active: false, playing: false, armed: false, busy: false, cursorTime: null, clockTime: null, remaining: 0, intervalMs: 1000 };
-export function BarReplayControls({ chart, onActiveChange }: { chart: RefObject<ChartHandle | null>; onActiveChange: (active: boolean) => void }) {
+export function BarReplayControls({ chart, onActiveChange, hideEntry = false }: { chart: RefObject<ChartHandle | null>; onActiveChange: (active: boolean) => void; hideEntry?: boolean }) {
   const [state, setState] = useState(idle);
   const [speed, setSpeed] = useState(1000);
   const [error, setError] = useState('');
@@ -19,8 +19,10 @@ export function BarReplayControls({ chart, onActiveChange }: { chart: RefObject<
   const choosing = state.armed || state.busy;
   const entered = state.active || choosing;
   return <div className={`bar-replay ${entered ? 'is-replaying' : ''}`}>
-    <button type="button" className={`tool-btn ${entered ? 'is-active' : ''}`} disabled={!state.available || state.busy}
-      aria-pressed={entered} onClick={() => { setError(''); chart.current?.replaySelect(); }}>◀ 回放{state.active ? ' · 重选起点' : ''}</button>
+    {hideEntry ? null : (
+      <button type="button" className={`tool-btn ${entered ? 'is-active' : ''}`} disabled={!state.available || state.busy}
+        aria-pressed={entered} onClick={() => { setError(''); chart.current?.replaySelect(); }}>◀ 回放{state.active ? ' · 重选起点' : ''}</button>
+    )}
     {entered && <>
       {choosing ? <><span role="status">{state.busy ? '正在准备回放…' : '点击图表中的 K 线选择起点'}</span>
         <button type="button" className="tool-btn" disabled={state.busy} onClick={() => {

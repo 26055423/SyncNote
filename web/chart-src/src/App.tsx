@@ -1266,9 +1266,18 @@ export default function App() {
             />
             <span className="mode-switch" role="group" aria-label="图表视图">
               <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} disabled={replayActive} onClick={() => switchMode('live')}>行情</button>
+              <button
+                type="button"
+                className={`tool-btn ${replayActive ? 'is-active' : ''}`.trim()}
+                aria-pressed={replayActive}
+                title={replayActive ? '重新选择回放起点' : '在历史 K 线上逐根回放'}
+                onClick={() => chartRef.current?.replaySelect()}
+              >
+                {replayActive ? '重选起点' : '回放'}
+              </button>
             </span>
-            {/* 复盘视图由底部「历史」/右栏「复盘」进入；工具栏这里放回放（历史演练）。 */}
-            <BarReplayControls chart={chartRef} onActiveChange={setReplayActive} />
+            {/* 常驻挂载：它负责轮询回放状态（隐藏自己的入口按钮，入口在上面分段控件里）。 */}
+            <BarReplayControls chart={chartRef} onActiveChange={setReplayActive} hideEntry />
             <span className="spacer" />
             <button
               type="button"
