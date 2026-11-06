@@ -1,6 +1,8 @@
 # SyncNote 同步审计（2026-11-06）
 
-交付版本：SyncNote **1.011**；共享历史模块修复同时进入 SyncTrade **1.106**。两款 EA 均使用已安装 MetaEditor 离线编译，结果为 0 errors、0 warnings。编译文件按版本放入用户指定终端的 Experts 子目录，未换载当前图表 EA。本次交付以编译文件为准，未部署网站下载更新。
+交付版本：SyncNote **1.011**；共享历史模块修复同时进入 SyncTrade **1.106**。两款 EA 均使用已安装 MetaEditor 离线编译，结果为 0 errors、0 warnings。编译文件按版本放入用户指定终端的 Experts 子目录，未换载当前图表 EA。网站继续提供对应版本源码包，由服务器根据已部署源码生成。
+
+下载发布需实际读取 `/downloads/syncnote.zip` 与 `/downloads/synctrade.zip`，核对入口版本、全部相对 include、`SOURCE_MANIFEST.json` 哈希及部署提交；健康检查通过不代替下载包检查。
 
 ## 已修复
 
