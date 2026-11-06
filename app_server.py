@@ -398,7 +398,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r'[A-Za-z0-9_-]{8,80}',token):raise Error('页面不存在',404)
                 body=(ROOT/'web'/'share.html').read_bytes()
                 self.send_response(200)
-                for k,v in [('Content-Type','text/html; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")]:self.send_header(k,v)
+                for k,v in [('Content-Type','text/html; charset=utf-8'),('Cache-Control','no-store'),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'")]:self.send_header(k,v)
                 self.end_headers();self.wfile.write(body);return
             if path.startswith('/api/'):
                 with connect() as db:
