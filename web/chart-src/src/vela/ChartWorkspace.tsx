@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { DrawingsControl } from '@luxalgo/vela';
 import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type BaseTimeframe, type ReviewCharts } from './provider';
 import { registerBigwolf } from './bigwolfNative';
 import { prefs, usePrefs } from '../ui/prefs';
@@ -51,7 +52,19 @@ function stripTheme(document: unknown, provider?: string, symbol?: string): unkn
   return copy;
 }
 
+export interface ReplayUiState {
+  available: boolean; active: boolean; playing: boolean; armed: boolean; busy: boolean;
+  cursorTime: number | null; clockTime: number | null; remaining: number; intervalMs: number;
+}
 export interface ChartHandle {
+  replayStatus(): ReplayUiState;
+  replaySelect(): void;
+  replayStartFromView(): Promise<void>;
+  replayStep(): void;
+  replayPlay(intervalMs: number): void;
+  replayPause(): void;
+  replayStop(): void;
+
   setLayout(id: string): void;
   getLayout(): string;
   setTimeframe(tf: string): void;
@@ -131,6 +144,55 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const wsRef = useRef<any>(null);
   const seriesUpdateUntilRef = useRef(new Map<string, number>());
   const anchorRef = useRef(anchorMs);
+  const replayArmedRef = useRef(false);
+  const replayBusyRef = useRef(false);
+  const replayRequestRef = useRef(0);
+  const replayPendingRef = useRef(new Set<BaseTimeframe>());
+  const replaying = () => replayArmedRef.current || replayBusyRef.current || Boolean(wsRef.current?.replay?.state.active);
+  const showReplayMarks = (visible: boolean) => {
+    for (const cell of wsRef.current?.cells?.() ?? []) {
+      const drawings: DrawingsControl = cell.chart.drawings;
+      for (const id of markIdsByCellRef.current.get(cell.id) ?? []) drawings.show(id, visible);
+    }
+  };
+  const startReplay = async (from: number, cell?: string) => {
+    const ws = wsRef.current;
+    if (!ws?.replay?.bounds || replayBusyRef.current) return;
+    const request = ++replayRequestRef.current;
+    replayArmedRef.current = false; replayBusyRef.current = true;
+    try {
+      showReplayMarks(false);
+      const master = (ws.cells() as any[]).find(item => item.id === (cell ?? ws.active?.id));
+      const recipe = TIMEFRAMES[master?.chart.market.timeframe ?? '1'];
+      const rows = dataRef.current[recipe.base] ?? [];
+      const baseSeconds = TIMEFRAMES[basePeriodKey(recipe.base)].seconds;
+      const rendered = recipe.seconds === baseSeconds ? rows : aggregate(rows, recipe.seconds);
+      const { safeReplayStart } = await import('./replayController');
+      if (request !== replayRequestRef.current || wsRef.current !== ws) return;
+      await safeReplayStart(ws, { from, cell: master?.id, masterOpenTimes: rendered.map(row => row[0] * 1000) });
+      if (request !== replayRequestRef.current || wsRef.current !== ws) return;
+      if (!ws.replay.state.active) { showReplayMarks(true); throw new Error('这个位置没有可回放的后续K线，请选择更早的起点。'); }
+    } catch (error) {
+      if (request !== replayRequestRef.current || wsRef.current !== ws) return;
+      showReplayMarks(true); throw error;
+    } finally { if (request === replayRequestRef.current) replayBusyRef.current = false; }
+  };
+  const flushReplayPending = async () => {
+    const bases = new Set(replayPendingRef.current); replayPendingRef.current.clear();
+    for (const cell of wsRef.current?.cells?.() ?? []) {
+      const recipe = TIMEFRAMES[cell.chart.market.timeframe];
+      if (!recipe || !bases.has(recipe.base)) continue;
+      const rows = dataRef.current[recipe.base] ?? [];
+      const step = TIMEFRAMES[basePeriodKey(recipe.base)].seconds;
+      const rendered = recipe.seconds === step ? rows : aggregate(rows, recipe.seconds);
+      seriesUpdateUntilRef.current.set(cell.id, Infinity);
+      try {
+        await cell.chart.setMarket(props.provider ? { data: [], bars: Math.max(rendered.length, cell.chart.market.bars ?? 0) + 1 } : { data: rendered.map(toOhlcv) });
+        await cell.chart.historyComplete();
+      } finally { seriesUpdateUntilRef.current.set(cell.id, Date.now() + 100); }
+    }
+  };
+
   const favoritesRef = useRef<string[]>(props.favorites ?? []);
   const markIdsRef = useRef<Set<string>>(new Set());
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
@@ -230,7 +292,36 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   anchorRef.current = anchorMs;
 
   useImperativeHandle(ref, () => ({
+    replayStatus() {
+      const replay = wsRef.current?.replay;
+      const state = replay?.state;
+      const closes = (wsRef.current?.cells?.() ?? []).map((cell: any) => {
+        const at = cell.chart.replay.state.cursorTime;
+        const seconds = TIMEFRAMES[cell.chart.market.timeframe]?.seconds;
+        return typeof at === 'number' && seconds ? at + seconds * 1000 : 0;
+      });
+      return { available: Boolean(replay?.bounds), active: Boolean(state?.active), playing: Boolean(state?.playing),
+        armed: replayArmedRef.current, busy: replayBusyRef.current,
+        cursorTime: state?.cursorTime ?? null, clockTime: state?.active ? Math.max(0, ...closes) || null : null,
+        remaining: state?.remaining ?? 0, intervalMs: state?.intervalMs ?? 1000 };
+    },
+    replaySelect() { wsRef.current?.replay?.pause(); replayArmedRef.current = true; wsRef.current?.active?.chart?.drawings?.setTool(null); },
+    async replayStartFromView() {
+      const cell = wsRef.current?.active;
+      const range = cell?.chart?.getVisibleRange();
+      if (range) await startReplay((range.from + range.to) / 2, cell.id);
+    },
+    replayStep() { wsRef.current?.replay?.pause(); wsRef.current?.replay?.step(); },
+    replayPlay(intervalMs) { wsRef.current?.replay?.play(intervalMs); },
+    replayPause() { wsRef.current?.replay?.pause(); },
+    replayStop() {
+      replayRequestRef.current += 1;
+      replayArmedRef.current = false; replayBusyRef.current = false;
+      wsRef.current?.replay?.stop(); showReplayMarks(true);
+      void flushReplayPending().catch(error => onError?.(String(error)));
+    },
     setLayout(id) {
+      if (replaying()) return;
       try {
         wsRef.current?.setLayout?.(id);
       } catch (error) {
@@ -245,6 +336,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       }
     },
     setTimeframe(tf) {
+      if (replaying()) return;
       const ws = wsRef.current;
       if (!ws) return;
       // 默认只改当前格子；只有布局菜单里打开「周期同步」才应用到全部。
@@ -262,6 +354,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       return wsRef.current?.active?.chart?.market?.timeframe ?? '15';
     },
     focus(timestampMs) {
+      if (replaying()) return;
       focusAll(wsRef.current, timestampMs ?? anchorRef.current, timestampMs ? null : props.tradeMarks);
     },
     useTool(type) {
@@ -293,6 +386,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     async applySeries(base, bars, _onlyCellId, refresh = false) {
       // The static provider shares this cache, including newly added/layout-switched cells.
       dataRef.current[base] = bars;
+      if (replaying()) { replayPendingRef.current.add(base); return; }
       const updates: Promise<void>[] = [];
       for (const cell of wsRef.current?.cells?.() ?? []) {
         // 同基础周期的每个格子都补齐，各自保持原来的位置与蜡烛宽度。
@@ -351,6 +445,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     },
     /** 记下每格当前的可见范围（新 K 线到来前调用）。 */
     captureRanges() {
+      if (replaying()) return {};
       const out: Record<string, { from: number; to: number; base: BaseTimeframe }> = {};
       for (const cell of wsRef.current?.cells?.() ?? []) {
         try {
@@ -364,6 +459,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     },
     /** 把可见范围恢复回去：新 K 线不该把画面推走。 */
     restoreRanges(ranges: Record<string, { from: number; to: number; base?: BaseTimeframe }>) {
+      if (replaying()) return;
       for (const cell of wsRef.current?.cells?.() ?? []) {
         const target = ranges[cell.id];
         if (!target) continue;
@@ -502,6 +598,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           const minutes = timeframeMinutes(tf) ?? 15;
           const width = minutes * 60_000;
           const anchor = anchorRef.current;
+          if (replaying()) return;
           const marks = props.tradeMarks;
           if (!marks && (!Number.isFinite(anchor) || anchor <= 0)) return;
           try {
@@ -532,6 +629,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         };
 
         const annotate = (cell: any) => {
+          if (replaying()) return;
           const marks = props.tradeMarks;
           const api = cell?.chart?.drawings;
           if (!marks || !api) return;
@@ -608,6 +706,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               const previous = lastRangeRef.current.get(cell.id);
               const span = range.to - range.from;
               lastRangeRef.current.set(cell.id, { from: range.from, to: range.to });
+              if (replaying()) return;
               // Reload/prepend events are data maintenance, not gestures in the active chart.
               if (Date.now() < (seriesUpdateUntilRef.current.get(cell.id) ?? 0)) return;
               const programmaticUntil = programmaticUntilRef.current.get(cell.id) ?? 0;
@@ -630,8 +729,11 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           // 「时间轴」勾选时：点任意一格（K 线或时间轴附近）→ 其他格居中到同一时刻。
           // 只对齐时间，不动缩放；不勾选时完全不联动。
           const handleClick = (event: { time?: number | null }) => {
-            if (!timeSyncRef.current) return;
             const at = event?.time;
+            if (replayArmedRef.current && typeof at === 'number') {
+              void startReplay(at, cell.id).catch(error => onError?.(error instanceof Error ? error.message : String(error))); return;
+            }
+            if (replaying() || !timeSyncRef.current) return;
             if (typeof at !== 'number') return;
             jumpAllTo(at, cell.id);
           };
@@ -683,10 +785,19 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           });
           cell.chart?.on?.('market:changed', () => {
             onTimeframe?.(cell.chart?.market?.timeframe ?? '15');
-            window.setTimeout(() => focusOne(cell), 30);
+            window.setTimeout(() => { if (!replaying()) focusOne(cell); }, 30);
           });
         };
 
+        ws.replay?.on('replay:end', () => {
+          if (replayBusyRef.current) return;
+          replayArmedRef.current = false;
+          queueMicrotask(() => {
+            if (disposed || replayBusyRef.current || ws.replay?.state.active) return;
+            showReplayMarks(true);
+            void flushReplayPending().catch(error => onError?.(String(error)));
+          });
+        });
         ws.cells().forEach(bind);
         // 轮询到 K 线就绪再标注（每格只标一次），15 秒后放弃。
         const markTimer = window.setInterval(() => {
@@ -707,7 +818,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         });
         ws.on?.('state:changed', () => {
           try {
-            onStateChange?.(stripMarks(ws.getState()));
+            if (!replaying()) onStateChange?.(stripMarks(ws.getState()));
           } catch {
             /* ignore */
           }
@@ -725,7 +836,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         focusAll(ws, anchorRef.current, props.tradeMarks);
         for (const delay of [80, 240, 600, 1200]) {
           window.setTimeout(() => {
-            if (!disposed) focusAll(ws, anchorRef.current, props.tradeMarks);
+            if (!disposed && !replaying()) focusAll(ws, anchorRef.current, props.tradeMarks);
           }, delay);
         }
       } catch (error) {
@@ -735,6 +846,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
 
     return () => {
       disposed = true;
+      replayRequestRef.current += 1;
+      replayArmedRef.current = false; replayBusyRef.current = false; replayPendingRef.current.clear();
       const ws = wsRef.current;
       wsRef.current = null;
       try {
@@ -789,7 +902,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // 定位点变化（比如从列表点开另一笔、或时间基对齐后 anchor 被修正）时补一次居中：
   // 图表已经在屏幕上时，初始化那一跳不会重跑，这里兜住。
   useEffect(() => {
-    if (!ready || !(anchorMs > 0)) return;
+    if (!ready || !(anchorMs > 0) || replaying()) return;
     try {
       focusAll(wsRef.current, anchorMs, props.tradeMarks);
     } catch {

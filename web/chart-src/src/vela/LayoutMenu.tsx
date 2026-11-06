@@ -51,12 +51,14 @@ export function LayoutMenu({
   syncs,
   onToggleSync,
   compact = false,
+  disabled = false,
 }: {
   current: string;
   onPick: (id: string) => void;
   syncs: Partial<Record<SyncKindId, boolean>>;
   onToggleSync: (kind: SyncKindId) => void;
   compact?: boolean;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<{ r: number; c: number } | null>(null);  const rootRef = useRef<HTMLDivElement | null>(null);
@@ -90,7 +92,7 @@ export function LayoutMenu({
 
   return (
     <div className={`lp${compact ? ' is-compact' : ''}`} ref={rootRef}>
-      <button type="button" className={`vela-tool-btn lp-trigger ${open ? 'is-active' : ''}`} onClick={() => setOpen((v) => !v)} title="图表布局与同步" aria-label="图表布局与同步" aria-haspopup="dialog" aria-expanded={open}>
+      <button disabled={disabled} type="button" className={`vela-tool-btn lp-trigger ${open ? 'is-active' : ''}`} onClick={() => setOpen((v) => !v)} title="图表布局与同步" aria-label="图表布局与同步" aria-haspopup="dialog" aria-expanded={open}>
         <Thumb rects={triggerRects} active={false} size={22} />
         {compact ? null : <span className="lp-trigger-label">布局</span>}
       </button>

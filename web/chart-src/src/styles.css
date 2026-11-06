@@ -231,6 +231,15 @@ button { font: inherit; cursor: pointer; }
 .chart-fullscreen > button { display: inline-flex; align-items: center; justify-content: center; }
 .chart-fullscreen > [role='status'] { position: absolute; right: 0; top: 100%; width: 240px; background: var(--panel); border: 1px solid var(--line); padding: 10px; z-index: 90; }
 .chart-history-menu { position: relative; flex-shrink: 0; }
+.bar-replay { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.bar-replay.is-replaying { padding: 4px 6px; border: 1px solid var(--accent-line); border-radius: 7px; background: var(--accent-bg); }
+.bar-replay span, .bar-replay label { font-size: 11px; color: var(--text); }
+.bar-replay select { background: var(--panel); border: 1px solid var(--line); color: var(--text); padding: 4px; border-radius: 5px; }
+.bar-replay .replay-clock { color: var(--accent-ink); }
+@media (max-width: 980px) {
+  .chart-toolbar:has(.bar-replay.is-replaying) { flex-wrap: wrap; overflow: visible; }
+  .bar-replay.is-replaying, .bar-replay.is-replaying .replay-clock { flex-basis: 100%; }
+}
 .chart-history-popover { position: absolute; top: calc(100% + 8px); left: 0; z-index: 90; width: min(320px, calc(100vw - 24px)); padding: 12px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 9px; box-shadow: var(--shadow); }
 .chart-history-popover > strong { font-size: 12px; }
 .chart-history-popover > p { color: var(--dim); font-size: 11px; margin: 0 0 4px; }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, money, quotePrice, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
+import { BarReplayControls } from './BarReplayControls';
 import { ChartHistoryMenu, FullscreenButton } from './ChartToolsMenu';
 import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
@@ -262,6 +263,7 @@ export default function App() {
   );
 
   const chartRef = useRef<ChartHandle>(null);
+  const [replayActive, setReplayActive] = useState(false);
   const saveTimer = useRef<number | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
   /** 拖动补段的滑动窗口：每个基础周期当前已加载的 K 线（秒）与范围（毫秒）。 */
@@ -835,6 +837,7 @@ export default function App() {
 
   const openReviewShare = (initialRecipient?: { kind: 'dm' | 'group'; id: string }) => {
     if (!entry || entry.read_only || !target) return;
+    if (chartRef.current?.replayStatus().active) { setError('请先退出K线回放，再分享复盘切片。'); return; }
     setShareRequest({ ticket: target.ticket, snapshot: chartRef.current?.view?.() ?? null, initialRecipient });
   };
 
@@ -1001,6 +1004,7 @@ export default function App() {
   }, [series]);
 
   const loadWindow = useCallback(async (base: BaseTimeframe, direction: ReviewDirection, manual = false) => {
+    const replay = chartRef.current?.replayStatus(); if (replay?.active || replay?.armed || replay?.busy) return null;
     const epoch = reviewEpochRef.current;
     const key = `${epoch}:${base}`;
     if (fetchingRef.current.has(key)) return null;
@@ -1053,6 +1057,7 @@ export default function App() {
   const liveScopeRef = useRef('');
   liveScopeRef.current = `${mode}:${marketInfo?.source ?? ''}:${liveSymbol}`;
   const liveOlder = useCallback(async (base: BaseTimeframe, manual = false) => {
+    const replay = chartRef.current?.replayStatus(); if (replay?.active || replay?.armed || replay?.busy) return;
     const source = trackSourceRef.current;
     if (mode !== 'live' || !source || livePagingRef.current.has(base)) return;
     const rows = liveRef.current[base];
@@ -1154,6 +1159,7 @@ export default function App() {
   }, []);
 
   const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
+    const replay = chartRef.current?.replayStatus(); if (replay?.active || replay?.armed || replay?.busy) return;
     const recipe = TIMEFRAMES[info.timeframe];
     if (!recipe) return;
     const base = recipe.base;
@@ -1263,7 +1269,7 @@ export default function App() {
         <nav className="top-actions">
           <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>
           <a href="/history" target="_blank" rel="noopener noreferrer" title="新标签页打开，保留本机 EA 连接">交易日历 ↗</a>
-          <LayoutMenu compact current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
+          <LayoutMenu disabled={replayActive} compact current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
           <FullscreenButton />
           <SettingsMenu name={me?.nickname || '账户'} />
         </nav>
@@ -1273,7 +1279,7 @@ export default function App() {
       <div className={`main ${railOpen ? '' : 'rail-closed'}`}>
         <section className="chart-pane">
           <div className="chart-toolbar">
-            <TfMenu current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
+            <TfMenu disabled={replayActive} current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
             <DrawingFavs
                 favorites={favs}
               active={activeTool}
@@ -1283,10 +1289,10 @@ export default function App() {
               }}
             />
             <span className="mode-switch" role="group" aria-label="图表视图">
-              <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} onClick={() => switchMode('live')}>行情</button>
-              <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} aria-pressed={mode === 'review'} disabled={!target && shareId == null && !myHistory.length} onClick={() => switchMode('review')}>复盘</button>
+              <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} disabled={replayActive} onClick={() => switchMode('live')}>行情</button>
+              <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} aria-pressed={mode === 'review'} disabled={replayActive || (!target && shareId == null && !myHistory.length)} onClick={() => switchMode('review')}>复盘</button>
             </span>
-            {((mode === 'live' && marketInfo?.source && liveBars) || (mode === 'review' && (target || shareId != null))) && (
+            {!replayActive && ((mode === 'live' && marketInfo?.source && liveBars) || (mode === 'review' && (target || shareId != null))) && (
               <ChartHistoryMenu>
             {mode === 'live' && marketInfo?.source && liveBars && TIMEFRAMES[tf] && Boolean(liveRef.current[TIMEFRAMES[tf].base]?.length) ? (
               <button type="button" className="tool-btn"
@@ -1314,9 +1320,11 @@ export default function App() {
             ) : null}
               </ChartHistoryMenu>
             )}
+            <BarReplayControls chart={chartRef} onActiveChange={setReplayActive} />
             <span className="spacer" />
             <button
               type="button"
+              disabled={replayActive}
               className={`tool-btn autoscroll-toggle ${autoScroll ? 'is-active' : ''}`.trim()}
               title={autoScroll ? '新 K 线出现时自动滚动到最新（点击关闭）' : '新 K 线出现时保持当前画面，不自动滚动（点击开启自动滚动）'}
               aria-pressed={autoScroll}
@@ -1342,7 +1350,7 @@ export default function App() {
                   : '按交易或分享切片定位；可向两侧加载同一券商轨道的已入库历史，无需连接 EA'
               }
             >
-              {mode === 'live'
+              {replayActive ? 'K线回放 · 历史演练' : mode === 'live'
                 ? liveBars
                   ? liveLag.stale.length
                     ? `实时 K 线（${liveLag.stale.join(' / ')} 落后）`
