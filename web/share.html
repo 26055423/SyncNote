@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>复盘分享 · 同频</title>
+<link rel="icon" href="/favicon.svg">
+<script>try{var p=JSON.parse(localStorage.getItem('sn-ui.v1')||'{}');document.documentElement.dataset.theme=p.theme==='light'?'light':'dark';}catch(e){document.documentElement.dataset.theme='dark';}</script>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font, system-ui, -apple-system, "Segoe UI", sans-serif); }
+  .share-wrap { max-width: 880px; margin: 0 auto; padding: 28px 18px 60px; }
+  .share-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .share-head b { font-size: 15px; }
+  .share-head span { color: var(--muted); font-size: 12px; }
+  .share-card { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .share-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .share-title h1 { margin: 0; font-size: 20px; }
+  .share-title .profit { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .share-title .profit.up { color: var(--green); }
+  .share-title .profit.down { color: var(--red); }
+  .share-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; margin-top: 14px; }
+  .share-kv div { display: flex; flex-direction: column; gap: 3px; }
+  .share-kv span { color: var(--muted); font-size: 11px; }
+  .share-kv b { font-variant-numeric: tabular-nums; font-weight: 500; }
+  .share-note { white-space: pre-wrap; line-height: 1.7; font-size: 14px; margin: 0; overflow-wrap: anywhere; }
+  .share-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .share-tags span { border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; font-size: 11px; color: var(--muted); }
+  .share-chart { width: 100%; height: auto; display: block; }
+  .share-foot { color: var(--muted); font-size: 12px; line-height: 1.7; }
+  .share-foot a { color: var(--accent); }
+  .share-error { color: var(--red); }
+  .muted { color: var(--muted); }
+</style>
+<script src="/share.js" defer></script>
+</head>
+<body>
+<main class="share-wrap">
+  <div class="share-head"><b>同频</b><span>复盘分享 · 只读</span></div>
+  <div id="share-root"><p class="muted">加载中…</p></div>
+</main>
+</body>
+</html>
