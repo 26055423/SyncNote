@@ -225,8 +225,19 @@ void SNPaint()
 int OnInit()
 {
  g_sn_origin=WebsiteURL;
- if(!SNOriginValid(g_sn_origin)||StringLen(ConnectionCode)<16||StringLen(ConnectionCode)>512||SyncSeconds<3||SyncSeconds>3600||HistoryDays<1||HistoryDays>3650||OverlapSeconds<60||OverlapSeconds>7*86400||ReconcileHours<1)
- {Print("SyncNote: invalid HTTPS origin, connection code or timing inputs");return INIT_PARAMETERS_INCORRECT;}
+ if(!SNOriginValid(g_sn_origin))
+ {Print("SyncNote: WebsiteURL 必须是 https:// 开头的站点地址（例：https://sync-trade.top），当前：",WebsiteURL);return INIT_PARAMETERS_INCORRECT;}
+ int sn_code_len=StringLen(ConnectionCode);
+ if(sn_code_len<16||sn_code_len>512)
+ {Print("SyncNote: 连接码长度不对（当前 ",sn_code_len," 位，需要 16~512 位）。请在「个人中心 → 本机 EA」复制完整连接码，注意不要带空格或换行。");return INIT_PARAMETERS_INCORRECT;}
+ if(SyncSeconds<3||SyncSeconds>3600)
+ {Print("SyncNote: SyncSeconds 需要在 3~3600 之间，当前 ",SyncSeconds);return INIT_PARAMETERS_INCORRECT;}
+ if(HistoryDays<1||HistoryDays>3650)
+ {Print("SyncNote: HistoryDays 需要在 1~3650 之间，当前 ",HistoryDays);return INIT_PARAMETERS_INCORRECT;}
+ if(OverlapSeconds<60||OverlapSeconds>7*86400)
+ {Print("SyncNote: OverlapSeconds 需要在 60~604800 之间，当前 ",OverlapSeconds);return INIT_PARAMETERS_INCORRECT;}
+ if(ReconcileHours<1)
+ {Print("SyncNote: ReconcileHours 至少为 1，当前 ",ReconcileHours);return INIT_PARAMETERS_INCORRECT;}
  for(int i=0;i<StringLen(ConnectionCode);i++){ushort c=StringGetCharacter(ConnectionCode,i);if(c<33||c>126){Print("SyncNote: connection code must be printable ASCII without whitespace");return INIT_PARAMETERS_INCORRECT;}}
  g_sn_account=IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));g_sn_server=AccountInfoString(ACCOUNT_SERVER);
  if(g_sn_account=="0"||g_sn_server==""){Print("SyncNote: log into an MT5 account before attaching");return INIT_FAILED;}
