@@ -3,7 +3,6 @@ import { money, quotePrice } from './api';
 import { localTerminal, localTradeAccess, type LocalTerminalState } from './localTerminal';
 import { OrderTicket } from './trade/OrderTicket';
 import { submitMarketOrder } from './trade/localSubmit';
-import { HistorySyncPanel } from './HistorySyncPanel';
 
 const phaseText = { disconnected: '尚未连接', connecting: '连接中…', pairing: '等待配对码', confirming: '请在 MT5 图表允许本次连接', connected: '本机已连接', error: '连接不可用' };
 const commandText: Record<string, string> = { sending: '正在发送', received: 'EA 已接收', submitted: '已提交，等待回报', completed: '执行完成', rejected: '已拒绝', uncertain: '结果待核实', not_found: 'EA 未找到记录，仍需核查' };
@@ -40,8 +39,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
         <h3>数据连接</h3>
         <span className={`link-state ${connected ? 'on' : 'off'}`}>{connected ? '本机在线' : '未连接'}</span>
       </header>
-      <p className="dim">成交记录、K 线与复盘数据同步。它不负责下单，删掉也不影响交易连接。</p>
-      <HistorySyncPanel terminal={state} />
+      <p className="dim">成交记录、K 线与复盘数据的续传。<a href="/profile#auto-history-sync-row">在个人中心开启「连上后自动续传」</a>，之后每次连接本机 EA 自动开始。</p>
       <div className="local-buttons">
         {state.phase === 'disconnected' || state.phase === 'error' ? <button className="primary" type="button" onClick={() => perform(() => localTerminal.connect())}>连接本机 MT5</button> : <button className="tool-btn" type="button" onClick={() => { localTerminal.disconnect(); setPrepared(null); setCode(''); }}>断开本机</button>}
         <a href="/local-ea" target="_blank" rel="noopener noreferrer">源码与安装说明 ↗</a>
