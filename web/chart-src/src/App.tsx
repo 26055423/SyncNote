@@ -1109,7 +1109,9 @@ export default function App() {
       if (!docked || !toolbar) { setToolbarWidth(null); return; }
       const chartRight = chart.getBoundingClientRect().right;
       const left = toolbar.getBoundingClientRect().left;
-      const width = chartRight - left;
+      // The toolbar's right border is inside its box; the rail's left border
+      // starts at chartRight. Align the painted lines, not their outer edges.
+      const width = chartRight - left + parseFloat(getComputedStyle(toolbar).borderRightWidth);
       const actions = document.querySelector('.top-actions') as HTMLElement | null;
       const header = toolbar.parentElement!;
       const actionsLeft = header.getBoundingClientRect().right - parseFloat(getComputedStyle(header).paddingRight) - (actions?.getBoundingClientRect().width ?? 0);
