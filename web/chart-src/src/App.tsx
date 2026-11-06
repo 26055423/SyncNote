@@ -264,6 +264,23 @@ export default function App() {
 
   const chartRef = useRef<ChartHandle>(null);
   const [replayActive, setReplayActive] = useState(false);
+  /** 「复盘 ▾」里的工具菜单（回放等）。 */
+  const [replayMenu, setReplayMenu] = useState(false);
+  useEffect(() => {
+    if (!replayMenu) return;
+    const close = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.review-tools-menu') || target?.closest('.review-tools-toggle')) return;
+      setReplayMenu(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setReplayMenu(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [replayMenu]);
   const saveTimer = useRef<number | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
   /** 拖动补段的滑动窗口：每个基础周期当前已加载的 K 线（秒）与范围（毫秒）。 */
@@ -1267,8 +1284,40 @@ export default function App() {
             <span className="mode-switch" role="group" aria-label="图表视图">
               <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} disabled={replayActive} onClick={() => switchMode('live')}>行情</button>
               <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} aria-pressed={mode === 'review'} disabled={replayActive || (!target && shareId == null && !myHistory.length)} onClick={() => switchMode('review')}>复盘</button>
+              <button
+                type="button"
+                className={`tool-btn review-tools-toggle ${replayMenu ? 'is-active' : ''}`.trim()}
+                aria-haspopup="menu"
+                aria-expanded={replayMenu}
+                aria-label="复盘工具"
+                title="复盘工具：回放"
+                disabled={replayActive}
+                onClick={() => setReplayMenu((open) => !open)}
+              >
+                ▾
+              </button>
             </span>
-            <BarReplayControls chart={chartRef} onActiveChange={setReplayActive} />
+            {replayMenu && !replayActive ? (
+              <div className="chart-history-popover review-tools-menu" role="menu" aria-label="复盘工具">
+                <strong>复盘工具</strong>
+                <p>在当前这笔交易的历史切片上逐根回放，配合下方标记练执行。</p>
+                <button
+                  type="button"
+                  className="tool-btn"
+                  role="menuitem"
+                  onClick={() => {
+                    setReplayMenu(false);
+                    chartRef.current?.replaySelect();
+                  }}
+                >
+                  ◀ 回放
+                </button>
+                <button type="button" className="tool-btn" role="menuitem" onClick={() => { setReplayMenu(false); chartRef.current?.focus(); }}>
+                  定位开仓
+                </button>
+              </div>
+            ) : null}
+            {replayActive ? <BarReplayControls chart={chartRef} onActiveChange={setReplayActive} /> : null}
             <span className="spacer" />
             <button
               type="button"
