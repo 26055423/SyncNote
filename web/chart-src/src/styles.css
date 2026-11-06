@@ -401,8 +401,8 @@ table.mini tr:last-child td { border-bottom: 0; }
 .lp-panel { width: 392px; display: flex; flex-direction: column; gap: 12px; }
 .lp-section { display: flex; flex-direction: column; gap: 6px; }
 .lp-section-title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-.lp-canvas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; width: min(200px, 100%); }
-.lp-cell { aspect-ratio: 1 / 1; height: auto; border: 1px solid var(--line); background: var(--well); border-radius: 4px; padding: 0; }
+.lp-canvas { display: grid; grid-template-columns: repeat(4, 54px); gap: 4px; }
+.lp-cell { width: 54px; height: 36px; border: 1px solid var(--line); background: var(--well); border-radius: 4px; padding: 0; }
 .lp-cell.is-lit { background: var(--lp-lit); border-color: var(--lp-lit-line); }
 .lp-cell.is-current { border-color: var(--accent); }
 .lp-hint { color: var(--dim); font-size: 11px; }
