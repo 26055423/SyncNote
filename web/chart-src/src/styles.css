@@ -224,6 +224,19 @@ button { font: inherit; cursor: pointer; }
 .tool-btn:hover { border-color: var(--line-strong); }
 .tool-btn.is-active { border-color: var(--accent); color: var(--accent-ink); }
 .save-hint { color: var(--dim); font-size: 11px; min-width: 72px; text-align: right; }
+.top-actions .lp { position: relative; }
+.top-actions .lp-panel { left: auto; right: 0; width: min(348px, calc(100vw - 24px)); max-height: calc(100dvh - 90px); overflow: auto; }
+.lp.is-compact .lp-trigger { padding: 6px 9px; }
+.chart-fullscreen { display: inline-flex; position: relative; }
+.chart-fullscreen > button { display: inline-flex; align-items: center; justify-content: center; }
+.chart-fullscreen > [role='status'] { position: absolute; right: 0; top: 100%; width: 240px; background: var(--panel); border: 1px solid var(--line); padding: 10px; z-index: 90; }
+.chart-history-menu { position: relative; flex-shrink: 0; }
+.chart-history-popover { position: absolute; top: calc(100% + 8px); left: 0; z-index: 90; width: min(320px, calc(100vw - 24px)); padding: 12px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 9px; box-shadow: var(--shadow); }
+.chart-history-popover > strong { font-size: 12px; }
+.chart-history-popover > p { color: var(--dim); font-size: 11px; margin: 0 0 4px; }
+.chart-history-popover .tool-btn { text-align: left; white-space: normal; }
+.chart-history-popover .save-hint { text-align: left; }
+@media (max-width: 980px) { .chart-history-popover { position: fixed; top: 112px; left: 12px; max-height: calc(100dvh - 140px); overflow: auto; } }
 .chart-toolbar .save-hint:empty { display: none; }
 .review-history-status { min-width: 0; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
 .badge { font-size: 11px; color: var(--warn-ink); border: 1px solid var(--warn-line); background: var(--warn-bg); padding: 1px 8px; border-radius: 999px; }

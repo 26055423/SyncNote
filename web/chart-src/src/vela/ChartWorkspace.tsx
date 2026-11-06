@@ -475,13 +475,13 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             // 直接套用会让"面板已经换成浅色、K 线还是黑的"。主题由本站设置统一决定，
             // 所以回放前把渲染器配置剥掉。
             ws.applyState(stripTheme(savedState, providerName, symbol));
-          // 手机上一格就够：存档里可能是 2×2，回放后强制改回单格。
-          if (props.forceLayout) {
-            try { ws.setLayout?.(props.forceLayout); } catch { /* ignore */ }
-          }
           } catch {
             /* 存档不兼容时退回默认布局，不阻塞看图 */
           }
+        }
+        // Apply even when a saved document is absent or incompatible.
+        if (props.forceLayout) {
+          try { ws.setLayout?.(props.forceLayout); } catch { /* ignore */ }
         }
         // 回放后再对齐一次当前主题（布局/存档都可能重建过格子）。
         try {

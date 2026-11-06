@@ -20,6 +20,7 @@ export function DrawingFavs({ favorites, active, onUse }: DrawingFavsProps) {
             type="button"
             className={`tool-btn icon ${active === key ? 'is-active' : ''}`}
             title={toolLabel(key)}
+            aria-label={toolLabel(key)}
             onClick={() => onUse(key)}
           >
             {toolIcon(key)}

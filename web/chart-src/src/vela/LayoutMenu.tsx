@@ -38,10 +38,10 @@ function gridDef(rows: number, cols: number): Pick<LayoutDef, 'cols' | 'rows'> {
 export type SyncKindId = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
 
 /** TradingView's "sync to all charts" list, in their order. 只保留本站真的能改的项。 */
-const SYNC_ROWS: { kind: SyncKindId; label: string }[] = [
+const SYNC_ROWS: { kind: SyncKindId; label: string; title?: string }[] = [
   { kind: 'timeframe', label: '周期' },
   { kind: 'crosshair', label: '十字线' },
-  { kind: 'viewport', label: '时间轴' },
+  { kind: 'viewport', label: '时间定位', title: '点击图表时让其他窗口对齐同一时刻，保持各自缩放；不会统一可见日期范围。' },
   { kind: 'drawings', label: '绘图' },
 ];
 
@@ -50,11 +50,13 @@ export function LayoutMenu({
   onPick,
   syncs,
   onToggleSync,
+  compact = false,
 }: {
   current: string;
   onPick: (id: string) => void;
   syncs: Partial<Record<SyncKindId, boolean>>;
   onToggleSync: (kind: SyncKindId) => void;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<{ r: number; c: number } | null>(null);  const rootRef = useRef<HTMLDivElement | null>(null);
@@ -77,21 +79,24 @@ export function LayoutMenu({
 
   const currentDef = BY_ID.get(current);
   const grid = /^g(\d+)x(\d+)$/.exec(current);
+  const nativeGrid: Record<string, [number, number]> = { '1': [1, 1], '2h': [1, 2], '2v': [2, 1], '4': [2, 2] };
+  const native = nativeGrid[current];
+  const selectedGrid = native ? gridId(native[0], native[1]) : current;
   const triggerRects = currentDef
     ? slotRects(currentDef)
     : grid
       ? slotRects(gridDef(Number(grid[1]), Number(grid[2])))
-      : slotRects(gridDef(2, 2));
+      : slotRects(gridDef(...(native ?? [2, 2])));
 
   return (
-    <div className="lp" ref={rootRef}>
-      <button type="button" className={`vela-tool-btn lp-trigger ${open ? 'is-active' : ''}`} onClick={() => setOpen((v) => !v)} title="布局" aria-haspopup="dialog" aria-expanded={open}>
+    <div className={`lp${compact ? ' is-compact' : ''}`} ref={rootRef}>
+      <button type="button" className={`vela-tool-btn lp-trigger ${open ? 'is-active' : ''}`} onClick={() => setOpen((v) => !v)} title="图表布局与同步" aria-label="图表布局与同步" aria-haspopup="dialog" aria-expanded={open}>
         <Thumb rects={triggerRects} active={false} size={22} />
-        {'布局'}
+        {compact ? null : <span className="lp-trigger-label">布局</span>}
       </button>
 
       {open ? (
-        <div className="lp-panel" role="dialog" aria-label="布局">
+        <div className="lp-panel" role="dialog" aria-label="图表布局与同步">
           <div className="lp-section">
             <span className="lp-section-title">{'均匀网格'}</span>
             <div className="lp-canvas" onMouseLeave={() => setHover(null)}>
@@ -99,7 +104,7 @@ export function LayoutMenu({
                 const r = Math.floor(i / 4);
                 const c = i % 4;
                 const lit = hover ? r <= hover.r && c <= hover.c : false;
-                const isCurrent = current === gridId(r + 1, c + 1);
+                const isCurrent = selectedGrid === gridId(r + 1, c + 1);
                 return (
                   <button
                     key={i}
@@ -151,7 +156,7 @@ export function LayoutMenu({
             {SYNC_ROWS.map((row) => {
               const on = Boolean(syncs[row.kind]);
               return (
-                <label key={row.kind} className="lp-sync-row">
+                <label key={row.kind} className="lp-sync-row" title={row.title}>
                   <span>{row.label}</span>
                   <input
                     type="checkbox"
@@ -159,6 +164,7 @@ export function LayoutMenu({
                     checked={on}
                     onChange={() => onToggleSync(row.kind)}
                     aria-label={row.label}
+                    title={row.title}
                   />
                 </label>
               );

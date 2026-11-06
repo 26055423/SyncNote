@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, money, quotePrice, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
+import { ChartHistoryMenu, FullscreenButton } from './ChartToolsMenu';
 import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
@@ -1262,6 +1263,8 @@ export default function App() {
         <nav className="top-actions">
           <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>
           <a href="/history" target="_blank" rel="noopener noreferrer" title="新标签页打开，保留本机 EA 连接">交易日历 ↗</a>
+          <LayoutMenu compact current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
+          <FullscreenButton />
           <SettingsMenu name={me?.nickname || '账户'} />
         </nav>
       </header>
@@ -1270,7 +1273,6 @@ export default function App() {
       <div className={`main ${railOpen ? '' : 'rail-closed'}`}>
         <section className="chart-pane">
           <div className="chart-toolbar">
-            <LayoutMenu current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
             <TfMenu current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
             <DrawingFavs
                 favorites={favs}
@@ -1284,6 +1286,8 @@ export default function App() {
               <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} onClick={() => switchMode('live')}>行情</button>
               <button type="button" className={`tool-btn ${mode === 'review' ? 'is-active' : ''}`} aria-pressed={mode === 'review'} disabled={!target && shareId == null && !myHistory.length} onClick={() => switchMode('review')}>复盘</button>
             </span>
+            {((mode === 'live' && marketInfo?.source && liveBars) || (mode === 'review' && (target || shareId != null))) && (
+              <ChartHistoryMenu>
             {mode === 'live' && marketInfo?.source && liveBars && TIMEFRAMES[tf] && Boolean(liveRef.current[TIMEFRAMES[tf].base]?.length) ? (
               <button type="button" className="tool-btn"
                 disabled={Boolean(liveHistoryLoading[TIMEFRAMES[tf].base])}
@@ -1308,6 +1312,8 @@ export default function App() {
             {mode === 'live' && !liveBars && marketSeries ? (
               <span className="badge">历史行情{marketInfo?.last ? ' · 最新 ' + stamp(marketInfo.last) : ''}</span>
             ) : null}
+              </ChartHistoryMenu>
+            )}
             <span className="spacer" />
             <button
               type="button"
