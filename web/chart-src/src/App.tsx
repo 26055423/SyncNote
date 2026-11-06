@@ -1265,7 +1265,7 @@ export default function App() {
               }}
             />
             <span className="mode-switch" role="group" aria-label="图表视图">
-              <button type="button" className={`tool-btn ${mode === 'live' ? 'is-active' : ''}`} aria-pressed={mode === 'live'} disabled={replayActive} onClick={() => switchMode('live')}>行情</button>
+              <button type="button" className={`tool-btn ${mode === 'live' && !replayActive ? 'is-active' : ''}`.trim()} aria-pressed={mode === 'live' && !replayActive} disabled={replayActive} onClick={() => switchMode('live')}>行情</button>
               <button
                 type="button"
                 className={`tool-btn ${replayActive ? 'is-active' : ''}`.trim()}
