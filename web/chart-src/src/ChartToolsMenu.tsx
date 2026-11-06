@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ToolbarIcon } from './ui/ToolbarIcon';
 
 /** History navigation stays on the existing data paths; this only groups its controls. */
 export function ChartHistoryMenu({ children }: { children: ReactNode }) {
@@ -37,7 +38,7 @@ export function FullscreenButton() {
       disabled={!document.fullscreenEnabled} aria-pressed={active} onClick={() => {
         const action = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
         void action.catch(() => setError('浏览器暂不支持全屏，请使用窗口最大化。'));
-      }}><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4"/></svg></button>
+      }}><ToolbarIcon name="fullscreen" /></button>
     {error && <span role="status">{error}</span>}
   </span>;
 }

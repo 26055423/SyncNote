@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ToolbarIcon } from '../ui/ToolbarIcon';
 
 /**
  * 周期菜单（当前格子）。
@@ -34,7 +35,7 @@ export function TfMenu({ current, options, scopeAll = false, disabled = false, o
       <button disabled={disabled} type="button" className={`tp-btn ${open ? 'is-active' : ''}`} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((value) => !value)} title={scopeAll ? '周期：同步到全部图表' : '周期：只作用于当前格子'}>
         {label}
         {scopeAll ? <span className="tp-scope">全部</span> : null}
-        <span className="tp-caret" aria-hidden="true">▾</span>
+        <span className="tp-caret" aria-hidden="true"><ToolbarIcon name="chevron" /></span>
       </button>
       {open ? (
         <div className="tp-panel" role="listbox" aria-label="周期">

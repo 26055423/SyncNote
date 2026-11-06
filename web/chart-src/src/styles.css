@@ -1476,3 +1476,48 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .chart-toolbar .native-chart-tools { order: 9; margin-left: auto; display: flex; min-width: 0; }
 .chart-toolbar .vela-widget-topbar { display: flex; align-items: center; }
 .chart-toolbar .vela-topbar-right { margin-left: auto; }
+
+/* Custom controls share Vela's toolbar geometry; panel forms keep their styles. */
+.unified-topbar :is(.tool-btn, .tp-btn, .lp-trigger),
+.unified-topbar .top-actions > a {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 30px; min-width: 32px; padding: 0 8px; margin: 0;
+  border: 0; border-radius: 4px; background: transparent; box-shadow: none;
+  color: var(--dim); font-size: 13px; font-weight: 550; line-height: 1;
+  text-decoration: none; cursor: pointer; flex-shrink: 0;
+}
+.unified-topbar :is(.tool-btn, .tp-btn, .lp-trigger):hover:not(:disabled),
+.unified-topbar .top-actions > a:hover {
+  background: var(--hover); color: var(--text);
+}
+.unified-topbar :is(.tool-btn, .tp-btn, .lp-trigger).is-active,
+.unified-topbar .tool-btn[aria-pressed='true'] {
+  background: var(--active-bg); color: var(--accent-ink); box-shadow: none;
+}
+.unified-topbar :is(button, a):focus-visible {
+  outline: 2px solid var(--accent-line); outline-offset: -2px;
+}
+.unified-topbar button:disabled { opacity: .4; cursor: default; }
+.unified-topbar :is(.tool-btn, .tp-btn, .lp-trigger) > svg { width: 16px; height: 16px; flex: none; }
+.unified-topbar .tool-btn.icon { width: 32px; padding: 0; }
+.unified-topbar .tp-caret { display: inline-flex; }
+.unified-topbar .tp-caret svg { width: 12px; height: 12px; }
+.unified-topbar .mode-switch { padding: 0; border: 0; border-radius: 0; background: transparent; gap: 2px; }
+.unified-topbar .fav-tools { gap: 2px; }
+.unified-topbar .unified-chart-tools { border-left: 0; padding-left: 0; gap: 2px; }
+.unified-topbar .toolbar-separator {
+  display: block; width: var(--toolbar-hairline, 1px); height: 22px;
+  margin: 0 2px; flex: none; background: var(--line-strong);
+}
+.unified-topbar .native-chart-tools .vela-widget-topbar { height: 30px; background: transparent; }
+.unified-topbar .native-chart-tools :is(.vela-widget-tool, .vela-widget-style, .vela-widget-indicators) { color: var(--dim); }
+.unified-topbar .native-chart-tools button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.unified-topbar .native-chart-tools .vela-sep { background: var(--line-strong); }
+.unified-topbar .top-actions { gap: 2px; }
+.unified-topbar .top-actions > button,
+.unified-topbar .top-actions > a,
+.unified-topbar .top-actions .settings-trigger { height: 30px; padding: 0 8px; font-size: 13px; }
+.unified-topbar .top-actions > a::before { content: none; }
+@media (max-width: 1200px) {
+  .unified-topbar .top-actions .action-label { display: none; }
+}

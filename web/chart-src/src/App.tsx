@@ -17,6 +17,7 @@ import { TrackStrip } from './TrackStrip';
 import { ChatDock } from './ChatDock';
 import { ReviewShareDialog } from './ReviewShareDialog';
 import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
+import { ToolbarIcon } from './ui/ToolbarIcon';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
 import { localHistorySync } from './localHistorySync';
@@ -1114,6 +1115,7 @@ export default function App() {
       const width = chartRight - left + parseFloat(getComputedStyle(toolbar).borderRightWidth);
       const actions = document.querySelector('.top-actions') as HTMLElement | null;
       const header = toolbar.parentElement!;
+      header.style.setProperty('--toolbar-hairline', `${1 / (window.devicePixelRatio || 1)}px`);
       const actionsLeft = header.getBoundingClientRect().right - parseFloat(getComputedStyle(header).paddingRight) - (actions?.getBoundingClientRect().width ?? 0);
       setToolbarActionInset(Math.max(8, Math.ceil(chartRight - actionsLeft + 10)));
       setToolbarWidth(width > 120 ? width : null);
@@ -1233,6 +1235,7 @@ export default function App() {
           className="chart-toolbar unified-chart-tools"
           style={toolbarWidth ? { flex: '0 0 auto', width: `${toolbarWidth}px`, paddingRight: toolbarActionInset } : undefined}
         >
+          <span className="toolbar-separator" aria-hidden="true" />
           <TfMenu disabled={replayActive} current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
           <div className="native-chart-tools" ref={setNativeToolbarHost} />
           <DrawingFavs
@@ -1243,8 +1246,9 @@ export default function App() {
               setActiveTool((prev) => (prev === key ? null : key));
             }}
           />
+          <span className="toolbar-separator" aria-hidden="true" />
           <span className="mode-switch" role="group" aria-label="图表视图">
-            <button type="button" className={`tool-btn ${mode === 'live' && !replayActive ? 'is-active' : ''}`.trim()} aria-pressed={mode === 'live' && !replayActive} disabled={replayActive} onClick={() => switchMode('live')}>行情</button>
+            <button type="button" className={`tool-btn ${mode === 'live' && !replayActive ? 'is-active' : ''}`.trim()} aria-pressed={mode === 'live' && !replayActive} disabled={replayActive} onClick={() => switchMode('live')}><ToolbarIcon name="live" />行情</button>
             <button
               type="button"
               className={`tool-btn ${replayActive ? 'is-active' : ''}`.trim()}
@@ -1252,7 +1256,7 @@ export default function App() {
               title={replayActive ? '重新选择回放起点' : '在历史 K 线上逐根回放'}
               onClick={() => chartRef.current?.replaySelect()}
             >
-              回放
+              <ToolbarIcon name="replay" />回放
             </button>
           </span>
           <BarReplayControls
@@ -1318,8 +1322,9 @@ export default function App() {
         </div>
 
         <nav className="top-actions">
-          <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>本机 MT5</button>
-          <a href="/history" target="_blank" rel="noopener noreferrer" title="新标签页打开，保留本机 EA 连接">交易日历 ↗</a>
+          <button type="button" className="tool-btn" title="本机 MT5" aria-label="本机 MT5" onClick={() => { setTab('trade'); setRailOpen(true); }}><ToolbarIcon name="terminal" /><span className="action-label">本机 MT5</span></button>
+          <a href="/history" target="_blank" rel="noopener noreferrer" aria-label="交易日历（新标签页）" title="交易日历：新标签页打开，保留本机 EA 连接"><ToolbarIcon name="calendar" /><span className="action-label">交易日历</span></a>
+          <span className="toolbar-separator" aria-hidden="true" />
           <LayoutMenu disabled={replayActive} compact current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
           <FullscreenButton />
           <SettingsMenu name={me?.nickname || '账户'} />

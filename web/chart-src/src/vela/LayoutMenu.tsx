@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ToolbarIcon } from '../ui/ToolbarIcon';
 import { CUSTOM_LAYOUTS, LAYOUT_GROUPS, gridId, slotRects, type LayoutDef } from './layoutDefs';
 
 /**
@@ -93,7 +94,7 @@ export function LayoutMenu({
   return (
     <div className={`lp${compact ? ' is-compact' : ''}`} ref={rootRef}>
       <button disabled={disabled} type="button" className={`vela-tool-btn lp-trigger ${open ? 'is-active' : ''}`} onClick={() => setOpen((v) => !v)} title="图表布局与同步" aria-label="图表布局与同步" aria-haspopup="dialog" aria-expanded={open}>
-        <Thumb rects={triggerRects} active={false} size={22} />
+        {compact ? <ToolbarIcon name="layout" /> : <Thumb rects={triggerRects} active={false} size={22} />}
         {compact ? null : <span className="lp-trigger-label">布局</span>}
       </button>
 

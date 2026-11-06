@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { prefs, usePrefs, type ChartLocale, type Theme } from './ui/prefs';
-import { GearIcon } from './ui/icons';
+import { ToolbarIcon } from './ui/ToolbarIcon';
 import { ZONES } from './lib/zones';
 import { resolveZone, systemZone, zoneOffsetLabel } from './lib/time';
 
@@ -43,8 +43,9 @@ export function SettingsMenu({ name = '账户' }: { name?: string }) {
         title="账户与图表设置"
         aria-label="账户与图表设置"
         aria-expanded={open}
+        aria-haspopup="dialog"
       >
-        <GearIcon />
+        <ToolbarIcon name="gear" />
         <span>{name}</span>
       </button>
 

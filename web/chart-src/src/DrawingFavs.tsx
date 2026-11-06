@@ -1,4 +1,5 @@
-import { toolIcon, toolLabel } from './vela/drawingTools';
+import { toolLabel } from './vela/drawingTools';
+import { DrawingToolIcon } from './ui/DrawingToolIcon';
 
 /**
  * 顶部画图收藏栏：只镜像 Vela 左侧工具栏里「添加到收藏」选的工具。
@@ -21,9 +22,10 @@ export function DrawingFavs({ favorites, active, onUse }: DrawingFavsProps) {
             className={`tool-btn icon ${active === key ? 'is-active' : ''}`}
             title={toolLabel(key)}
             aria-label={toolLabel(key)}
+            aria-pressed={active === key}
             onClick={() => onUse(key)}
           >
-            {toolIcon(key)}
+            <DrawingToolIcon tool={key} />
           </button>
         ))
       ) : (
