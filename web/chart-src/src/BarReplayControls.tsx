@@ -1,19 +1,40 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { ChartHandle, ReplayUiState } from './vela/ChartWorkspace';
 import { stamp } from './api';
-
 
 const iconProps = {
   width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
   strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
 } as const;
 
-/** 选择K线：带影线的两根 K 线。 */
-const KlineIcon = () => (
+/** 随机：骰子。 */
+const DiceIcon = () => (
   <svg {...iconProps}>
-    <path d="M7 4v3M7 17v3M17 4v3M17 17v3" />
-    <rect x="4.8" y="7" width="4.4" height="10" rx="1" />
-    <rect x="14.8" y="7" width="4.4" height="10" rx="1" />
+    <rect x="4.5" y="4.5" width="15" height="15" rx="3" />
+    <circle cx="9" cy="9" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="15" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+  </svg>
+);
+/** 点选：十字光标。 */
+const CrosshairIcon = () => (
+  <svg {...iconProps}>
+    <circle cx="12" cy="12" r="6.5" />
+    <path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5" />
+  </svg>
+);
+/** 当前视图：方框加眼睛点。 */
+const ViewIcon = () => (
+  <svg {...iconProps}>
+    <rect x="3.5" y="5.5" width="17" height="13" rx="2" />
+    <circle cx="12" cy="12" r="2.4" />
+  </svg>
+);
+/** 最早：双箭头到左端。 */
+const EarliestIcon = () => (
+  <svg {...iconProps}>
+    <path d="M6 5v14" />
+    <path d="M11 12l6-6M11 12l6 6" />
   </svg>
 );
 const PlayIcon = () => (
@@ -31,12 +52,24 @@ const StepIcon = () => (
 const CloseIcon = () => (
   <svg {...iconProps}><path d="M6 6l12 12M18 6L6 18" /></svg>
 );
+const CaretIcon = () => (
+  <svg {...iconProps}><path d="M6 9.5l6 6 6-6" /></svg>
+);
 
 const idle: ReplayUiState = { available: false, active: false, playing: false, armed: false, busy: false, cursorTime: null, clockTime: null, remaining: 0, intervalMs: 1000 };
 
+/** 起点模式：左边大按钮按当前模式执行一次，右边三角只用来切换模式。 */
+type StartMode = 'random' | 'click' | 'view' | 'earliest';
+const MODES: Array<{ key: StartMode; label: string; hint: string; Icon: () => React.ReactElement }> = [
+  { key: 'random', label: '随机K线', hint: '随机挑一段有数据的历史开始回放', Icon: DiceIcon },
+  { key: 'click', label: '点选K线', hint: '在图上点一根 K 线作为起点', Icon: CrosshairIcon },
+  { key: 'view', label: '当前视图', hint: '用当前视口里最早的一根当起点', Icon: ViewIcon },
+  { key: 'earliest', label: '最早日期', hint: '从当前数据最早一根开始', Icon: EarliestIcon },
+];
+
 /**
- * 回放控制条：浮在图表底部，功能对齐 TradingView 的回放栏。
- * 入口是顶部「行情 | 回放」分段控件；这里只负责选起点和控制播放。
+ * 回放控制条：顶部工具栏内联，紧跟「行情 | 回放」。
+ * 左边是「模式 + 执行」按钮，右边小三角切模式；随后是播放/逐根/速度/时钟/退出。
  */
 export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom }: {
   chart: RefObject<ChartHandle | null>;
@@ -50,6 +83,14 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom 
   const [speed, setSpeed] = useState(1000);
   const [error, setError] = useState('');
   const [menu, setMenu] = useState(false);
+  const [mode, setMode] = useState<StartMode>(() => {
+    try {
+      const saved = localStorage.getItem('sn-replay-mode');
+      if (saved === 'random' || saved === 'click' || saved === 'view' || saved === 'earliest') return saved;
+    } catch { /* ignore */ }
+    return 'random';
+  });
+  const busyRef = useRef(false);
 
   useEffect(() => {
     const read = () => {
@@ -61,7 +102,6 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom 
     return () => window.clearInterval(timer);
   }, [chart, onActiveChange]);
 
-  // 点外部关闭「选择起点」下拉
   useEffect(() => {
     if (!menu) return;
     const close = (event: MouseEvent) => {
@@ -75,44 +115,69 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom 
 
   const choosing = state.armed || state.busy;
   const entered = state.active || choosing;
-  // 未进入回放时什么都不渲染（入口在顶部「行情 | 回放」分段控件里）。
   if (!entered) return null;
 
-  const startFromView = () => {
+  const current = MODES.find((item) => item.key === mode) ?? MODES[0];
+  const CurrentIcon = current.Icon;
+
+  /** 大按钮：按当前模式执行一次（随机/最早/当前视图直接开始，点选进入选点状态）。 */
+  const run = () => {
+    if (busyRef.current) return;
     setError('');
-    void chart.current?.replayStartFromView().catch(error => setError(error instanceof Error ? error.message : String(error)));
+    if (mode === 'click') { chart.current?.replaySelect(); return; }
+    if (mode === 'view') {
+      busyRef.current = true;
+      void chart.current?.replayStartFromView()
+        .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+        .finally(() => { busyRef.current = false; });
+      return;
+    }
+    const action = mode === 'random' ? onRandom : onEarliest;
+    if (!action) { setError('这个起点方式暂不可用'); return; }
+    busyRef.current = true;
+    void action()
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => { busyRef.current = false; });
   };
 
   return (
     <div className="replay-bar" role="toolbar" aria-label="K线回放">
       <div className="replay-pick">
-        <button type="button" className="tool-btn" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(open => !open)}>
-          <KlineIcon /> 选择K线 ▾
+        <button type="button" className="tool-btn replay-run" title={current.hint} onClick={run}>
+          <CurrentIcon /> {current.label}
+        </button>
+        <button
+          type="button"
+          className="tool-btn replay-mode-toggle"
+          aria-haspopup="menu"
+          aria-expanded={menu}
+          aria-label="切换起点方式"
+          title="切换起点方式"
+          onClick={() => setMenu(open => !open)}
+        >
+          <CaretIcon />
         </button>
         {menu ? (
-          <div className="replay-pick-menu" role="menu" aria-label="选择回放起点">
-            <button type="button" role="menuitem" onClick={() => { setMenu(false); setError(''); chart.current?.replaySelect(); }}>
-              在图上点选 K 线
-            </button>
-            <button type="button" role="menuitem" onClick={() => { setMenu(false); startFromView(); }}>
-              从当前视图开始
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!onEarliest}
-              onClick={() => { setMenu(false); setError(''); void onEarliest?.().catch(error => setError(error instanceof Error ? error.message : String(error))); }}
-            >
-              最早可用日期
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!onRandom}
-              onClick={() => { setMenu(false); setError(''); void onRandom?.().catch(error => setError(error instanceof Error ? error.message : String(error))); }}
-            >
-              随机K线
-            </button>
+          <div className="replay-pick-menu" role="menu" aria-label="起点方式">
+            {MODES.map((item) => {
+              const ModeIcon = item.Icon;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={item.key === mode}
+                  className={item.key === mode ? 'is-active' : ''}
+                  onClick={() => {
+                    setMode(item.key);
+                    setMenu(false);
+                    try { localStorage.setItem('sn-replay-mode', item.key); } catch { /* ignore */ }
+                  }}
+                >
+                  <ModeIcon /> {item.label}
+                </button>
+              );
+            })}
           </div>
         ) : null}
       </div>
