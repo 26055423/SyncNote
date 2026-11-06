@@ -237,6 +237,7 @@ export default function App() {
   const [replayActive, setReplayActive] = useState(false);
   /** 右栏停靠时给工具条算出的宽度：让它的右边界和图表右边界严格对齐。 */
   const [toolbarWidth, setToolbarWidth] = useState<number | null>(null);
+  const [toolbarActionInset, setToolbarActionInset] = useState(8);
   /** 回放「选起点」状态 + 鼠标横坐标：用来把选择线右侧的 K 线压成半透明。 */
   const [replayArmed, setReplayArmed] = useState(false);
   const [ghostX, setGhostX] = useState<number | null>(null);
@@ -1108,19 +1109,24 @@ export default function App() {
       if (!docked || !toolbar) { setToolbarWidth(null); return; }
       const chartRight = chart.getBoundingClientRect().right;
       const left = toolbar.getBoundingClientRect().left;
-      const width = Math.round(chartRight - left);
+      const width = chartRight - left;
+      const actions = document.querySelector('.top-actions') as HTMLElement | null;
+      const header = toolbar.parentElement!;
+      const actionsLeft = header.getBoundingClientRect().right - parseFloat(getComputedStyle(header).paddingRight) - (actions?.getBoundingClientRect().width ?? 0);
+      setToolbarActionInset(Math.max(8, Math.ceil(chartRight - actionsLeft + 10)));
       setToolbarWidth(width > 120 ? width : null);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(rail);
     observer.observe(chart);
+    for (const element of document.querySelectorAll('.unified-topbar .status-row, .unified-topbar .top-actions')) observer.observe(element);
     window.addEventListener('resize', measure);
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [railOpen, tab, narrow, layout]);
+  }, [!!board, railOpen, tab, narrow, layout]);
 
   const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
     const replay = chartRef.current?.replayStatus(); if (replay?.active || replay?.armed || replay?.busy) return;
@@ -1205,7 +1211,7 @@ export default function App() {
   return (
     <div className="app">
       {/* ---------------------------------------------------------- 顶栏 */}
-      <header className="topbar unified-topbar">
+    <header className={`topbar unified-topbar${toolbarWidth ? ' toolbar-aligned' : ''}`}>
         <a className="brand" href="/">
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
@@ -1223,7 +1229,7 @@ export default function App() {
         </div>
         <div
           className="chart-toolbar unified-chart-tools"
-          style={toolbarWidth ? { flex: '0 0 auto', width: `${toolbarWidth}px` } : undefined}
+          style={toolbarWidth ? { flex: '0 0 auto', width: `${toolbarWidth}px`, paddingRight: toolbarActionInset } : undefined}
         >
           <TfMenu disabled={replayActive} current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
           <div className="native-chart-tools" ref={setNativeToolbarHost} />

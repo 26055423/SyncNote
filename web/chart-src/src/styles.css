@@ -1395,6 +1395,10 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .unified-topbar .brand small { display: none; }
 .unified-topbar .status-row { flex: none; gap: 8px; }
 .unified-topbar .top-actions { flex: none; width: auto; margin-left: 0; gap: 5px; }
+.unified-topbar.toolbar-aligned .top-actions { position: absolute; right: 10px; }
+@media (max-width: 1200px) {
+  .unified-topbar.toolbar-aligned .top-actions { right: 7px; }
+}
 .unified-topbar .top-actions > a,
 .unified-topbar .top-actions > button,
 .unified-topbar .top-actions .settings-trigger { height: 28px; padding: 0 8px; font-size: 12px; }
