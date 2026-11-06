@@ -220,14 +220,6 @@ export default function App() {
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') || params.get('share') ? 'review' : 'live'));
   const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
-  /** 实时数据的修订号：liveRef 是稳定引用，靠它驱动依赖它的 UI 重算。 */
-  const [liveRev, setLiveRev] = useState(0);
-  /** 有新 K 线时是否自动滚动到最新：默认关，让蜡烛在画面里自然生长。 */
-  const [autoScroll, setAutoScroll] = useState(() => {
-    try { return localStorage.getItem('sn-autoscroll') === '1'; } catch { return false; }
-  });
-  const autoScrollRef = useRef(autoScroll);
-  autoScrollRef.current = autoScroll;
   /** 图上画的是哪套数据：server = bars 表（券商墙钟），utc = 交易快照（journal.review 已转 UTC）。 */
 
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
@@ -238,22 +230,6 @@ export default function App() {
   const liveRef = useRef<ReviewCharts>({});
   const liveListeners = useRef(new Set<() => void>());
   const liveSymbol = localConnected ? local.symbol : 'XAUUSD';
-  // 实时数据新鲜度：各周期最后一根的时间。某个周期明显落后（>3 根）时在标签上提示，
-  // 否则用户会以为"十字线没同步"，其实是那一格的数据停在了更早的位置。
-  const liveLag = useMemo(() => {
-    if (!liveBars) return { stale: [] as string[], latest: null as number | null };
-    const entries = Object.entries(liveBars) as Array<[string, number[][]]>;
-    const last: Array<{ tf: string; time: number; sec: number }> = [];
-    for (const [tf, rows] of entries) {
-      const row = rows?.[rows.length - 1];
-      const sec = TF_SECONDS[tf as BaseTimeframe] ?? 0;
-      if (Array.isArray(row) && Number.isFinite(row[0]) && sec) last.push({ tf, time: row[0], sec });
-    }
-    if (!last.length) return { stale: [] as string[], latest: null as number | null };
-    const latest = Math.max(...last.map((row) => row.time));
-    const stale = last.filter((row) => latest - row.time > row.sec * 3).map((row) => row.tf);
-    return { stale, latest };
-  }, [liveBars, liveRev]);
   const liveProvider = useMemo(
     () => new LiveProvider(liveRef.current, liveSymbol, (listener) => {
       liveListeners.current.add(listener);
@@ -378,7 +354,7 @@ export default function App() {
     if (!localConnected || !marketInfo?.server || marketInfo.server !== local.server) return;
     setLiveTick(local.tick);
     // 新 K 线不该把画面推走：先记下每格可见范围，合并后再恢复（自动滚动关闭时）。
-    const keepRanges = autoScrollRef.current ? null : chartRef.current?.captureRanges();
+    const keepRanges = chartRef.current?.captureRanges();
     const beforeLast: Record<string, number> = {};
     for (const [key, rows] of Object.entries(liveRef.current)) {
       const last = rows?.[rows.length - 1];
@@ -392,7 +368,6 @@ export default function App() {
     mergeLiveHistory(liveRef.current, incoming);
     if (trackSourceRef.current && Object.keys(incoming).length) {
       setLiveBars(liveRef.current);
-      setLiveRev((n) => n + 1);
     }
     for (const listener of liveListeners.current) listener();
     if (!keepRanges) return;
@@ -526,7 +501,7 @@ export default function App() {
         setMarketSeries(Object.keys(out).length ? out : null);
         setMarketInfo({ source, server: pages[0]?.feed?.server ?? '', last: Math.max(0, ...pages.map((page) => page.last_bar ?? 0)) || null,
           tfs: catalog.sources.find((track) => track.id === source && track.symbol === liveSymbol)?.tfs });
-        if (Object.keys(liveRef.current).length) { setLiveBars(liveRef.current); setLiveRev((n) => n + 1); }
+        if (Object.keys(liveRef.current).length) { setLiveBars(liveRef.current); }
         await Promise.all(REVIEW_BASE_TFS.map((base) => out[base]?.length ? chartRef.current?.applySeries(base, liveRef.current[base]!) : undefined));
       } catch (error) {
         if (alive) setError(`轨道历史读取失败：${error instanceof Error ? error.message : String(error)}`);
@@ -567,7 +542,6 @@ export default function App() {
         if (!alive || trackSourceRef.current !== source) return;
         setMarketInfo((info) => info?.source === source ? { ...info,
           last: Math.max(info.last ?? 0, ...pages.map((page) => page.last_bar ?? 0)) || null } : info);
-        setLiveRev((n) => n + 1);
         for (const listener of liveListeners.current) listener();
         if (forceRecent || Date.now() - catalogAt > 60000) {
           const catalog = await api<TrackCatalog>('/api/data/sources');
@@ -1062,7 +1036,6 @@ export default function App() {
       // 注意：必须传同一个引用。传 {...} 会让 charts prop 变换新对象，
       // ChartWorkspace 的初始化 effect 依赖 [charts] → 整个工作台重建 → 视图跳回最新。
       setLiveBars(liveRef.current);
-      setLiveRev((n) => n + 1);
       for (const listener of liveListeners.current) listener();
       return true;
     };
@@ -1336,42 +1309,6 @@ export default function App() {
               }}
             />
             <span className="spacer" />
-            <button
-              type="button"
-              disabled={replayActive}
-              className={`tool-btn autoscroll-toggle ${autoScroll ? 'is-active' : ''}`.trim()}
-              title={autoScroll ? '新 K 线出现时自动滚动到最新（点击关闭）' : '新 K 线出现时保持当前画面，不自动滚动（点击开启自动滚动）'}
-              aria-pressed={autoScroll}
-              onClick={() => {
-                const next = !autoScroll;
-                setAutoScroll(next);
-                try { localStorage.setItem('sn-autoscroll', next ? '1' : '0'); } catch { /* ignore */ }
-              }}
-            >
-              自动滚动
-            </button>
-            {/* 数据源标签：避免把"复盘回放"当成实时行情。 */}
-            <span
-              className={`data-chip ${mode === 'live' ? (liveBars ? (liveLag.stale.length ? 'is-wait' : 'is-live') : 'is-wait') : 'is-review'}`}
-              title={
-                mode === 'live'
-                  ? liveBars
-                    ? `历史来自数据轨道 ${marketInfo?.server || marketInfo?.source || '加载中'}；实时增量随报价更新${liveLag.latest ? `；最新一根 ${stamp(liveLag.latest)}` : ''}${Object.entries(liveBars ?? {})
-                        .filter(([, rows]) => rows?.length)
-                        .map(([tf, rows]) => `${tf}:${rows.length} 根`)
-                        .join(' · ')}`
-                    : '实时行情未就绪：本机 EA 还没推送 K 线，当前显示的是服务器历史行情'
-                  : '按交易或分享切片定位；可向两侧加载同一券商轨道的已入库历史，无需连接 EA'
-              }
-            >
-              {replayActive ? 'K线回放 · 历史演练' : mode === 'live'
-                ? liveBars
-                  ? liveLag.stale.length
-                    ? `实时 K 线（${liveLag.stale.join(' / ')} 落后）`
-                    : localConnected || liveTick ? '轨道行情 · 实时更新' : '轨道历史行情'
-                  : '历史行情（实时未就绪）'
-                : '复盘 · 服务器历史'}
-            </span>
             <span className="save-hint" role="status" aria-live="polite">
               {saveState === 'saving' ? '保存画线…' : saveState === 'saved' ? '画线已保存' : saveState === 'error' ? '画线保存失败' : ''}
             </span>
