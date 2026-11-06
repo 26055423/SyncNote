@@ -1,7 +1,7 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.013"
+#property version "1.014"
 #property description "Read-only history, review charts and shared K-line track backfill. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 
@@ -44,10 +44,16 @@ bool SNStillBound()
 }
 bool SNWriteExact(const string path,const string text)
 {
- int f=FileOpen(path,FILE_WRITE|FILE_TXT|FILE_ANSI,0,CP_UTF8);if(f==INVALID_HANDLE)return false;
  uchar bytes[];int expected=StringToCharArray(text,bytes,0,-1,CP_UTF8)-1;
- ResetLastError();uint written=FileWriteString(f,text);FileFlush(f);int error=GetLastError();FileClose(f);
- return written==(uint)expected&&error==0;
+ if(expected<0)return false;
+ // TXT writes silently turn LF into CRLF. Write encoded bytes without conversion
+ // so exact-write checks and checkpoint hashes refer to the same byte sequence.
+ ResetLastError();int f=FileOpen(path,FILE_WRITE|FILE_BIN);if(f==INVALID_HANDLE){Print("SyncNote: local file open failed; error ",GetLastError());return false;}
+ ResetLastError();uint written=FileWriteArray(f,bytes,0,expected);FileFlush(f);int error=GetLastError();
+ ulong size=FileSize(f);FileClose(f);
+ bool complete=written==(uint)expected&&size==(ulong)expected&&error==0;
+ if(!complete)Print("SyncNote: local exact write failed; written=",written," expected=",expected," size=",size," error=",error);
+ return complete;
 }
 bool SNBindToken()
 {
