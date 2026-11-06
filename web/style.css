@@ -80,12 +80,12 @@ body.admin-login #auth-title { color:#f0d9a8; }
 .history-page .summary-values{padding:8px 18px 14px;gap:12px}
 .history-page .summary-values strong{font-size:22px}
 .history-page .summary-grid .panel-title{padding:14px 18px 4px}
-.journal-workspace{grid-template-columns:minmax(0,1fr) 400px;gap:16px;align-items:start}
+.journal-workspace{grid-template-columns:minmax(0,1fr) clamp(430px, 34vw, 640px);gap:16px;align-items:start}
 .journal-workspace .journal-panel{min-height:480px}
 .journal-workspace .calendar-controls{flex-wrap:nowrap;gap:4px}
 .journal-workspace .calendar-controls button{white-space:nowrap;flex-shrink:0}
 .journal-workspace .calendar-controls input{width:150px;min-width:0}
-.journal-workspace .calendar-day{min-height:82px}
+.journal-workspace .calendar-day{min-height:86px}
 .journal-workspace .calendar-day b{padding-bottom:4px;margin-bottom:4px}
 .history-page .mistake-groups{padding:3px 0}
 .history-page .issue-card{min-width:150px;padding:10px 12px}
