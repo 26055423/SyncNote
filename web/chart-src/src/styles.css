@@ -1521,3 +1521,10 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 @media (max-width: 1200px) {
   .unified-topbar .top-actions .action-label { display: none; }
 }
+
+/* 顶栏下拉菜单（图表样式、指标等）与按钮之间有一条 6px 的缝：
+   鼠标往下移到菜单时会先离开按钮，菜单就收起了。用一块透明热区把缝补上。 */
+.vela-ui-layer .vela-menu { position: relative; }
+.vela-ui-layer .vela-menu::before {
+  content: ''; position: absolute; left: -8px; right: -8px; top: -12px; height: 12px;
+}
