@@ -1211,7 +1211,7 @@ export default function App() {
   return (
     <div className="app">
       {/* ---------------------------------------------------------- 顶栏 */}
-    <header className={`topbar unified-topbar${toolbarWidth ? ' toolbar-aligned' : ''}`}>
+      <header className={`topbar unified-topbar${toolbarWidth ? ' toolbar-aligned' : ''}`}>
         <a className="brand" href="/">
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
