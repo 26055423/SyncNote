@@ -241,11 +241,14 @@ Bearer 连接码（SyncNote / SyncTrade 通用），或 `website_user_id` 会话
 ### 7.2 新增：`GET /api/chart/bars`
 
 ```
-GET /api/chart/bars?share=12&tf=M1&from=<server_sec>&to=<server_sec>
+GET /api/chart/bars?share=12&tf=M1&from=<utc_sec>&to=<utc_sec>
 GET /api/chart/bars?person=<uid>&ticket=108245&tf=M15&from=…&to=…
+GET /api/chart/bars?person=<uid>&ticket=108245&tf=M1&limit=2000&after=<utc_sec>
+GET /api/chart/bars?share=12&tf=M1&limit=2000&before=<utc_sec>
 ```
 
 - 授权规则与 `/api/chart/entry` 完全一致（自己 / 好友可见 / 收到分享）；
+- 当前实现（2026-11-06）：范围输入、K 线、覆盖与缺口均为 UTC；`read_utc` 在库查询处统一换算墙钟。按根数分页支持互斥 `before/after`，无游标返回最新已收盘数据；跨周末空档仍能向后加载。复盘界面保留交易锚点，可点击「最新入库」或向两侧翻页，无需 EA 在线。
 - 返回：`{bars:[[t,o,h,l,c,v],…], covered:[[from,to],…], missing:[[from,to],…], feed_label:"Broker-Demo · 90012345"}`；
 - `feed_label` 只给显示用（“数据：分享者的行情”），不回 `account_key` 原文以外的任何凭据。
 

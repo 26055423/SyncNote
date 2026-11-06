@@ -249,10 +249,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       const all = Boolean(ws.sync?.state?.().timeframe);
       if (all) {
         ws.cells?.().forEach((cell: any) => {
-          void cell.chart?.setMarket?.({ timeframe: tf });
+          void cell.chart?.setMarket?.({ timeframe: tf, ...(!props.provider ? { data: [] } : {}) });
         });
       } else {
-        void ws.active?.chart?.setMarket?.({ timeframe: tf });
+        void ws.active?.chart?.setMarket?.({ timeframe: tf, ...(!props.provider ? { data: [] } : {}) });
       }
       onTimeframe?.(tf);
     },
@@ -288,13 +288,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         }
       }
     },
-    async applySeries(base, bars, onlyCellId, refresh = false) {
-      dataRef.current = { ...dataRef.current, [base]: bars };
+    async applySeries(base, bars, _onlyCellId, refresh = false) {
+      // The static provider shares this cache, including newly added/layout-switched cells.
+      dataRef.current[base] = bars;
       const updates: Promise<void>[] = [];
       for (const cell of wsRef.current?.cells?.() ?? []) {
-        // 只重画触发这次补段的那一格：把整屏同周期的格子一起 setBars，
-        // 会让没在拖动的窗口被重新缩放/跳一下。
-        if (onlyCellId && cell.id !== onlyCellId) continue;
+        // 同基础周期的每个格子都补齐，各自保持原来的位置与蜡烛宽度。
         const tfId: string = cell.chart?.market?.timeframe ?? '15';
         const recipe = TIMEFRAMES[tfId];
         if (!recipe || recipe.base !== base) continue;
@@ -314,10 +313,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               await chart.setMarket({ ...(refresh ? { data: [] } : {}),
                 bars: Math.max(rendered.length + (refresh ? 2 : 0), (chart.market?.bars ?? 0) + (refresh ? 2 : 1)) });
             } else {
-              await chart.setMarket({ data: rendered.map(toOhlcv), visibleRange: range });
+              await chart.setMarket({ data: rendered.map(toOhlcv) });
             }
             await chart.historyComplete();
-            if (range && props.provider && refresh) restoreChartLeft(chart, range.from);
+            if (range && (!props.provider || refresh)) restoreChartLeft(chart, range.from);
           } finally { seriesUpdateUntilRef.current.set(cell.id, Date.now() + 100); }
         })());
       }
@@ -439,7 +438,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         const { VelaWorkspace } = await import('@luxalgo/vela/workspace');
         if (disposed || !hostRef.current) return;
 
-        const provider = (props.provider as never) ?? new ReviewProvider(charts, symbol, props.providerName || 'review');
+        Object.assign(dataRef.current, charts);
+        const provider = (props.provider as never) ?? new ReviewProvider(dataRef.current, symbol, props.providerName || 'review');
         const providerName = props.provider ? (props.providerName || 'live') : (props.providerName || 'review');
         const initial = prefs.getState();
         await registerBigwolf();

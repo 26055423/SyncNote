@@ -138,7 +138,7 @@ def to_utc(bars_payload, offset_sec):
   for row in rows:
     if row and isinstance(row[0], (int, float)):
       row[0] = int(row[0]) - int(offset_sec)
-  for field in ('from_server', 'to_server', 'earliest', 'next_before'):
+  for field in ('from_server', 'to_server', 'earliest', 'next_before', 'next_after'):
     if isinstance(bars_payload.get(field), (int, float)):
       bars_payload[field] = int(bars_payload[field]) - int(offset_sec)
   missing = bars_payload.get('missing') or []
@@ -146,6 +146,10 @@ def to_utc(bars_payload, offset_sec):
     {'from': int(item['from']) - int(offset_sec), 'to': int(item['to']) - int(offset_sec)}
     for item in missing if isinstance(item, dict) and 'from' in item and 'to' in item
   ]
+  for item in bars_payload.get('covered') or []:
+    if isinstance(item, dict) and 'from' in item and 'to' in item:
+      item['from'] = int(item['from']) - int(offset_sec)
+      item['to'] = int(item['to']) - int(offset_sec)
   bars_payload['offset_sec'] = int(offset_sec)
   return bars_payload
 
@@ -454,7 +458,18 @@ def read(db, source, symbol, tf, start, end, now=None):
     'now': now,
   }
 
-def tracks(db, symbol, source_active, start, end, tfs=('M1', 'M5', 'M15', 'H1')):
+def read_utc(db, source, symbol, tf, start, end, now=None):
+  """UTC 范围与时钟先转券商墙钟查询，K 线及覆盖/缺口再统一转回 UTC。"""
+  now = time.time() if now is None else now
+  shift = source_offset(db, source)
+  payload = read(db, source, symbol, tf, int(start) + shift, int(end) + shift, now + shift)
+  payload = to_utc(payload, shift)
+  payload['now'] = now
+  payload['time_basis'] = 'utc'
+  return payload
+
+
+def tracks(db, symbol, source_active, start, end, tfs=('M1', 'M5', 'M15', 'H1'), utc=False):
   """视频编辑软件式的“轨道”：一个券商服务器一条轨，返回每条轨在 [start,end] 的覆盖情况。
 
   `source_active` 是当前这笔交易所属的轨（会被前端提到最上层）。
@@ -462,32 +477,41 @@ def tracks(db, symbol, source_active, start, end, tfs=('M1', 'M5', 'M15', 'H1'))
   result = []
   for feed in db.execute('SELECT DISTINCT source,server,account FROM feeds ORDER BY source').fetchall():
     source = feed['source']
+    shift = source_offset(db, source) if utc else 0
+    wall_start, wall_end = int(start) + shift, int(end) + shift
     per = {}
     covered_seconds = 0
-    total = 0
+    total = max(1, end - start)
+    blocks = []
     for tf in tfs:
-      intervals = _coverage(db, source, symbol, tf, start, end)
+      intervals = _coverage(db, source, symbol, tf, wall_start, wall_end)
       span = sum(max(0, close - begin + tf_seconds(tf)) for begin, close, _state in intervals)
       bars_count = db.execute(
         'SELECT count(*) FROM bars WHERE source=? AND symbol=? AND tf=? AND t>=? AND t<=?',
-        (source, symbol, tf, start, end),
+        (source, symbol, tf, wall_start, wall_end),
       ).fetchone()[0]
       per[tf] = {'covered_seconds': span, 'bars': bars_count, 'segments': len(intervals)}
       if tf == 'M1':
         covered_seconds = span
-        total = max(1, end - start)
-        blocks = [[max(begin, start), min(close, end)] for begin, close, _state in intervals]
+        blocks = [[max(begin, wall_start) - shift, min(close, wall_end) - shift] for begin, close, _state in intervals]
     result.append({
       'source': source,
       'server': feed['server'],
       'account': feed['account'],
       'active': source == source_active,
       'coverage': round(min(1.0, covered_seconds / total), 4),
-      'blocks': blocks if tf == 'M1' else [],
+      'blocks': blocks,
       'series': per,
     })
   result.sort(key=lambda row: (not row['active'], row['source']))
   return {'symbol': symbol, 'from': start, 'to': end, 'tf': 'M1', 'tracks': result}
+
+
+def tracks_utc(db, symbol, source_active, start, end, tfs=('M1', 'M5', 'M15', 'H1')):
+  """同一 UTC 窗口内，各券商轨分别按自己的墙钟偏移查询和换回 UTC。"""
+  payload = tracks(db, symbol, source_active, start, end, tfs, utc=True)
+  payload['time_basis'] = 'utc'
+  return payload
 
 def mark_coverage(db, source, symbol, tf, start, end, state='have', now=None):
   """直接登记一段覆盖（导入历史数据时用，避免逐批重算区间）。"""
@@ -541,6 +565,39 @@ def latest_utc(db, source, symbol, tf, limit=4000, now=None, before=None):
   now = time.time() if now is None else now
   shift = source_offset(db, source)
   payload = latest(db, source, symbol, tf, limit, now + shift, None if before is None else int(before) + shift)
+  payload = to_utc(payload, shift)
+  payload['now'] = now
+  payload['time_basis'] = 'utc'
+  return payload
+
+
+def following(db, source, symbol, tf, after, limit=4000, now=None):
+  """严格晚于 after 的下 N 根，跨周末/缺口按实际根数取；使用券商墙钟。"""
+  now = time.time() if now is None else now
+  tf = normalize_tf(tf)
+  if not tf:
+    raise BarsError('周期不正确')
+  limit = max(1, min(20000, int(limit)))
+  rows = db.execute(
+    'SELECT t,o,h,l,c,v FROM bars WHERE source=? AND symbol=? AND tf=? AND t>? AND t+?<=? ORDER BY t LIMIT ?',
+    (source, symbol, tf, int(after), tf_seconds(tf), now, limit + 1),
+  ).fetchall()
+  has_more = len(rows) > limit
+  bars = [[r['t'], r['o'], r['h'], r['l'], r['c'], r['v']] for r in rows[:limit]]
+  return {
+    'schema': SCHEMA, 'source': source, 'symbol': symbol, 'tf': tf,
+    'bars': bars, 'count': len(bars), 'has_more': has_more,
+    'next_after': bars[-1][0] if bars and has_more else None,
+    'from_server': bars[0][0] if bars else None,
+    'to_server': bars[-1][0] if bars else None, 'now': now,
+  }
+
+
+def following_utc(db, source, symbol, tf, after, limit=4000, now=None):
+  """UTC 向后游标和当前时钟只在这里换算。"""
+  now = time.time() if now is None else now
+  shift = source_offset(db, source)
+  payload = following(db, source, symbol, tf, int(after) + shift, limit, now + shift)
   payload = to_utc(payload, shift)
   payload['now'] = now
   payload['time_basis'] = 'utc'

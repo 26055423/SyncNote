@@ -62,6 +62,16 @@ test('pans suppress animations only for the operation and restore them even on f
  }
 });
 
+test('restoring a reload across a weekend searches screen distance without oscillating at the boundaries', () => {
+  const f = fixture(false), left = f.chart.getVisibleRange().from, spacing = f.spacing();
+  const monday = Array.from({ length: 600 }, (_, i) => row(i + 600 + 72 * 12));
+  f.renderer.setBars([]);
+  f.renderer.setBars([...f.rows, ...monday]);
+  restoreChartLeft(f.chart, left);
+  assert.equal(f.spacing(), spacing);
+  assert.ok(Math.abs(f.chart.getVisibleRange().from - left) <= period);
+});
+
 test('unavailable, zero-width and invalid ranges never issue a pan', () => {
   for (const range of [null, { from: 1, to: 1 }, { from: 1, to: NaN }]) {
     const chart = { getVisibleRange: () => range, panBy: () => assert.fail('invalid pan') };

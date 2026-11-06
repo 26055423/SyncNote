@@ -441,16 +441,29 @@ class Handler(BaseHTTPRequestHandler):
                             feed=bars.feed_of(db,target)
                             source=feed['source'] if feed else None
                         if not source:raise Error('这笔交易没有行情来源，暂时只能看复盘快照',404)
-                        try:
-                            start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
-                        except ValueError:raise Error('时间范围不正确')
-                        if end<=start:raise Error('时间范围不正确')
-                        payload=bars.read(db,source,str(trade.get('symbol') or ''),q.get('tf',['M15'])[0],start,end,time.time())
+                        symbol=str(trade.get('symbol') or '');tf=q.get('tf',['M15'])[0]
+                        counted=bool(q.get('limit'))
+                        if q.get('before') and q.get('after'):raise Error('只能指定一个翻页方向')
+                        if (q.get('before') or q.get('after')) and not counted:raise Error('翻页需指定 limit')
+                        if counted:
+                            try:
+                                limit=int(q['limit'][0]);before=int(q['before'][0]) if q.get('before') else None;after=int(q['after'][0]) if q.get('after') else None
+                            except ValueError:raise Error('根数或翻页时间不正确')
+                            if limit<1 or any(cursor is not None and not 1<=cursor<=32535215999 for cursor in (before,after)):raise Error('根数或翻页时间不正确')
+                            try:
+                                payload=bars.following_utc(db,source,symbol,tf,after,limit,time.time()) if after is not None else bars.latest_utc(db,source,symbol,tf,limit,time.time(),before)
+                            except bars.BarsError as error:raise Error(error.text,error.code)
+                        else:
+                            try:
+                                start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
+                            except ValueError:raise Error('时间范围不正确')
+                            if end<=start:raise Error('时间范围不正确')
+                            try:payload=bars.read_utc(db,source,symbol,tf,start,end,time.time())
+                            except bars.BarsError as error:raise Error(error.text,error.code)
                         feed=db.execute('SELECT server,account FROM feeds WHERE source=? LIMIT 1',(source,)).fetchone()
                         payload['feed']={'source':source,'server':(feed['server'] if feed else ''),'account':(feed['account'] if feed else '')}
                         payload['symbol_label']=str(trade.get('symbol') or '')
-                        # 库里是券商墙钟，出库统一换成 UTC，前端就能和交易快照直接混用。
-                        return self.reply(bars.to_utc(payload,bars.source_offset(db,source)))
+                        return self.reply(payload)
                     if path=='/api/chart/tracks':
                         # 视频编辑软件式的“轨道”：一个券商服务器一条轨。
                         ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
@@ -470,13 +483,8 @@ class Handler(BaseHTTPRequestHandler):
                             start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
                         except ValueError:raise Error('时间范围不正确')
                         if end<=start:raise Error('时间范围不正确')
-                        payload=bars.tracks(db,str(trade.get('symbol') or ''),source,start,end)
+                        payload=bars.tracks_utc(db,str(trade.get('symbol') or ''),source,start,end)
                         payload['active_source']=source
-                        shift=bars.source_offset(db,source)
-                        if shift:
-                            for track in payload.get('tracks') or []:
-                                for block in track.get('blocks') or []:
-                                    block['from']=int(block['from'])-shift;block['to']=int(block['to'])-shift
                         return self.reply(payload)
                     if path=='/api/market/bars':
                         # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
@@ -503,14 +511,15 @@ class Handler(BaseHTTPRequestHandler):
                                 start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
                             except ValueError:raise Error('时间范围不正确')
                             if end<=start:raise Error('时间范围不正确')
-                            payload=bars.read(db,source,symbol,tf,start,end,time.time())
+                            try:payload=bars.read_utc(db,source,symbol,tf,start,end,time.time())
+                            except bars.BarsError as error:raise Error(error.text,error.code)
                         last=db.execute('SELECT max(t) FROM bars WHERE source=? AND symbol=? AND tf=?',(source,symbol,payload['tf'])).fetchone()[0]
                         entry=bars.catalog_entry(db,source,symbol) or {}
                         payload['feed']={'source':source,'server':entry.get('server',''),'account':'' if is_public else feed['account']}
                         payload['public']=is_public
                         shift=bars.source_offset(db,source)
                         payload['last_bar']=(int(last)-shift) if last else last
-                        return self.reply(payload if counted else bars.to_utc(payload,shift))
+                        return self.reply(payload)
                     if path=='/api/market/coverage':
                         # 回填调度器查：这条券商轨某周期在 [from,to] 里还有哪些段没填（have/empty 都算已扫）。
                         # 墙钟进墙钟出；前端按券商墙钟切窗口，不在这里换 UTC。
