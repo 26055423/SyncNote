@@ -401,8 +401,8 @@ table.mini tr:last-child td { border-bottom: 0; }
 .lp-panel { width: 308px; display: flex; flex-direction: column; gap: 12px; }
 .lp-section { display: flex; flex-direction: column; gap: 6px; }
 .lp-section-title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-.lp-canvas { display: grid; grid-template-columns: repeat(4, 64px); gap: 6px; }
-.lp-cell { width: 64px; height: 46px; border: 1px solid var(--line); background: var(--well); border-radius: 4px; padding: 0; }
+.lp-canvas { display: grid; grid-template-columns: repeat(4, 62px); gap: 6px; }
+.lp-cell { width: 62px; height: 46px; border: 1px solid var(--line); background: var(--well); border-radius: 4px; padding: 0; }
 .lp-cell.is-lit { background: var(--lp-lit); border-color: var(--lp-lit-line); }
 .lp-cell.is-current { border-color: var(--accent); }
 .lp-hint { color: var(--dim); font-size: 11px; }
@@ -1553,3 +1553,6 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 /* 布局菜单：隐藏滚动条，左右留白一致（原来右侧多出一条 16px 滚动条把内容挤窄） */
 .lp-panel { scrollbar-width: none; }
 .lp-panel::-webkit-scrollbar { width: 0; height: 0; }
+
+/* 布局菜单：左侧留白稍大一点（与右侧视觉平衡） */
+.lp-panel { padding-left: 20px; }
