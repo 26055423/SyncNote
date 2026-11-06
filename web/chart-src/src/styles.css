@@ -225,7 +225,7 @@ button { font: inherit; cursor: pointer; }
 .tool-btn.is-active { border-color: var(--accent); color: var(--accent-ink); }
 .save-hint { color: var(--dim); font-size: 11px; min-width: 72px; text-align: right; }
 .top-actions .lp { position: relative; }
-.top-actions .lp-panel { left: auto; right: 0; width: min(322px, calc(100vw - 24px)); max-height: calc(100dvh - 90px); overflow: auto; }
+.top-actions .lp-panel { left: auto; right: 0; width: min(308px, calc(100vw - 24px)); max-height: calc(100dvh - 90px); overflow: auto; }
 .lp.is-compact .lp-trigger { padding: 6px 9px; }
 .chart-fullscreen { display: inline-flex; position: relative; }
 .chart-fullscreen > button { display: inline-flex; align-items: center; justify-content: center; }
@@ -398,7 +398,7 @@ table.mini tr:last-child td { border-bottom: 0; }
 .tp-caret { color: var(--dim); font-size: 10px; }
 .tp-scope { font-size: 9px; color: var(--accent-ink); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 999px; padding: 0 4px; margin-left: 2px; line-height: 14px; }
 
-.lp-panel { width: 322px; display: flex; flex-direction: column; gap: 12px; }
+.lp-panel { width: 308px; display: flex; flex-direction: column; gap: 12px; }
 .lp-section { display: flex; flex-direction: column; gap: 6px; }
 .lp-section-title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
 .lp-canvas { display: grid; grid-template-columns: repeat(4, 64px); gap: 6px; }
@@ -1549,3 +1549,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 /* 布局菜单：预设缩略图跟随尺寸（Vela 的全局 svg 规则会把它压到 15px） */
 .lp-item .lp-thumb { width: 54px; height: 36px; }
 .lp-item { padding: 4px; }
+
+/* 布局菜单：隐藏滚动条，左右留白一致（原来右侧多出一条 16px 滚动条把内容挤窄） */
+.lp-panel { scrollbar-width: none; }
+.lp-panel::-webkit-scrollbar { width: 0; height: 0; }
