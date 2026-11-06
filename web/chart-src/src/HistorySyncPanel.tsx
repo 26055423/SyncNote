@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { stamp } from './api';
+import { api } from './api';
 import { localHistorySync, useLocalHistorySync } from './localHistorySync';
 import type { LocalTerminalState } from './localTerminal';
 
@@ -9,13 +10,15 @@ export function HistorySyncPanel({ terminal }: { terminal: LocalTerminalState })
   const available = terminal.phase === 'connected' && terminal.features.includes('history') && terminal.history_ready;
   const toggle = async (enabled: boolean) => {
     setError('');
+    // 记住到账号偏好：下次连上 EA 会自动续传（等同个人中心的「自动续传历史」）。
+    void api('/api/settings', { auto_history_sync: enabled }).catch(() => undefined);
     if (!enabled) { localHistorySync.stop(); return; }
     try { await localHistorySync.start(); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
   return <section className="history-sync">
     <h3>交易笔记同步</h3>
     <label className="history-sync-toggle"><input type="checkbox" checked={sync.enabled} disabled={!sync.enabled && !available} onChange={(event) => void toggle(event.target.checked)} /><span>同步本机交易到笔记</span></label>
-    <p className="dim">开启后，将当前 MT5 账户最近 365 天的全品种成交与费用上传到当前网站账户。平时回查最近一天，每隔约 24 小时再完整核对 365 天。余额、净值和未平仓持仓不会随此功能上传。</p>
+    <p className="dim">开启后，将当前 MT5 账户最近 365 天的全品种成交与费用上传到当前网站账户。平时回查最近一天，每隔约 24 小时再完整核对 365 天。余额、净值和未平仓持仓不会随此功能上传。勾选状态会记为账号偏好：以后每次连上本机 EA 自动开始，不用再手动勾。</p>
     {!available && !sync.enabled ? <p className="dim">{terminal.phase !== 'connected' ? '连接 SyncTrade（SyncNote Pro）后可开启。' : !terminal.features.includes('history') ? '当前 EA 不支持笔记历史分页，请换用新版 SyncTrade。' : '正在初始化图表，请稍候。'}</p> : null}
     {sync.account ? <p className="dim sync-line" title={`同步账户 ${sync.account} · ${sync.server}`}>同步账户 {sync.account} · {sync.server}</p> : null}
     <p className={error || sync.status === 'error' ? 'local-error sync-line' : 'dim sync-line'} role={error || sync.status === 'error' ? 'alert' : undefined} title={error || sync.message || '默认关闭。每页收到网站确认后才保存进度，重新开启可继续。'}>{error || sync.message || '默认关闭。每页收到网站确认后才保存进度，重新开启可继续。'}</p>
