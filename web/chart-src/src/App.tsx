@@ -235,6 +235,8 @@ export default function App() {
 
   const chartRef = useRef<ChartHandle>(null);
   const [replayActive, setReplayActive] = useState(false);
+  /** 右栏停靠时给工具条算出的宽度：让它的右边界和图表右边界严格对齐。 */
+  const [toolbarWidth, setToolbarWidth] = useState<number | null>(null);
   /** 回放「选起点」状态 + 鼠标横坐标：用来把选择线右侧的 K 线压成半透明。 */
   const [replayArmed, setReplayArmed] = useState(false);
   const [ghostX, setGhostX] = useState<number | null>(null);
@@ -1095,6 +1097,31 @@ export default function App() {
     return () => mq.removeEventListener?.('change', onChange);
   }, []);
 
+  useEffect(() => {
+    const rail = document.querySelector('.rail') as HTMLElement | null;
+    const chart = document.querySelector('.chart-pane') as HTMLElement | null;
+    if (!rail || !chart) return;
+    const toolbar = document.querySelector('.chart-toolbar') as HTMLElement | null;
+    const measure = () => {
+      const position = getComputedStyle(rail).position;
+      const docked = position !== 'absolute' && position !== 'fixed';
+      if (!docked || !toolbar) { setToolbarWidth(null); return; }
+      const chartRight = chart.getBoundingClientRect().right;
+      const left = toolbar.getBoundingClientRect().left;
+      const width = Math.round(chartRight - left);
+      setToolbarWidth(width > 120 ? width : null);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(rail);
+    observer.observe(chart);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [railOpen, tab, narrow, layout]);
+
   const handleViewport = useCallback((info: { cellId: string; timeframe: string; from: number; to: number }) => {
     const replay = chartRef.current?.replayStatus(); if (replay?.active || replay?.armed || replay?.busy) return;
     const recipe = TIMEFRAMES[info.timeframe];
@@ -1194,7 +1221,10 @@ export default function App() {
             </>
           )}
         </div>
-        <div className="chart-toolbar unified-chart-tools">
+        <div
+          className="chart-toolbar unified-chart-tools"
+          style={toolbarWidth ? { flex: '0 0 auto', width: `${toolbarWidth}px` } : undefined}
+        >
           <TfMenu disabled={replayActive} current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
           <div className="native-chart-tools" ref={setNativeToolbarHost} />
           <DrawingFavs
