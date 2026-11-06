@@ -1528,3 +1528,20 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .vela-ui-layer .vela-menu::before {
   content: ''; position: absolute; left: -8px; right: -8px; top: -12px; height: 12px;
 }
+
+/* 图表样式：隐藏 Vela 自带按钮（悬停展开、一移就收），用我们自己的下拉 */
+.chart-toolbar .vela-widget-style { display: none; }
+.chart-toolbar .style-menu { order: 8; margin-left: auto; position: relative; }
+.chart-toolbar .style-menu-trigger { display: inline-flex; align-items: center; gap: 3px; padding: 4px 6px; }
+.style-menu-caret { font-size: 10px; opacity: .7; }
+.style-menu-list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 148px;
+  padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); box-shadow: var(--shadow);
+}
+.style-menu-item {
+  display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--text);
+  padding: 7px 9px; border-radius: 6px; font-size: 12.5px; text-align: left;
+}
+.style-menu-item:hover { background: var(--hover); }
+.style-menu-item.is-active { background: var(--active-bg); color: var(--accent-ink); }

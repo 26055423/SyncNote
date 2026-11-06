@@ -57,6 +57,9 @@ export interface ReplayUiState {
   cursorTime: number | null; clockTime: number | null; remaining: number; intervalMs: number;
 }
 export interface ChartHandle {
+  /** 图表样式（candles/bars/line/area/baseline/heikinashi）。 */
+  getPriceStyle(): string;
+  setPriceStyle(style: string): void;
   replayStatus(): ReplayUiState;
   replaySelect(): void;
   replayStartFromView(): Promise<void>;
@@ -294,6 +297,13 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   anchorRef.current = anchorMs;
 
   useImperativeHandle(ref, () => ({
+    getPriceStyle() {
+      try { return String(wsRef.current?.active?.chart?.renderer?.get?.('priceStyle') ?? 'candles'); }
+      catch { return 'candles'; }
+    },
+    setPriceStyle(style) {
+      try { wsRef.current?.active?.chart?.renderer?.set?.('priceStyle', style); } catch { /* ignore */ }
+    },
     replayStatus() {
       const replay = wsRef.current?.replay;
       const state = replay?.state;

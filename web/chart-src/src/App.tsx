@@ -3,6 +3,7 @@ import { api, money, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
 import { BarReplayControls } from './BarReplayControls';
 import { FullscreenButton } from './ChartToolsMenu';
+import { StyleMenu, type PriceStyle } from './StyleMenu';
 import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
@@ -238,6 +239,17 @@ export default function App() {
   const [replayActive, setReplayActive] = useState(false);
   /** 右栏停靠时给工具条算出的宽度：让它的右边界和图表右边界严格对齐。 */
   const [toolbarWidth, setToolbarWidth] = useState<number | null>(null);
+  /** 图表样式（Vela 的样式按钮被我们换成自己的下拉，避免悬停就收）。 */
+  const [priceStyle, setPriceStyle] = useState<PriceStyle>('candles');
+  useEffect(() => {
+    const read = () => {
+      const next = chartRef.current?.getPriceStyle?.();
+      if (next) setPriceStyle(next as PriceStyle);
+    };
+    read();
+    const timer = window.setInterval(read, 1500);
+    return () => window.clearInterval(timer);
+  }, []);
   const [toolbarActionInset, setToolbarActionInset] = useState(8);
   /** 回放「选起点」状态 + 鼠标横坐标：用来把选择线右侧的 K 线压成半透明。 */
   const [replayArmed, setReplayArmed] = useState(false);
@@ -1237,6 +1249,13 @@ export default function App() {
         >
           <span className="toolbar-separator" aria-hidden="true" />
           <TfMenu disabled={replayActive} current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
+          <StyleMenu
+            current={priceStyle}
+            onPick={(id) => {
+              setPriceStyle(id);
+              chartRef.current?.setPriceStyle(id);
+            }}
+          />
           <div className="native-chart-tools" ref={setNativeToolbarHost} />
           <DrawingFavs
             favorites={favs}
