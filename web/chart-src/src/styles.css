@@ -501,7 +501,8 @@ table.mini tr:last-child td { border-bottom: 0; }
 
 /* ---------------------------------------------------------------- 下单面板 */
 .ticket { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-.ticket.is-locked { opacity: .92; }
+.ticket.is-locked { opacity: .55; filter: grayscale(.35); }
+.ticket.is-locked .lock-banner { opacity: 1; filter: none; }
 .ticket-head { display: flex; align-items: baseline; justify-content: space-between; }
 .ticket-head h3 { margin: 0; }
 .lock-banner { border: 1px dashed var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 6px 8px; font-size: 11.5px; display: flex; gap: 8px; align-items: center; justify-content: space-between; }

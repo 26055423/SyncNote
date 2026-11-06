@@ -101,10 +101,10 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
   const preview = useMemo(() => previewRisk(request, ref, account, quotaUnrestricted), [request, ref, account, quotaUnrestricted]);
   const entry = resolveEntry(request, ref);
 
-  const blocked = !allowedActions.includes(action)
+  const blocked = !connected
+    ? (lockedReason || '本机 EA 未连接 —— 下单已禁用')
+    : !allowedActions.includes(action)
     ? '本机 EA 未授权此下单类型'
-    : !connected
-      ? (lockedReason || '本机 EA 未连接 —— 下单已禁用')
     : !hasQuote
       ? '等待行情报价…'
       : !armed
@@ -174,23 +174,10 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
   }
 
   return (
-    !connected ? (
-      <section className="ticket is-locked">
-        <header className="ticket-head">
-          <h3>下单 {real ? <span className="ticket-real">实盘</span> : null}</h3>
-          <span className="dim">未解锁</span>
-        </header>
-        <div className="lock-banner">
-          {lockedReason || '本机 EA 未连接'}
-          {onConnect ? <button type="button" className="link" onClick={onConnect}>如何连接</button> : null}
-        </div>
-        <p className="hint">连接并授权后，这里才会显示手数、止损止盈和风险预览。</p>
-      </section>
-    ) : (
     <section className={cls('ticket', !connected && 'is-locked')}>
       <header className="ticket-head">
         <h3>下单 {real ? <span className="ticket-real">实盘</span> : null}</h3>
-        <span className="dim">手动 · 非自动</span>
+        <span className="dim">{connected ? '手动 · 非自动' : 'EA 未连接'}</span>
       </header>
 
       {!connected ? (
@@ -209,10 +196,10 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
       </div>
 
       <div className="sides">
-        <button type="button" className={cls('side-btn', 'buy', side === 'buy' && 'is-active')} onClick={() => pickSide('buy')}>
+        <button type="button" className={cls('side-btn', 'buy', side === 'buy' && 'is-active')} disabled={!connected} onClick={() => pickSide('buy')}>
           BUY <em>{hasQuote ? fmtPrice(ask) : '—'}</em>
         </button>
-        <button type="button" className={cls('side-btn', 'sell', side === 'sell' && 'is-active')} onClick={() => pickSide('sell')}>
+        <button type="button" className={cls('side-btn', 'sell', side === 'sell' && 'is-active')} disabled={!connected} onClick={() => pickSide('sell')}>
           SELL <em>{hasQuote ? fmtPrice(bid) : '—'}</em>
         </button>
       </div>
@@ -223,7 +210,7 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
           <input type="number" min="0.01" step="0.01" value={volume} onChange={(e) => setVolume(e.target.value)} disabled={!connected} inputMode="decimal" />
           <div className="quick">
             {VOLUME_STEPS.map((v) => (
-              <button key={v} type="button" className="chip" onClick={() => setVolume(v)}>{v}</button>
+              <button key={v} type="button" className="chip" disabled={!connected} onClick={() => setVolume(v)}>{v}</button>
             ))}
           </div>
         </div>
@@ -336,7 +323,6 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
         </div>
       ) : null}
     </section>
-    )
   );
 }
 

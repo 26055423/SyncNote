@@ -103,7 +103,6 @@ const REVIEW_WINDOW: Record<(typeof REVIEW_BASE_TFS)[number], [number, number]> 
 /* ------------------------------------------------------------------ 工具 */
 
 const sideText = (side: string) => (side === 'sell' ? '做空' : '做多');
-const sideClass = (side: string) => (side === 'sell' ? 'sell' : 'buy');
 
 const LIVE_KEYS: Record<string, 'M1' | 'M5' | 'M15' | 'H1'> = { '1m': 'M1', '5m': 'M5', '15m': 'M15', '1h': 'H1' };
 
@@ -1478,34 +1477,6 @@ export default function App() {
                 <div className="pane">
                   <LocalTradePanel state={local} />
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
-                  {!localConnected ? (
-                    <>
-                      <h3>云端账户 <small>快照</small></h3>
-                      <div className="kv">
-                        <span>净值</span><b>{money(displayedAccount?.equity)}</b>
-                        <span>余额</span><b>{money(displayedAccount?.balance)}</b>
-                        <span>浮盈</span><b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b>
-                      </div>
-                      <h3>云端持仓 <small>{myPositions.length}</small></h3>
-                      {myPositions.length ? (
-                        <table className="mini">
-                          <thead><tr><th>品种</th><th>方向</th><th>手数</th><th>开仓</th><th>浮盈</th></tr></thead>
-                          <tbody>
-                            {myPositions.map((p) => (
-                              <tr key={p.ticket}>
-                                <td>{p.symbol}</td>
-                                <td className={sideClass(p.side)}>{sideText(p.side)}</td>
-                                <td>{p.volume}</td>
-                                <td>{money(p.price_open ?? p.open)}</td>
-                                <td className={(p.profit || 0) >= 0 ? 'up' : 'down'}>{money(p.profit)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : <p className="dim">没有持仓</p>}
-                      <p className="dim">连接本机 EA 后，这里换成实时账户、持仓和下单。</p>
-                    </>
-                  ) : null}
 
                   {/* 成交历史统一放在底部「历史」页签里，右栏不再重复列一遍。 */}
                   <p className="dim">成交历史在底部「历史」页签，点「复盘 / 未复盘」直接打开对应 K 线。</p>
