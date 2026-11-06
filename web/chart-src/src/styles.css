@@ -1329,3 +1329,11 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   /* 弹层尽量铺满 */
   .modal { width: min(94vw, 520px); max-height: 86vh; }
 }
+
+/* ---------------------------------------------------------------- 画线工具栏 */
+/* Vela 的「在所有图表上同步画图」和顶部「布局 → 绘图」是同一个开关，
+   留着两个入口容易让人以为互不相干；只保留布局菜单那一个。 */
+.vela-ws-toolbar .vela-dtb-btn[aria-label*='同步画图'],
+.vela-ws-toolbar .vela-dtb-btn[title*='同步画图'],
+.vela-ws-toolbar .vela-dtb-btn[aria-label*='Sync draw'],
+.vela-ws-toolbar .vela-dtb-btn[title*='Sync draw'] { display: none !important; }
