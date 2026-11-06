@@ -36,7 +36,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
     {/* ── 数据连接：成交记录 / K 线 / 复盘数据同步 ───────────────── */}
     <section className="link-block" data-kind="data">
       <header className="link-head">
-        <h3>数据连接</h3>
+        <h3>SyncTrade 本机数据连接</h3>
         <span className={`link-state ${connected ? 'on' : 'off'}`}>{connected ? '本机在线' : '未连接'}</span>
       </header>
       <p className="dim">成交记录、K 线与复盘数据的续传。<a href="/profile#auto-history-sync-row">在个人中心开启「连上后自动续传」</a>，之后每次连接本机 EA 自动开始。</p>

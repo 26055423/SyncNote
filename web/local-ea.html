@@ -10,7 +10,7 @@
 <div class="cards">
 <section class="card">
 <h2>SyncNote <span class="tag">笔记版</span></h2>
-<p>1.011 只读上传成交历史，用来做复盘、写笔记、分享给好友；四周期轮流补齐近期行情，并持续同步新增 K 线。</p>
+<p>1.012 在 EA 图表显示同步配对码，网页填写并回 MT5 允许只读同步即可连接。只读上传成交历史，四周期轮流补齐近期行情，并持续同步新增 K 线。</p>
 <ul>
 <li>没有 DLL、没有本机 WebSocket、没有任何交易函数</li>
 <li>MT5 与 EA 运行期间，<b>关掉浏览器也继续同步</b></li>
@@ -41,7 +41,7 @@
 <tr><td>关掉浏览器后继续同步</td><td class="yes">✓</td><td>暂停，下次补齐</td></tr>
 <tr><td>网页看实时行情 / 下单</td><td class="no">—</td><td class="yes">✓ 本机配对授权后可交易，无本地额度门槛</td></tr>
 <tr><td>DLL 与算法交易权限</td><td>都不需要</td><td>需要允许 DLL</td></tr>
-<tr><td>凭据</td><td>个人中心生成的连接码</td><td>网页一次性配对码</td></tr>
+<tr><td>配对</td><td>网页填 EA 图表同步码，再回 MT5 允许同步</td><td>网页填 EA 图表交易码，再回 MT5 允许连接</td></tr>
 <tr><td>运行环境</td><td>MT5 桌面端即可</td><td>仅 Windows MT5</td></tr>
 </tbody>
 </table>
@@ -49,11 +49,12 @@
 
 <h2>SyncNote：安装与上传</h2>
 <ol>
-<li><strong>拿连接码。</strong>在<a href="/profile">个人中心</a>点「生成连接码」并复制。连接码等同密码，只填进自己的 MT5；重新生成会让旧码立即失效。</li>
 <li><strong>解压并编译。</strong>把 SyncNote 文件夹放进 MT5 数据目录的 <code>MQL5/Experts/</code>，用 MetaEditor 打开 <code>SyncNote.mq5</code>，F7 编译。</li>
 <li><strong>放行 WebRequest。</strong>MT5 → 工具 → 选项 → EA 交易：勾选「允许 WebRequest」，把本站地址加进白名单（源包里只允许你在参数里填的那一个 HTTPS 域名）。</li>
-<li><strong>挂到图表。</strong>任意图表挂载 EA，<b>WebsiteURL</b> 填本站地址，<b>ConnectionCode</b> 粘贴连接码；Algo Trading 可以保持关闭，此 EA 不交易。</li>
-<li><strong>等确认。</strong>EA 会在图表左上角显示同步状态，个人中心的「MT5」状态会出现最近同步时间。首次补录按时间片分页，历史多时需要几分钟。</li>
+<li><strong>挂到图表。</strong>任意图表挂载 EA，核对版本 <b>1.012</b>，<b>WebsiteURL</b> 填本站地址，<b>ConnectionCode 留空</b>。图表会显示 8 位同步配对码；Algo Trading 可以保持关闭，此 EA 不交易。</li>
+<li><strong>网页填码。</strong>在交易台「SyncNote 只读同步」或<a href="/profile#assistant-panel">个人中心</a>填入同步配对码。码在 10 分钟内有效，不要填到 SyncTrade 的交易配对框里。</li>
+<li><strong>回 MT5 允许。</strong>核对图表显示的同频账号，再点击「允许只读同步」。拒绝或过期后，在 EA 点击「重新生成配对码」，再用新码配对。凭据只保存在本机、按网站和 MT5 账户隔离，重启可复用；不用每次填码。</li>
+<li><strong>等上传。</strong>EA 开始上传后，个人中心才会出现最近同步时间。首次补录按时间片分页，历史多时需要几分钟。旧版长 ConnectionCode 仍兼容，新安装建议用同步配对码。</li>
 </ol>
 
 <h2>SyncTrade：安装、配对与交易</h2>
@@ -67,7 +68,7 @@
 </ol>
 
 <h2>权限与数据</h2>
-<p>网站登录、本机配对、云端采集连接码彼此独立。EA 不读取、也不上传 MT5 密码；网页无法提高 EA 里设定的品种、手数、点差和权限。</p>
+<p>网站登录、SyncNote 只读同步配对和 SyncTrade 本机交易配对彼此独立。SyncNote 的同步授权不会授予交易能力。EA 不读取、也不上传 MT5 密码。</p>
 <p>历史通道只接受成交记录：原始 deal（含手动单、其他 EA、部分平仓、反转、手续费与资金变动）保留在网站，交易摘要由服务器按成交重建。当券商历史不足以确认开仓上下文时，网站会明确标记「无法完整重建」，不会编造开仓价，也不会丢弃原始记录。</p>
 <p>入金、出金、佣金和手续费属于历史记录，会随原始 deal 一起上传；这与「不上传实时余额和持仓快照」是两件事。</p>
 <p>SyncTrade 的余额、净值、持仓只在本机 WebSocket 会话里读取，用于网页显示，不进入云端快照。</p>

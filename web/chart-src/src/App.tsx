@@ -11,6 +11,7 @@ import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from
 import { readTrackPage, readTrackHead, selectTrackSource, trackProviderName, type TrackCatalog, type TrackPage } from './trackHistory';
 import { readReviewPage, mergeReviewBars, type ReviewDirection } from './reviewHistory';
 import { LocalTradePanel } from './LocalTradePanel';
+import { SyncNotePairing } from './SyncNotePairing';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
@@ -1517,6 +1518,7 @@ export default function App() {
         <div className="rail-body">
               {tab === 'trade' ? (
                 <div className="pane">
+                  <SyncNotePairing />
                   <LocalTradePanel state={local} />
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
 

@@ -4,7 +4,19 @@
 
 ## 1. 历史上传
 
-`POST https://<用户明确配置的网站>/api/mt5/history-sync`，SyncNote 使用 `Authorization: Bearer <采集连接码>`。浏览器代理采用站点为它提供的已认证上传方式，不应把本机 WebSocket token 当作采集码。
+`POST https://<用户明确配置的网站>/api/mt5/history-sync`，SyncNote 使用 `Authorization: Bearer <只读同步凭据>`。SyncNote 1.012 默认通过以下 HTTPS 设备配对获得凭据；旧版长采集连接码保持兼容。浏览器代理采用站点为它提供的已认证上传方式，不应把本机 WebSocket token 当作采集码。
+
+### SyncNote 1.012 的只读设备配对
+
+EA 不监听本机端口，也不引入 DLL；以下请求仅发送到用户配置的精确 HTTPS 来源，MT5 的 WebRequest 白名单仍是必需条件。
+
+1. EA `POST /api/mt5/device/start` 请求一次性配对会话，响应包含 `code`（8 位数字）、`device_secret` 与 `expires_in:600`。EA 只在图表显示短码，不显示或记录设备密钥。
+2. 登录后的网页提交 `POST /api/mt5/device/claim`，body 为 `{"code":"12345678"}`。这一步只认领会话，不上传历史，也不直接授予 EA 同步权限。
+3. EA 用 `device_secret` 向 `POST /api/mt5/device/poll` 轮询。被认领后，响应包含 `status:"claimed"`、`claim_id` 和 `nickname`，供用户在 MT5 图表核对网站身份。
+4. 用户在 EA 图表点击「允许只读同步」或拒绝。EA 向 `POST /api/mt5/device/confirm` 发送设备密钥、`claim_id`、`allow`，并在批准时提供当前 `account`、`server`、`account_key`。服务器核验账户绑定后才返回只读上传 `token`。不同账户不能覆盖既有账本绑定。
+5. 凭据只在本机按网站与 MT5 账户隔离保存，重启复用。配对码 10 分钟过期，拒绝或过期后需在 EA 点击「重新生成配对码」，再使用新码。短码、设备密钥与历史上传 token 均不得混用；它们也不提供交易权限。
+
+服务器对认领、设备请求实施有效期、限流及原子状态检查；批准请求可幂等恢复丢失 ACK，已撤销的上传授权不能靠旧确认请求重新启用。网页显示的「等待 MT5 允许」与历史已实际同步是两个状态。
 
 ```json
 {

@@ -2,6 +2,7 @@
 import ipaddress
 import client_address
 import auth_security
+import device_pairing
 import bars
 import chart
 import dm
@@ -91,6 +92,7 @@ with connect() as db:
         if _col not in [r[1] for r in db.execute('PRAGMA table_info(friend_edges)')]:
             db.execute('ALTER TABLE friend_edges ADD COLUMN '+_col+' INTEGER NOT NULL DEFAULT 0')
     auth_security.initialize(db)
+    device_pairing.initialize(db)
     journal.initialize(db)
     sync_history.initialize(db)
     bars.initialize(db)
@@ -718,7 +720,15 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data,dict):raise Error('数据格式不正确')
             path=urlparse(self.path).path;now=time.time();cookie=None;trusted_cookie=None
             with connect() as db:
-                if path in ('/api/login','/api/login/verify'):
+                if path.startswith('/api/mt5/device/'):
+                    if path=='/api/mt5/device/start':result=device_pairing.start(db,self.client_ip())
+                    elif path=='/api/mt5/device/claim':result=device_pairing.claim(db,self.client_ip(),self.user(db),data)
+                    elif path=='/api/mt5/device/poll':result=device_pairing.poll(db,self.client_ip(),data)
+                    elif path=='/api/mt5/device/confirm':result=device_pairing.confirm(db,self.client_ip(),data)
+                    else:raise Error('页面不存在',404)
+                    db.commit()
+                    return self.reply(result)
+                elif path in ('/api/login','/api/login/verify'):
                     status,result,login_cookie=auth_security.progressive_login(self,db,data,path,pw_ok)
                     return self.reply(result,status,cookie=login_cookie)
                 if path == '/api/register':
@@ -1110,9 +1120,11 @@ class Handler(BaseHTTPRequestHandler):
                         result['status']='ok'
 
                     elif path=='/api/mt5/token':
+                        db.execute('DELETE FROM mt5_device_pairs WHERE user_id=?',(uid,))
                         token=secrets.token_urlsafe(36);db.execute('INSERT INTO mt5_links(user_id,token_hash,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET token_hash=excluded.token_hash,updated=excluded.updated',(uid,digest(token),now));result['token']=token
                     elif path=='/api/mt5/unlink':
                         db.execute('DELETE FROM mt5_bindings WHERE user_id=?',(uid,))
+                        db.execute('DELETE FROM mt5_device_pairs WHERE user_id=?',(uid,))
                         db.execute('UPDATE mt5_links SET token_hash=NULL,updated=? WHERE user_id=?',(now,uid));snap=db.execute('SELECT payload FROM snapshots WHERE person=?',(uid,)).fetchone()
                         if snap:
                             s=json.loads(snap['payload']);s['online']=False;db.execute('UPDATE snapshots SET payload=? WHERE person=?',(json.dumps(s),uid))
@@ -1122,6 +1134,7 @@ class Handler(BaseHTTPRequestHandler):
                         db.execute('INSERT INTO messages(person,text,created) VALUES(?,?,?)',(uid,text,now))
                     else:raise Error('接口不存在',404)
             self.reply(result,cookie=cookie)
+        except device_pairing.PairError as e:self.reply({'error':e.text},e.code)
         except sync_history.HistoryError as e:self.reply({'error':e.text},e.code)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)

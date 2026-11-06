@@ -25,8 +25,8 @@ using ulong=std::uint64_t;
 template<class A,class B> auto MathMax(A a,B b){return std::max<decltype(a+b)>(a,b);}
 bool g_sn_paused=false,bound=true,UploadBars=true,g_sn_bf_inited=false;
 ulong tick=10000,g_sn_last_paint=0,g_sn_retry_after=0,g_sn_next_upload=0,g_sn_bf_next=0;
-int SyncSeconds=15,g_sn_ack_batches=0,bar_calls=0,history_calls=0,pauses=0;
-string g_sn_review_ticket="",g_sn_pending="",g_sn_sync_scope="scope";
+int SyncSeconds=15,g_sn_ack_batches=0,bar_calls=0,history_calls=0,pauses=0,pair_calls=0;
+string g_sn_review_ticket="",g_sn_pending="",g_sn_sync_scope="scope",g_sn_token="synthetic-authorized-token";
 struct History {
  bool busy=false,ready=false,failed=false;
  bool Failed(){return failed;} string Error(){return "failed";}
@@ -38,6 +38,7 @@ ulong GetTickCount64(){return tick;}
 bool SNStillBound(){return bound;}
 void SNPause(string){g_sn_paused=true;pauses++;}
 void SNPaint(){}
+void SNPairPump(){pair_calls++;}
 void SNBackoff(string){g_sn_retry_after=tick+3000;}
 void SNTryReview(){g_sn_review_ticket="";}
 void SNStartRange(){g_snh.busy=true;}
@@ -49,7 +50,9 @@ void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
 ''' +timer+r'''
 int main(int argc,char** argv){try {
  string name=argc>1?argv[1]:"";
- if(name=="first_binding"){
+ if(name=="unpaired"){
+  g_sn_token="";OnTimer();check(pair_calls==1&&history_calls==0&&bar_calls==0,"unpaired EA must only request pairing, never upload history or bars");
+ }else if(name=="first_binding"){
   OnTimer();check(history_calls==1&&bar_calls==0&&g_sn_ack_batches==1,"first request must bind history, never bars");
   tick+=200;OnTimer();check(bar_calls==1&&g_sn_bf_inited,"bars run after the exact history ACK");
  }else if(name=="due_history"){
@@ -76,6 +79,7 @@ int main(int argc,char** argv){try {
   self.assertEqual(result.returncode,0,result.stderr)
   self.assertEqual(result.stdout,'ok')
  def test_first_binding_before_bars(self):self.scenario('first_binding')
+ def test_unpaired_never_uploads_account_data(self):self.scenario('unpaired')
  def test_due_history_precedes_bars(self):self.scenario('due_history')
  def test_disabled_bars_keeps_history(self):self.scenario('disabled')
  def test_account_change_stops_requests(self):self.scenario('account_change')

@@ -1,12 +1,12 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.011"
+#property version "1.012"
 #property description "Read-only history, review charts and shared K-line track backfill. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 
 input string WebsiteURL="https://sync-trade.top";
-input string ConnectionCode="";
+input string ConnectionCode=""; // Legacy optional credential; leave empty for EA code pairing.
 input int SyncSeconds=15;
 input int HistoryDays=365;
 input int OverlapSeconds=3600;
@@ -21,6 +21,7 @@ bool g_sn_full_run=false,g_sn_paused=false;
 ulong g_sn_next_upload=0,g_sn_retry_after=0,g_sn_last_paint=0;
 int g_sn_failures=0,g_sn_ack_batches=0;
 string g_sn_review_ticket="",g_sn_review_symbol="";
+string g_sn_token="";
 long g_sn_review_opened=0,g_sn_review_closed=0;
 int g_sn_review_attempts=0;
 bool SNOriginValid(string &origin)
@@ -104,7 +105,7 @@ int SNPost(const string endpoint,const string body,string &reply)
 {
  reply="";if(!SNStillBound())return -2;
  char data[],response[];int n=StringToCharArray(body,data,0,-1,CP_UTF8)-1;ArrayResize(data,n);
- string headers="",request_headers="Content-Type: application/json\r\nAuthorization: Bearer "+ConnectionCode+"\r\n";
+ string headers="",request_headers="Content-Type: application/json\r\nAuthorization: Bearer "+g_sn_token+"\r\n";
  ResetLastError();int code=WebRequest("POST",g_sn_origin+endpoint,request_headers,5000,data,response,headers);
  if(ArraySize(response)>2097152)return -3;
  reply=CharArrayToString(response,0,ArraySize(response),CP_UTF8);return code;
@@ -214,13 +215,27 @@ void SNUploadPending()
  g_sn_next_upload=GetTickCount64()+(ulong)MathMax(3,SyncSeconds)*1000;
  SNAcceptReviewJob(reply);
 }
+bool SNPrepareSync()
+{
+ string token_hash=SNJHash(g_sn_token),scope=SNJHash(g_sn_origin+"\n"+g_sn_token+"\n"+IntegerToString(HistoryDays)+"\nposition-origin-v1");
+ if(g_sn_key==""||token_hash==""||scope=="")return false;
+ g_sn_binding_path="SyncNote\\binding-"+StringSubstr(token_hash,0,24)+".txt";
+ g_sn_state_path="SyncNote\\history-"+StringSubstr(g_sn_key,0,24)+"-"+StringSubstr(scope,0,16)+".state";
+ if(!SNBindToken())return false;
+ if(!SNLoadState()){Print("SyncNote: checkpoint invalid; safely restarting configured history range (server deduplicates)");g_sn_from=0;g_sn_to=0;g_sn_cursor="";g_sn_completed=0;g_sn_last_full=0;g_snh.Reset();}
+ g_sn_sync_scope=scope;
+ if(UploadBars)SNBarsInit(g_sn_sync_scope);
+ return true;
+}
+#include "SyncNotePairing.mqh"
 void SNPaint()
 {
  string bars_line=UploadBars?SNBarsStatus():"";
- Comment("SyncNote 1.011 · 只读历史同步\n",g_sn_account," @ ",g_sn_server,
+ SNPairButtons();
+ Comment("SyncNote 1.012 · 只读历史同步\n",g_sn_account," @ ",g_sn_server,
   "\n网站: ",g_sn_origin,"\n无交易、无 DLL、无本机监听；不上传余额/净值/实时持仓",
   "\n已确认批次: ",g_sn_ack_batches,"；历史范围: ",HistoryDays," 天",bars_line,
-  g_sn_paused?"\n已暂停：请核对账号和连接码后重新挂载。":"\nMT5 运行时自动同步；浏览器可以关闭。");
+  g_sn_token==""?"\n"+SNPairStatus():(g_sn_paused?"\n已暂停：请核对账号；可重新配对。":"\n已授权只读同步；MT5 运行时自动续传，浏览器可以关闭。"));
 }
 int OnInit()
 {
@@ -228,7 +243,7 @@ int OnInit()
  if(!SNOriginValid(g_sn_origin))
  {Print("SyncNote: WebsiteURL 必须是 https:// 开头的站点地址（例：https://sync-trade.top），当前：",WebsiteURL);return INIT_PARAMETERS_INCORRECT;}
  int sn_code_len=StringLen(ConnectionCode);
- if(sn_code_len<16||sn_code_len>512)
+ if(sn_code_len>0&&(sn_code_len<16||sn_code_len>512))
  {Print("SyncNote: 连接码长度不对（当前 ",sn_code_len," 位，需要 16~512 位）。请在「个人中心 → 本机 EA」复制完整连接码，注意不要带空格或换行。");return INIT_PARAMETERS_INCORRECT;}
  if(SyncSeconds<3||SyncSeconds>3600)
  {Print("SyncNote: SyncSeconds 需要在 3~3600 之间，当前 ",SyncSeconds);return INIT_PARAMETERS_INCORRECT;}
@@ -243,25 +258,23 @@ int OnInit()
  if(g_sn_account=="0"||g_sn_server==""){Print("SyncNote: log into an MT5 account before attaching");return INIT_FAILED;}
  // New history evidence format needs one full replay, including pages ACKed by
  // earlier builds without position-origin fields. Keep the old state recoverable.
- g_sn_key=SNJAccountKey(g_sn_server,g_sn_account);string token_hash=SNJHash(ConnectionCode),scope=SNJHash(g_sn_origin+"\n"+ConnectionCode+"\n"+IntegerToString(HistoryDays)+"\nposition-origin-v1");
- if(g_sn_key==""||token_hash==""||scope=="")return INIT_FAILED;
+ g_sn_key=SNJAccountKey(g_sn_server,g_sn_account);
+ if(g_sn_key=="")return INIT_FAILED;
  FolderCreate("SyncNote");
- g_sn_binding_path="SyncNote\\binding-"+StringSubstr(token_hash,0,24)+".txt";
- g_sn_state_path="SyncNote\\history-"+StringSubstr(g_sn_key,0,24)+"-"+StringSubstr(scope,0,16)+".state";
- if(!SNBindToken()){Print("SyncNote: connection code is locally bound to another account or storage failed. Generate a new connection code.");return INIT_FAILED;}
- if(!SNLoadState()){Print("SyncNote: checkpoint invalid; safely restarting configured history range (server deduplicates)");g_sn_from=0;g_sn_to=0;g_sn_cursor="";g_sn_completed=0;g_sn_last_full=0;g_snh.Reset();}
- g_sn_sync_scope=scope;
- if(UploadBars)SNBarsInit(g_sn_sync_scope);
+ g_sn_token=ConnectionCode;
+ if(g_sn_token=="")g_sn_token=SNPairLoadToken();
+ if(g_sn_token!=""&&!SNPrepareSync()){Print("SyncNote: local authorization or checkpoint storage failed");return INIT_FAILED;}
  if(!EventSetMillisecondTimer(200))return INIT_FAILED;
  SNPaint();return INIT_SUCCEEDED;
 }
-void OnDeinit(const int reason){EventKillTimer();Comment("");}
+void OnDeinit(const int reason){EventKillTimer();SNPairDeleteButtons();Comment("");}
 void OnTimer()
 {
  if(g_sn_paused)return;
  if(!SNStillBound()){SNPause("Account changed; queues cleared and old account authorization not reused");SNPaint();return;}
  ulong now=GetTickCount64();
  if(now-g_sn_last_paint>=2000){g_sn_last_paint=now;SNPaint();}
+ if(g_sn_token==""){SNPairPump();return;}
  if(now<g_sn_retry_after)return;
  if(g_sn_review_ticket!="")
  {
