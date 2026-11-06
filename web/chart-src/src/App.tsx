@@ -1496,7 +1496,9 @@ export default function App() {
               })}
             </div>
 
-            <div className="rail-body">
+            {/* 窄屏抽屉没有图标条可点，给一个显式关闭按钮。 */}
+        <button type="button" className="rail-close" aria-label="收起面板" title="收起面板" onClick={() => setRailOpen(false)}>×</button>
+        <div className="rail-body">
               {tab === 'trade' ? (
                 <div className="pane">
                   <LocalTradePanel state={local} />

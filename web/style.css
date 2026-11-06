@@ -104,12 +104,25 @@ body.admin-login #auth-title { color:#f0d9a8; }
  .history-page .summary-values{grid-template-columns:1fr 1fr}
 }
 @media(max-width:600px){
- .history-page .summary-grid{grid-template-columns:1fr 1fr;gap:8px}
- .history-page .summary-values{grid-template-columns:1fr 1fr;padding:6px 10px 10px;gap:6px}
- .history-page .summary-values strong{font-size:18px}
- .history-page .summary-grid .panel-title{padding:10px 10px 2px}
- .journal-workspace .calendar-controls{flex-wrap:wrap}
- .journal-workspace .calendar-controls input{width:100%;order:5}
+/* 手机上两张汇总卡并排会把「净盈亏 · USD」挤成两行，改成单列、内部 2×2。 */
+.history-page .summary-grid{grid-template-columns:1fr;gap:8px}
+.history-page .summary-values{grid-template-columns:1fr 1fr;padding:8px 12px 12px;gap:8px 10px}
+.history-page .summary-values strong{font-size:19px}
+.history-page .summary-grid .panel-title{padding:12px 12px 2px;flex-wrap:wrap;gap:6px}
+.history-page .summary-grid .panel-title button{white-space:nowrap}
+.journal-workspace .calendar-controls{flex-wrap:wrap}
+.journal-workspace .calendar-controls input{width:100%;order:5}
+/* 明细表：横滑可看全列，但压缩内距，首屏多显示两列。 */
+.history-page .journal-panel{padding:12px 12px 0}
+.history-page .journal-panel thead th,.history-page .journal-panel td{padding-left:6px;padding-right:6px;font-size:11.5px}
+.history-page .journal-panel .panel-title{flex-wrap:wrap;gap:6px}
+.history-page .journal-panel .panel-title button{white-space:nowrap}
+.profile-page .panel-title{flex-wrap:wrap;gap:6px}
+.history-body .journal-workspace .calendar-day{padding:4px 2px;min-height:0}
+.history-body .journal-workspace .calendar-day b{font-size:12px;padding-bottom:2px;margin-bottom:2px}
+.history-body .journal-workspace .calendar-day .no-trades{font-size:9.5px;white-space:nowrap}
+.history-body .journal-workspace .calendar-day .calendar-review-count{display:none}
+.history-body .journal-workspace .calendar-day strong,.history-body .journal-workspace .calendar-day em,.history-body .journal-workspace .calendar-day small{font-size:9.5px;white-space:nowrap}
 }
 
 .history-review-filters{display:flex;order:3;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 16px}
