@@ -1349,9 +1349,8 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 
 /* 回放控制条：浮在图表底部中间，不占布局高度 */
 .replay-bar {
-  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  position: absolute; left: 8px; right: 8px; bottom: 8px;
   z-index: 45; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  max-width: calc(100% - 24px);
   padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 10px;
   background: var(--panel); box-shadow: var(--shadow);
   font-size: 12px; color: var(--text);

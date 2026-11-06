@@ -87,43 +87,41 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom 
         ) : null}
       </div>
 
-      {choosing ? (
-        <span role="status">{state.busy ? '正在准备回放…' : '点击图表中的 K 线选择起点'}</span>
-      ) : (
-        <>
-          <button
-            type="button"
-            className="tool-btn"
-            aria-label={state.playing ? '暂停回放' : '播放回放'}
-            onClick={() => (state.playing ? chart.current?.replayPause() : chart.current?.replayPlay(speed))}
-          >
-            {state.playing ? 'Ⅱ' : '▶'}
-          </button>
-          <button type="button" className="tool-btn" title="按各窗格中下一根最早收盘的 K 线推进" onClick={() => chart.current?.replayStep()}>
-            ⏭
-          </button>
-          <label>
-            速度
-            <select
-              aria-label="回放速度"
-              value={speed}
-              onChange={event => {
-                const value = Number(event.target.value);
-                setSpeed(value);
-                if (state.playing) chart.current?.replayPlay(value);
-              }}
-            >
-              <option value={2000}>0.5×</option>
-              <option value={1000}>1×</option>
-              <option value={500}>2×</option>
-              <option value={200}>5×</option>
-            </select>
-          </label>
-          <span className="replay-clock" role="status" title="所有窗格均只显示此时刻已经收盘的K线">
-            {state.clockTime ? stamp(state.clockTime / 1000).slice(5, 16) : '准备中'} · 余 {state.remaining}
-          </span>
-        </>
-      )}
+      <button
+        type="button"
+        className="tool-btn"
+        aria-label={state.playing ? '暂停回放' : '播放回放'}
+        disabled={choosing}
+        onClick={() => (state.playing ? chart.current?.replayPause() : chart.current?.replayPlay(speed))}
+      >
+        {state.playing ? 'Ⅱ' : '▶'}
+      </button>
+      <button type="button" className="tool-btn" title="按各窗格中下一根最早收盘的 K 线推进" disabled={choosing} onClick={() => chart.current?.replayStep()}>
+        ⏭
+      </button>
+      <label>
+        速度
+        <select
+          aria-label="回放速度"
+          value={speed}
+          disabled={choosing}
+          onChange={event => {
+            const value = Number(event.target.value);
+            setSpeed(value);
+            if (state.playing) chart.current?.replayPlay(value);
+          }}
+        >
+          <option value={2000}>0.5×</option>
+          <option value={1000}>1×</option>
+          <option value={500}>2×</option>
+          <option value={200}>5×</option>
+        </select>
+      </label>
+      <span className="replay-clock" role="status" title="所有窗格均只显示此时刻已经收盘的K线">
+        {choosing
+          ? (state.busy ? '正在准备回放…' : '点击图表中的 K 线选择起点')
+          : `${state.clockTime ? stamp(state.clockTime / 1000).slice(5, 16) : '准备中'} · 余 ${state.remaining}`}
+      </span>
 
       <button type="button" className="tool-btn" onClick={() => { chart.current?.replayStop(); setError(''); setMenu(false); }}>
         退出
