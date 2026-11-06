@@ -1556,3 +1556,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 
 /* 布局菜单：左侧留白稍大一点（与右侧视觉平衡） */
 .lp-panel { padding-left: 20px; }
+
+/* 右上角动作区：统一 6px 间距，分隔线两侧对齐 */
+.unified-topbar .top-actions { gap: 6px; }
+.unified-topbar .top-actions .toolbar-separator { margin: 0 2px; }

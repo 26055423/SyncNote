@@ -1341,7 +1341,6 @@ export default function App() {
         </div>
 
         <nav className="top-actions">
-          <button type="button" className="tool-btn" title="本机 MT5" aria-label="本机 MT5" onClick={() => { setTab('trade'); setRailOpen(true); }}><ToolbarIcon name="terminal" /><span className="action-label">本机 MT5</span></button>
           <a href="/history" target="_blank" rel="noopener noreferrer" aria-label="交易日历（新标签页）" title="交易日历：新标签页打开，保留本机 EA 连接"><ToolbarIcon name="calendar" /><span className="action-label">交易日历</span></a>
           <span className="toolbar-separator" aria-hidden="true" />
           <LayoutMenu disabled={replayActive} compact current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
