@@ -1466,3 +1466,9 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   border-left: 1px dashed var(--accent-ink, var(--accent));
   background: color-mix(in srgb, var(--bg) 62%, transparent);
 }
+
+/* 顶栏：把 Vela 的通知/面板/截图一组推到窗口最右，其余工具留在左边 */
+/* Vela 的图标组（通知/面板/截图）移到工具条最右，紧邻窗口右上角；左侧留指标与撤销 */
+.chart-toolbar .native-chart-tools { order: 9; margin-left: auto; display: flex; min-width: 0; }
+.chart-toolbar .vela-widget-topbar { display: flex; align-items: center; }
+.chart-toolbar .vela-topbar-right { margin-left: auto; }

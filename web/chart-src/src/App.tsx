@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, money, quotePrice, stamp } from './api';
+import { api, money, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
 import { BarReplayControls } from './BarReplayControls';
 import { FullscreenButton } from './ChartToolsMenu';
@@ -150,11 +150,6 @@ function latestTradeOf(snapshot: { data: any } | undefined) {
   return rows.length ? rows[0] : null;
 }
 
-function barsClose(entry: Entry | null): number | null {
-  const bars = entry?.review?.charts?.M1;
-  if (!bars || !bars.length) return null;
-  return bars[bars.length - 1][4];
-}
 
 /* ------------------------------------------------------------------ 页面 */
 
@@ -219,7 +214,6 @@ export default function App() {
     }
   };
   const [mode, setMode] = useState<'review' | 'live'>(() => (params.get('ticket') || params.get('share') ? 'review' : 'live'));
-  const [liveTick, setLiveTick] = useState<{ bid: number; ask: number; time: number } | null>(null);
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
   /** 图上画的是哪套数据：server = bars 表（券商墙钟），utc = 交易快照（journal.review 已转 UTC）。 */
 
@@ -345,7 +339,6 @@ export default function App() {
     for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as keyof ReviewCharts];
     setLiveBars(null);
     setMarketSeries(null);
-    setLiveTick(null);
     trackSourceRef.current = null;
     storedTipsRef.current = {};
     setMarketInfo(null);
@@ -353,7 +346,6 @@ export default function App() {
 
   useEffect(() => {
     if (!localConnected || !marketInfo?.server || marketInfo.server !== local.server) return;
-    setLiveTick(local.tick);
     // 新 K 线不该把画面推走：先记下每格可见范围，合并后再恢复（自动滚动关闭时）。
     const keepRanges = chartRef.current?.captureRanges();
     const beforeLast: Record<string, number> = {};
@@ -484,7 +476,6 @@ export default function App() {
           setLiveBars(null);
           setMarketSeries(null);
           setMarketInfo(null);
-          setLiveTick(null);
           storedTipsRef.current = {};
         }
         trackSourceRef.current = source;
@@ -857,13 +848,6 @@ export default function App() {
   const myPositions: any[] = localConnected ? local.positions : mySnap?.data?.positions ?? [];
   const floating = myPositions.reduce((n: number, p: any) => n + (p.profit || 0), 0);
   const mt5Online = localConnected || Boolean(mySnap && board && board.now - (mySnap.updated || 0) <= 45 && mySnap.data.online !== false);
-  const livePrice = liveTick?.bid ? (liveTick.bid + liveTick.ask) / 2 : null;
-  const trackPrice = REVIEW_BASE_TFS.map((base) => liveRef.current[base]?.at(-1)?.[4]).find((value) => Number.isFinite(value));
-  const reviewTrade = entry?.review.trade ?? {};
-  const reviewPrice = Number(reviewTrade.close) || Number(reviewTrade.open) || barsClose(entry);
-  // 复盘看的是这笔交易的平仓价；行情才看现价。两者不能混在一个裸数字里。
-  const price = mode === 'review' ? reviewPrice : (livePrice ?? trackPrice ?? null);
-  const priceLabel = mode === 'review' ? '平仓价' : '现价';
   const reviewingOther = mode === 'review' && Boolean(target?.person && target.person !== me?.id);
   const liveAnchor = (() => {
     const rows = liveBars?.M1 ?? [];
@@ -1200,11 +1184,6 @@ export default function App() {
         </a>
         <div className="status-row" title={reviewingOther ? '正在复盘的是别人的交易；账户数字已隐藏，避免和对方混淆' : '我的账户'}>
           <span className="stat"><b className="stat-v">{mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'}</b></span>
-          <span className="sep" aria-hidden="true" />
-          <span className="stat">
-            <span className="stat-k">{priceLabel}</span>
-            <b className={price != null ? 'stat-v' : 'stat-v dim'}>{price != null ? quotePrice(price) : '—'}</b>
-          </span>
           {/* 没有任何账户数据源时不显示净值/余额，避免把云端旧快照当成本机状态。 */}
           {reviewingOther || !(localConnected || mt5Online) ? null : (
             <>
