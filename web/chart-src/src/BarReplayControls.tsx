@@ -2,6 +2,36 @@ import { useEffect, useState, type RefObject } from 'react';
 import type { ChartHandle, ReplayUiState } from './vela/ChartWorkspace';
 import { stamp } from './api';
 
+
+const iconProps = {
+  width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+  strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
+} as const;
+
+/** 选择K线：带影线的两根 K 线。 */
+const KlineIcon = () => (
+  <svg {...iconProps}>
+    <path d="M7 4v3M7 17v3M17 4v3M17 17v3" />
+    <rect x="4.8" y="7" width="4.4" height="10" rx="1" />
+    <rect x="14.8" y="7" width="4.4" height="10" rx="1" />
+  </svg>
+);
+const PlayIcon = () => (
+  <svg {...iconProps}><path d="M8 5.5v13l10-6.5z" fill="currentColor" stroke="none" /></svg>
+);
+const PauseIcon = () => (
+  <svg {...iconProps}><path d="M9 5v14M15 5v14" /></svg>
+);
+const StepIcon = () => (
+  <svg {...iconProps}>
+    <path d="M6 5.5v13l8-6.5z" fill="currentColor" stroke="none" />
+    <path d="M17 5v14" />
+  </svg>
+);
+const CloseIcon = () => (
+  <svg {...iconProps}><path d="M6 6l12 12M18 6L6 18" /></svg>
+);
+
 const idle: ReplayUiState = { available: false, active: false, playing: false, armed: false, busy: false, cursorTime: null, clockTime: null, remaining: 0, intervalMs: 1000 };
 
 /**
@@ -57,7 +87,7 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom 
     <div className="replay-bar" role="toolbar" aria-label="K线回放">
       <div className="replay-pick">
         <button type="button" className="tool-btn" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(open => !open)}>
-          选择K线 ▾
+          <KlineIcon /> 选择K线 ▾
         </button>
         {menu ? (
           <div className="replay-pick-menu" role="menu" aria-label="选择回放起点">
@@ -94,10 +124,10 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom 
         disabled={choosing}
         onClick={() => (state.playing ? chart.current?.replayPause() : chart.current?.replayPlay(speed))}
       >
-        {state.playing ? 'Ⅱ' : '▶'}
+        {state.playing ? <PauseIcon /> : <PlayIcon />}
       </button>
       <button type="button" className="tool-btn" title="按各窗格中下一根最早收盘的 K 线推进" disabled={choosing} onClick={() => chart.current?.replayStep()}>
-        ⏭
+        <StepIcon />
       </button>
       <label>
         速度
@@ -119,12 +149,12 @@ export function BarReplayControls({ chart, onActiveChange, onEarliest, onRandom 
       </label>
       <span className="replay-clock" role="status" title="所有窗格均只显示此时刻已经收盘的K线">
         {choosing
-          ? (state.busy ? '正在准备回放…' : '点击图表中的 K 线选择起点')
+          ? (state.busy ? '正在准备回放…' : '点图表选起点')
           : `${state.clockTime ? stamp(state.clockTime / 1000).slice(5, 16) : '准备中'} · 余 ${state.remaining}`}
       </span>
 
       <button type="button" className="tool-btn" onClick={() => { chart.current?.replayStop(); setError(''); setMenu(false); }}>
-        退出
+        <CloseIcon /> 退出
       </button>
       {error ? <span role="alert">{error}</span> : null}
     </div>

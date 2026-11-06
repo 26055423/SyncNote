@@ -1350,8 +1350,19 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 /* 回放控制条：就在顶部工具栏里，紧跟「行情 | 回放」 */
 .replay-bar {
   display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  font-size: 12px; color: var(--text);
+  font-size: 12px; color: var(--text); line-height: 1;
 }
+/* 统一回放条里的字号与图标对齐 */
+.replay-bar .tool-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; line-height: 1; padding: 5px 9px; height: 28px;
+}
+.replay-bar .tool-btn svg { flex: 0 0 auto; }
+.replay-bar label,
+.replay-bar select,
+.replay-bar .replay-clock { font-size: 12px; }
+.replay-bar select { height: 28px; padding: 0 4px; }
+.replay-bar .replay-clock { color: var(--dim); white-space: nowrap; }
 .replay-bar .tool-btn { padding: 4px 9px; }
 .replay-bar label { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); }
 .replay-bar select { background: var(--well); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font: inherit; }
