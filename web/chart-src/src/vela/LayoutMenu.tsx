@@ -13,7 +13,7 @@ import { CUSTOM_LAYOUTS, LAYOUT_GROUPS, gridId, slotRects, type LayoutDef } from
 
 const BY_ID = new Map(CUSTOM_LAYOUTS.map((def) => [def.id, def]));
 
-function Thumb({ rects, active, size = 38 }: { rects: ReturnType<typeof slotRects>; active: boolean; size?: number }) {
+function Thumb({ rects, active, size = 54 }: { rects: ReturnType<typeof slotRects>; active: boolean; size?: number }) {
   const h = Math.round(size * 0.66);
   return (
     <svg width={size} height={h} viewBox={`0 0 ${size} ${h}`} aria-hidden="true" className={`lp-thumb ${active ? 'is-active' : ''}`}>
@@ -94,7 +94,7 @@ export function LayoutMenu({
   return (
     <div className={`lp${compact ? ' is-compact' : ''}`} ref={rootRef}>
       <button disabled={disabled} type="button" className={`vela-tool-btn lp-trigger ${open ? 'is-active' : ''}`} onClick={() => setOpen((v) => !v)} title="图表布局与同步" aria-label="图表布局与同步" aria-haspopup="dialog" aria-expanded={open}>
-        {compact ? <ToolbarIcon name="layout" /> : <Thumb rects={triggerRects} active={false} size={22} />}
+        {compact ? <ToolbarIcon name="layout" /> : <Thumb rects={triggerRects} active={false} size={24} />}
         {compact ? null : <span className="lp-trigger-label">布局</span>}
       </button>
 

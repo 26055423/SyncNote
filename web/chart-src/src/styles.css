@@ -225,7 +225,7 @@ button { font: inherit; cursor: pointer; }
 .tool-btn.is-active { border-color: var(--accent); color: var(--accent-ink); }
 .save-hint { color: var(--dim); font-size: 11px; min-width: 72px; text-align: right; }
 .top-actions .lp { position: relative; }
-.top-actions .lp-panel { left: auto; right: 0; width: min(348px, calc(100vw - 24px)); max-height: calc(100dvh - 90px); overflow: auto; }
+.top-actions .lp-panel { left: auto; right: 0; width: min(392px, calc(100vw - 24px)); max-height: calc(100dvh - 90px); overflow: auto; }
 .lp.is-compact .lp-trigger { padding: 6px 9px; }
 .chart-fullscreen { display: inline-flex; position: relative; }
 .chart-fullscreen > button { display: inline-flex; align-items: center; justify-content: center; }
@@ -398,16 +398,16 @@ table.mini tr:last-child td { border-bottom: 0; }
 .tp-caret { color: var(--dim); font-size: 10px; }
 .tp-scope { font-size: 9px; color: var(--accent-ink); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 999px; padding: 0 4px; margin-left: 2px; line-height: 14px; }
 
-.lp-panel { width: 348px; display: flex; flex-direction: column; gap: 12px; }
+.lp-panel { width: 392px; display: flex; flex-direction: column; gap: 12px; }
 .lp-section { display: flex; flex-direction: column; gap: 6px; }
 .lp-section-title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-.lp-canvas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
-.lp-cell { height: 22px; border: 1px solid var(--line); background: var(--well); border-radius: 3px; padding: 0; }
+.lp-canvas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; width: min(200px, 100%); }
+.lp-cell { aspect-ratio: 1 / 1; height: auto; border: 1px solid var(--line); background: var(--well); border-radius: 4px; padding: 0; }
 .lp-cell.is-lit { background: var(--lp-lit); border-color: var(--lp-lit-line); }
 .lp-cell.is-current { border-color: var(--accent); }
 .lp-hint { color: var(--dim); font-size: 11px; }
 .lp-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.lp-item { border: 1px solid var(--line); background: var(--well); border-radius: 6px; padding: 3px; line-height: 0; }
+.lp-item { border: 1px solid var(--line); background: var(--well); border-radius: 7px; padding: 4px; line-height: 0; }
 .lp-item.is-current { border-color: var(--accent); }
 .lp-rect { fill: var(--lp-rect); }
 .lp-item.is-current .lp-rect { fill: var(--lp-rect-on); }
@@ -1545,3 +1545,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 }
 .style-menu-item:hover { background: var(--hover); }
 .style-menu-item.is-active { background: var(--active-bg); color: var(--accent-ink); }
+
+/* 布局菜单：预设缩略图跟随尺寸（Vela 的全局 svg 规则会把它压到 15px） */
+.lp-item .lp-thumb { width: 54px; height: 36px; }
+.lp-item { padding: 4px; }
