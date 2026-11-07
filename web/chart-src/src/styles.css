@@ -1525,8 +1525,8 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .unified-topbar .mt5-connection-trigger.on,
 .unified-topbar .mt5-connection-trigger.on:hover { color: var(--good-ink); background: var(--good-bg); }
 .mt5-connect-dialog {
-  width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
-  overflow-y: auto; box-sizing: border-box; padding: 22px;
+  width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
+  overflow-y: auto; box-sizing: border-box; padding: 24px;
   border: 1px solid var(--line-strong); border-radius: 12px;
   background: var(--panel); color: var(--text); box-shadow: var(--shadow);
 }
@@ -1534,6 +1534,8 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .mt5-connect-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .mt5-connect-head h2 { margin: 0; font-size: 18px; }
 .mt5-connect-head > button { font-size: 24px; line-height: 1; }
+.mt5-connect-dialog > .dim { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
+.mt5-connect-dialog form > label { font-size: 13px; font-weight: 600; }
 .mt5-connect-dialog form { display: grid; gap: 8px; margin: 20px 0; }
 .mt5-connect-dialog input {
   flex: 1; width: 100%; min-width: 0; box-sizing: border-box;
@@ -1542,12 +1544,27 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 }
 .mt5-connect-dialog :is(input, button, a):focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .mt5-connect-dialog .local-buttons { display: flex; flex-wrap: nowrap; gap: 8px; }
+.mt5-connect-dialog .local-buttons > button { flex: none; min-width: 64px; font-size: 13px; }
+.mt5-connect-dialog .local-notice { padding: 11px 12px; font-size: 12px; border-radius: 8px; }
 .mt5-connect-dialog .local-notice:empty { display: none; }
 .mt5-install-help { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.65; color: var(--dim); }
 .mt5-install-help p { margin: 0; }
-.mt5-ea-editions { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 6px 0 10px; }
-.mt5-ea-editions strong { font-weight: 600; color: var(--text); }
-.mt5-install-help > a { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.mt5-ea-editions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 10px 0 14px; }
+.mt5-ea-edition { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--accent-line); border-radius: 10px; background: linear-gradient(135deg, var(--accent-soft), var(--panel)); }
+.mt5-ea-edition > svg { flex: none; width: 24px; height: 24px; color: var(--accent); }
+.mt5-ea-edition strong { display: block; font-weight: 600; font-size: 14px; color: var(--text); }
+.mt5-ea-edition small { display: block; font-size: 12px; }
+.mt5-install-help > a { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 4px; }
+.mt5-install-help > a:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.mt5-link-hint { font-size: 11px; font-weight: 400; color: var(--dim); }
+.mt5-install-help > a .mt5-link-hint { margin-left: auto; }
+.mt5-success-title { display: block; font-weight: 600; }
+.mt5-success-hint { display: block; margin-top: 4px; line-height: 1.6; }
+@media (max-width: 380px) {
+  .mt5-connect-dialog { padding: 18px; }
+  .mt5-ea-edition { padding: 10px 8px; gap: 6px; }
+  .mt5-ea-edition > svg { width: 20px; height: 20px; }
+}
 .trade-identity { margin: 0 0 4px; font-size: 12px; }
 .trade-identity > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .trade-identity strong { color: var(--text); font-weight: 600; }
