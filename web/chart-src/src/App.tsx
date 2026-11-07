@@ -25,6 +25,7 @@ import { localTerminal, useLocalTerminal } from './localTerminal';
 import { localHistorySync } from './localHistorySync';
 import { backfillBars, useBackfillBars } from './backfillBars';
 import { SymbolPicker, type MarketSymbol } from './SymbolPicker';
+import { MarketRangeSync } from './MarketRangeSync';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -1513,11 +1514,12 @@ export default function App() {
                 </p>
                 <p className="dim">
                   {mode === 'live'
-                    ? (!localConnected && symbolOptions.find((item) => item.symbol === liveSymbol)?.has_bars === false ? `请在 MT5 打开 ${liveSymbol} 图表并挂载 SyncNote，保持运行；行情入库后会自动显示。` : '连接本机 EA 看实时行情，或打开一笔历史复盘。')
+                    ? (!localConnected ? '选择同步区间，由已授权的 SyncNote 获取该品种 K 线，无需更换 MT5 图表。' : '连接本机 EA 看实时行情，或打开一笔历史复盘。')
                     : target
                       ? (ready ? '无需连接 EA，读取完成后图表会自动出现。' : '同步完成后图表会自动出现。')
                       : '在 MT5 同步一笔成交，或从底部「历史」打开已有交易。'}
                 </p>
+                {mode === 'live' && !localConnected ? <MarketRangeSync key={liveSymbol} symbol={liveSymbol} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                 <div className="empty-actions">
                   {mode === 'review' && !target && myHistory[0] ? (
                     <button type="button" className="primary" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>
@@ -1574,6 +1576,7 @@ export default function App() {
               {tab === 'trade' ? (
                 <div className="pane">
                   <LocalTradePanel key={`${local.server}:${local.account_id}:${local.symbol}`} state={local} />
+                  {mode === 'live' && !localConnected && liveSeries ? <MarketRangeSync key={liveSymbol} symbol={liveSymbol} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
 
                   {/* 成交历史统一放在底部「历史」页签里，右栏不再重复列一遍。 */}

@@ -155,3 +155,12 @@ K 线每根 `[服务器秒,open,high,low,close]`；未换算 UTC。服务端结�
 - 需要交易页面关闭仍后台同步时，可另挂 SyncNote 到另一图表，获得独立 EA 线程；两者仍共享 MT5 的进程与资源，需限流。严格单 EA、低延迟与网页关闭持续云同步三者同时要求时，需要额外设计真正非阻塞的云网络状态机，不能直接拼接同步 WebRequest。
 
 两个 EA 使用共享源码并不表示把交易权限编译进 SyncNote。SyncNote 的依赖树应持续不含本机 socket/DLL/交易执行模块。
+
+
+## 7. 只读区间 K 线任务（SyncNote 1.016）
+
+网页在认证账号下创建品种和 UTC 区间任务；服务器绑定当前 MT5 账户与凭据，并仅在时间统一换算处转换为券商墙钟。EA 首次历史 ACK 后使用现有 Bearer 轮询 `POST /api/mt5/bar-sync/poll`，请求体为 `{account,account_key,server}`。响应 `{ok:true,job:null}` 表示当前无待办，否则 job 为 `{job_id,segment_id,account,account_key,server,symbol,tf,from_server,to_server}`。每段最多 2000 个对齐周期槽，tf 为 M1/M5/M15/H1，且均为已收盘范围。
+
+EA 对请求品种 `SymbolSelect` 后通过 `CopyRates` 读取，未就绪最多每 5 秒尝试一次、共 12 次；已返回空或部分范围最多尝试 3 次，再提交 `POST /api/mt5/bar-sync/result`。请求包含同一身份、job_id、segment_id、symbol、tf、from_server、to_server、bars 与 error；bars 每行 `[服务器秒,open,high,low,close,volume]`，error 为 `""`、`history_unavailable`、`empty_window` 或 `partial_window`。不上传未收盘行，不推断休市时间。
+
+ACK 必须为 `{ok:true,job_id,segment_id,account_key,symbol,tf,from_server,to_server,accepted,status}`，其中 accepted 等于发送的有效根数。精确 ACK 之前保持同一 body 重试；服务端幂等接收，完整证据才登记 have 覆盖，空白与部分证据保留为缺口。409 表示任务被取消或该租约不再有效，EA 丢弃该段并重新轮询；401/403 停止该授权同步。任务存于服务端，浏览器关闭或 EA 重启后可恢复；账户和凭据变更不能继承旧任务。
