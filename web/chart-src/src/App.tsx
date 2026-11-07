@@ -234,6 +234,7 @@ export default function App() {
   const [symbolsLoading, setSymbolsLoading] = useState(false);
   const [symbolsError, setSymbolsError] = useState('');
   const [catalogSource, setCatalogSource] = useState<string | null>(null);
+  const [catalogAvailable, setCatalogAvailable] = useState(false);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [marketRetry, setMarketRetry] = useState(0);
   const liveSymbol = localConnected ? local.symbol : storedSymbol;
@@ -253,10 +254,11 @@ export default function App() {
           const symbols = await localTerminal.requestSymbols(controller.signal);
           if (!controller.signal.aborted) setSymbolOptions(symbols);
         } else {
-          const result = await api<{ source: string | null; symbols: MarketSymbol[] }>('/api/market/symbols', undefined, { signal: controller.signal });
+          const result = await api<{ source: string | null; symbols: MarketSymbol[]; catalog_available?: boolean }>('/api/market/symbols', undefined, { signal: controller.signal });
           if (controller.signal.aborted) return;
           setSymbolOptions(result.symbols); setCatalogSource(result.source);
-          setStoredSymbol((current) => result.symbols.some((item) => item.symbol === current) ? current : result.symbols[0]?.symbol ?? current);
+          setCatalogAvailable(result.catalog_available === true);
+          setStoredSymbol((current) => result.symbols.some((item) => item.symbol === current) ? current : result.symbols.find((item) => item.has_bars)?.symbol ?? result.symbols[0]?.symbol ?? current);
         }
       } catch (error) {
         if (!controller.signal.aborted) setSymbolsError(error instanceof Error ? error.message : '品种列表读取失败');
@@ -586,7 +588,7 @@ export default function App() {
       try {
         const pages = await Promise.all(REVIEW_BASE_TFS.map((base) => readTrackHead((path) => api<TrackPage>(path), {
           source, symbol: liveSymbol, base, period: TF_SECONDS[base], storedTip: storedTipsRef.current[base],
-          forceRecent,
+          forceRecent: forceRecent || (!liveRef.current[base]?.length && storedTipsRef.current[base] === undefined),
         })));
         if (!alive || trackSourceRef.current !== source) return;
         const changed: BaseTimeframe[] = [];
@@ -602,6 +604,7 @@ export default function App() {
         if (!alive || trackSourceRef.current !== source) return;
         setMarketInfo((info) => info?.source === source ? { ...info,
           last: Math.max(info.last ?? 0, ...pages.map((page) => page.last_bar ?? 0)) || null } : info);
+        if (Object.values(liveRef.current).some((rows) => rows?.length)) setLiveBars(liveRef.current);
         for (const listener of liveListeners.current) listener();
         if (forceRecent || Date.now() - catalogAt > 60000) {
           const catalog = await api<TrackCatalog>('/api/data/sources');
@@ -1284,7 +1287,7 @@ export default function App() {
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
         <div className="status-row" title={reviewingOther ? '正在复盘的是别人的交易；账户数字已隐藏，避免和对方混淆' : '我的账户'}>
-          <SymbolPicker symbol={mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'} symbols={symbolOptions} loading={symbolsLoading} disabled={local.symbol_switching} error={symbolsError} contextNote={mode === 'review' ? '选择品种后打开行情，当前复盘记录保留。' : undefined} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} />
+          <SymbolPicker symbol={mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'} symbols={symbolOptions} loading={symbolsLoading} disabled={local.symbol_switching} error={symbolsError} contextNote={mode === 'review' ? '选择品种后打开行情，当前复盘记录保留。' : !localConnected && !catalogAvailable ? '当前仅列出已有行情；更新并运行 SyncNote 1.015 后可同步券商品种目录。' : undefined} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} />
           {/* 没有任何账户数据源时不显示净值/余额，避免把云端旧快照当成本机状态。 */}
           {reviewingOther || !(localConnected || mt5Online) ? null : (
             <>
@@ -1503,14 +1506,14 @@ export default function App() {
                   {mode === 'live'
                     ? (localConnected
                       ? (local.history_ready ? '本机历史暂不可用，请在 MT5 加载历史后重新连接' : '正在加载本机四周期 K 线…')
-                      : '等待行情数据…')
+                      : symbolOptions.find((item) => item.symbol === liveSymbol)?.has_bars === false ? `${liveSymbol} 尚未同步 K 线` : '等待行情数据…')
                     : target
                       ? (ready ? '正在读取服务器复盘历史…' : entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…')
                       : '还没有可复盘的交易'}
                 </p>
                 <p className="dim">
                   {mode === 'live'
-                    ? '连接本机 EA 看实时行情，或打开一笔历史复盘。'
+                    ? (!localConnected && symbolOptions.find((item) => item.symbol === liveSymbol)?.has_bars === false ? `请在 MT5 打开 ${liveSymbol} 图表并挂载 SyncNote，保持运行；行情入库后会自动显示。` : '连接本机 EA 看实时行情，或打开一笔历史复盘。')
                     : target
                       ? (ready ? '无需连接 EA，读取完成后图表会自动出现。' : '同步完成后图表会自动出现。')
                       : '在 MT5 同步一笔成交，或从底部「历史」打开已有交易。'}

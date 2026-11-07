@@ -10,7 +10,7 @@
 <div class="cards">
 <section class="card">
 <h2>SyncNote <span class="tag">笔记版</span></h2>
-<p>1.014 在 EA 图表显示同步配对码，网页填写并回 MT5 允许只读同步即可连接。只读上传成交历史，四周期轮流补齐近期行情，并持续同步新增 K 线。</p>
+<p>1.015 支持同步券商品种目录，网页可搜索尚未有行情的品种。填入 EA 图表上的配对码，并回 MT5 允许只读同步；成交历史和当前图表品种的 K 线会持续同步。</p>
 <ul>
 <li>没有 DLL、没有本机 WebSocket、没有任何交易函数</li>
 <li>MT5 与 EA 运行期间，<b>关掉浏览器也继续同步</b></li>
@@ -51,7 +51,7 @@
 <ol>
 <li><strong>解压并编译。</strong>把 SyncNote 文件夹放进 MT5 数据目录的 <code>MQL5/Experts/</code>，用 MetaEditor 打开 <code>SyncNote.mq5</code>，F7 编译。</li>
 <li><strong>放行 WebRequest。</strong>MT5 → 工具 → 选项 → EA 交易：勾选「允许 WebRequest」，把本站地址加进白名单（源包里只允许你在参数里填的那一个 HTTPS 域名）。</li>
-<li><strong>挂到图表。</strong>任意图表挂载 EA，核对版本 <b>1.014</b>，<b>WebsiteURL</b> 填本站地址，<b>ConnectionCode 留空</b>。图表会显示 8 位同步配对码；Algo Trading 可以保持关闭，此 EA 不交易。</li>
+<li><strong>挂到图表。</strong>在需要同步行情的品种图表挂载 EA，核对版本 <b>1.015</b>，<b>WebsiteURL</b> 填本站地址，<b>ConnectionCode 留空</b>。图表会显示 8 位同步配对码；Algo Trading 可以保持关闭，此 EA 不交易。授权后还会同步券商的可用品种目录，目录不要求该品种已有 K 线。</li>
 <li><strong>网页填码。</strong>点击交易台的「连接 MT5」，填入 EA 图表上的 8 位配对码，网页自动识别 SyncNote 或 SyncTrade。SyncNote 配对码在 10 分钟内有效。</li>
 <li><strong>回 MT5 允许。</strong>核对图表显示的同频账号，再点击「允许只读同步」。拒绝或过期后，在 EA 点击「重新生成配对码」，再用新码配对。凭据只保存在本机、按网站和 MT5 账户隔离，重启可复用；不用每次填码。</li>
 <li><strong>等上传。</strong>EA 开始上传后，个人中心才会出现最近同步时间。首次补录按时间片分页，历史多时需要几分钟。旧版长 ConnectionCode 仍兼容，新安装建议用同步配对码。</li>

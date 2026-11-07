@@ -393,12 +393,27 @@ def main():
    market=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&from='+str(window_from)+'&to='+str(window_to))
    ensure(market['source']=='srv:'+server_name and market['feed']['account']==mt5_account,'market bars use the owner feed')
    symbol_catalog=alice.request('/api/market/symbols')
-   ensure(symbol_catalog['source']==feed['source'] and symbol_catalog['symbols']==[{'symbol':'XAUUSD'}] and not symbol_catalog['public'],'market symbols default to the personal source')
+   ensure(symbol_catalog['source']==feed['source'] and symbol_catalog['symbols']==[{'symbol':'XAUUSD','has_bars':True}] and not symbol_catalog['public'],'market symbols default to the personal source')
    empty_symbols=alice.request('/api/market/symbols?source=srv:Missing-symbol-fixture')
    ensure(empty_symbols['symbols']==[],'missing symbol source does not borrow codes from another broker')
    public_symbols=admin.request('/api/market/symbols?source='+feed['source'])
    ensure(public_symbols['symbols']==symbol_catalog['symbols'] and public_symbols['public'] and 'account' not in public_symbols,'public symbol catalog contains no account identity')
    anon.request('/api/market/symbols',status=401)
+   symbol_page={'account':mt5_account,'server':server_name,'account_key':history_key,'catalog_id':'smoke-symbols-1','offset':0,'total':2,'symbols':[{'symbol':'XAUUSD','description':'Gold','digits':2,'trade_mode':4}]}
+   anon.request('/api/mt5/symbols-sync',symbol_page,status=401)
+   page_ack=anon.request('/api/mt5/symbols-sync',symbol_page,extra=history_bearer)
+   ensure(page_ack['next_offset']==1 and not page_ack['complete'],'symbol directory waits for the complete paged snapshot')
+   ensure(not alice.request('/api/market/symbols')['catalog_available'],'partial catalog is not published')
+   ensure(anon.request('/api/mt5/symbols-sync',symbol_page,extra=history_bearer)==page_ack,'identical catalog page retry is idempotent')
+   final_page={**symbol_page,'offset':1,'symbols':[{'symbol':'NAS100.cash','description':'Nasdaq 100','path':'Indices','digits':1,'trade_mode':4}]}
+   ensure(anon.request('/api/mt5/symbols-sync',final_page,extra=history_bearer)['complete'],'complete directory is published atomically')
+   own_symbols=alice.request('/api/market/symbols')
+   ensure(own_symbols['catalog_available'] and [r['symbol'] for r in own_symbols['symbols']]==['NAS100.cash','XAUUSD'],'own broker catalog includes symbols without K lines')
+   ensure(not own_symbols['symbols'][0]['has_bars'] and own_symbols['symbols'][1]['has_bars'],'catalog distinguishes unsynchronized and stored symbols')
+   ensure(admin.request('/api/market/symbols?source='+feed['source'])['symbols']==symbol_catalog['symbols'],'another user cannot read an account-private broker catalog')
+   wrong_symbol_account={**symbol_page,'account':'999999','account_key':hashlib.sha256((server_name+'\n999999').encode()).hexdigest()}
+   anon.request('/api/mt5/symbols-sync',wrong_symbol_account,status=403,extra=history_bearer)
+   anon.request('/api/mt5/symbols-sync',symbol_page,status=401,extra={'Authorization':'Bearer revoked-symbol-fixture'})
    # 出库统一按 UTC：没记过偏移的源当作 0，记过的话每根 bar 都要被平移。
    probe=sqlite3.connect(':memory:');probe.row_factory=sqlite3.Row;_bars.initialize(probe)
    _bars.set_source_offset(probe,'srv:probe',3600,0)

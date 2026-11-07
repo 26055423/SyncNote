@@ -13,6 +13,7 @@ import sync_history
 import ea_hub
 import journal
 import market
+import market_symbols
 from trade_time import utc_trade, record_clock
 from datetime import datetime, timezone
 import hashlib, hmac, json, math, os, re, secrets, sqlite3, time, io, zipfile, struct
@@ -96,6 +97,7 @@ with connect() as db:
     journal.initialize(db)
     sync_history.initialize(db)
     bars.initialize(db)
+    market_symbols.initialize(db)
     market.initialize(db)
     chart.initialize(db)
     groups.initialize(db)
@@ -495,7 +497,7 @@ class Handler(BaseHTTPRequestHandler):
                         feed=bars.feed_of(db,uid)
                         source=str(q.get('source',[''])[0]) or (feed['source'] if feed else '')
                         if not source:source=bars.public_source(db) or ''
-                        return self.reply({'source':source,'symbols':bars.symbols(db,source),'public':not feed or source!=feed['source']})
+                        return self.reply({'source':source,**market_symbols.read(db,uid,source),'public':not feed or source!=feed['source']})
                     if path=='/api/market/bars':
                         # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
                         # `limit=N&before=UTC秒`：同轨道向前按根数分页，不按日历窗口切。
@@ -798,6 +800,8 @@ class Handler(BaseHTTPRequestHandler):
                         if current.get('source_account_key')!=key:raise Error('复盘任务不属于此 MT5 账户',409)
                     result=journal.receive(db,link['user_id'],data)
                     review_bars(db,link['user_id'],current,data,now)
+                elif path=='/api/mt5/symbols-sync':
+                    result=market_symbols.ingest(db,self.link_user(db),data,now)
                 elif path in ('/api/mt5/history-sync','/api/mt5/history-import'):
                     if path=='/api/mt5/history-sync':uid=self.link_user(db)['user_id']
                     else:
@@ -1145,6 +1149,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:raise Error('接口不存在',404)
             self.reply(result,cookie=cookie)
         except device_pairing.PairError as e:self.reply({'error':e.text},e.code)
+        except market_symbols.CatalogError as e:self.reply({'error':e.text},e.code)
         except sync_history.HistoryError as e:self.reply({'error':e.text},e.code)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)

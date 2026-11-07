@@ -74,7 +74,7 @@ export function SymbolPicker({ symbol, symbols, loading, disabled, error, contex
         {rows.map((row) => {
           const group = marketSymbolCategory(row);
           return <button type="button" key={row.symbol} className={`symbol-search-row${row.symbol === symbol ? ' is-active' : ''}`} aria-pressed={row.symbol === symbol} disabled={selecting || disabled} onClick={() => void select(row.symbol)}>
-            <span className="symbol-search-icon" aria-hidden="true">{group === '指数' ? <TradeIcon /> : <ReviewIcon />}</span><strong>{row.symbol}</strong><span className="symbol-search-description">{marketSymbolLabel(row)}</span><small>{group}</small><span className="symbol-search-selected" aria-hidden="true">{row.symbol === symbol ? '✓' : ''}</span>
+            <span className="symbol-search-icon" aria-hidden="true">{group === '指数' ? <TradeIcon /> : <ReviewIcon />}</span><strong>{row.symbol}</strong><span className="symbol-search-description">{marketSymbolLabel(row)}{row.has_bars === false ? <em className="symbol-data-pending">待同步行情</em> : null}</span><small>{group}</small><span className="symbol-search-selected" aria-hidden="true">{row.symbol === symbol ? '✓' : ''}</span>
           </button>;
         })}
         {!matching.length ? <div className="symbol-search-empty"><SearchIcon /><strong>{loading ? '正在读取品种…' : '没有匹配的品种'}</strong><p>{loading ? '请稍候' : symbols.length ? '试试其他代码、名称，或切换分类。' : '连接 MT5 后读取券商品种，离线时仅显示已保存的行情。'}</p></div> : null}

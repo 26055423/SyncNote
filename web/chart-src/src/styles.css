@@ -1548,6 +1548,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .symbol-search-row strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .symbol-search-icon { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 50%; color: var(--accent); background: var(--well); }
 .symbol-search-description { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.symbol-data-pending { display: block; margin-top: 3px; font-size: 10px; font-style: normal; color: var(--dim); }
 .symbol-search-row small { font-size: 11px; color: var(--dim); text-align: right; }
 .symbol-search-selected { color: var(--accent); text-align: right; }
 .symbol-search-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 220px; gap: 12px; color: var(--dim); text-align: center; padding: 12px; }

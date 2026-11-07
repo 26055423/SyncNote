@@ -89,6 +89,7 @@ export interface MarketSymbol {
   volume_min?: number;
   volume_max?: number;
   volume_step?: number;
+  has_bars?: boolean;
 }
 
 const freshState = (): LocalTerminalState => ({

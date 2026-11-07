@@ -44,6 +44,7 @@ void SNTryReview(){g_sn_review_ticket="";}
 void SNStartRange(){g_snh.busy=true;}
 void SNBuildPending(){g_sn_pending="page";}
 void SNUploadPending(){history_calls++;g_sn_ack_batches++;g_sn_pending="";g_snh.Reset();g_sn_next_upload=tick+15000;}
+bool SNSymbolsPump(){return false;}
 void SNBarsInit(string){g_sn_bf_inited=true;}
 bool SNBarsPump(){if(g_sn_ack_batches<1)throw std::runtime_error("unbound bar upload");bar_calls++;return true;}
 void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
