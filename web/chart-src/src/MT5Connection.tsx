@@ -90,7 +90,11 @@ export function MT5Connection({ state, open, onOpen, onClose }: { state: LocalTe
         catch (err) { setError(err instanceof Error ? err.message : '解除失败，请重试'); }
         finally { setBusy(false); }
       }}>解除同步授权</button> : null}
-      <details><summary>安装与连接说明</summary><p className="dim">SyncNote 通过 HTTPS 直传，首次需把本站地址加入 MT5 的 WebRequest 白名单；关闭网页仍可同步。SyncTrade 通过本机 WebSocket 连接，由网页代传，网页关闭后续传暂停。</p><a href="/local-ea" target="_blank" rel="noopener noreferrer">下载 EA 与安装说明 ↗</a></details>
+      <div className="mt5-install-help">
+        <p>连接行情前，请先安装 MT5 EA：</p>
+        <div className="mt5-ea-editions"><span><strong>SyncNote</strong> 笔记版</span><span><strong>SyncTrade</strong> 交易版</span></div>
+        <a href="/local-ea" target="_blank" rel="noopener noreferrer">下载与安装说明 <span aria-hidden="true">↗</span></a>
+      </div>
     </dialog>, document.body)}
   </div>;
 }

@@ -1542,8 +1542,12 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 }
 .mt5-connect-dialog :is(input, button, a):focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .mt5-connect-dialog .local-buttons { display: flex; flex-wrap: nowrap; gap: 8px; }
-.mt5-connect-dialog details { margin-top: 16px; font-size: 12px; }
-.mt5-connect-dialog summary { cursor: pointer; color: var(--dim); }
+.mt5-connect-dialog .local-notice:empty { display: none; }
+.mt5-install-help { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.65; color: var(--dim); }
+.mt5-install-help p { margin: 0; }
+.mt5-ea-editions { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 6px 0 10px; }
+.mt5-ea-editions strong { font-weight: 600; color: var(--text); }
+.mt5-install-help > a { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
 .trade-identity { margin: 0 0 4px; font-size: 12px; }
 .trade-identity > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .trade-identity strong { color: var(--text); font-weight: 600; }
