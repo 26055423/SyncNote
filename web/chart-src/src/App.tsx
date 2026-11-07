@@ -267,6 +267,7 @@ export default function App() {
   const chooseSymbol = async (symbol: string) => {
     if (localConnected) await localTerminal.selectSymbol(symbol);
     else setStoredSymbol(symbol);
+    setMode('live');
     setError('');
   };
   const liveProvider = useMemo(
@@ -1283,7 +1284,7 @@ export default function App() {
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
         <div className="status-row" title={reviewingOther ? '正在复盘的是别人的交易；账户数字已隐藏，避免和对方混淆' : '我的账户'}>
-          {mode === 'live' ? <SymbolPicker symbol={liveSymbol} symbols={symbolOptions} loading={symbolsLoading} error={symbolsError} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} /> : <span className="stat"><b className="stat-v">{trade.symbol || 'XAUUSD'}</b></span>}
+          <SymbolPicker symbol={mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'} symbols={symbolOptions} loading={symbolsLoading} disabled={local.symbol_switching} error={symbolsError} contextNote={mode === 'review' ? '选择品种后打开行情，当前复盘记录保留。' : undefined} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} />
           {/* 没有任何账户数据源时不显示净值/余额，避免把云端旧快照当成本机状态。 */}
           {reviewingOther || !(localConnected || mt5Online) ? null : (
             <>
