@@ -19,6 +19,7 @@ export function MT5Connection({ state, open, onOpen, onClose }: { state: LocalTe
   const [kind, setKind] = useState<'syncnote' | 'synctrade' | null>(null);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   const connected = state.phase === 'connected';
+  const hasPairing = connected || state.phase === 'confirming' || cloud?.status === 'approved' || cloud?.status === 'claimed';
   const refresh = async (signal?: AbortSignal) => {
     const status = await api<CloudStatus>('/api/mt5/device/status', undefined, { signal });
     if (!signal?.aborted) setCloud(status);
@@ -30,9 +31,9 @@ export function MT5Connection({ state, open, onOpen, onClose }: { state: LocalTe
     return () => { abort.abort(); clearInterval(timer); attempt.current?.abort(); };
   }, []);
   useEffect(() => {
-    if (open) { if (!dialog.current?.open) dialog.current?.showModal(); input.current?.focus(); }
+    if (open) { if (!dialog.current?.open) dialog.current?.showModal(); if (!hasPairing) input.current?.focus(); }
     else dialog.current?.close();
-  }, [open]);
+  }, [open, hasPairing]);
   const close = () => { attempt.current?.abort(); onClose(); };
   const summary = connected ? 'SyncTrade · 本机已连接'
     : state.phase === 'confirming' ? 'SyncTrade · 等待 MT5 确认'
@@ -53,11 +54,11 @@ export function MT5Connection({ state, open, onOpen, onClose }: { state: LocalTe
     </button>
     {createPortal(<dialog ref={dialog} className="mt5-connect-dialog" aria-labelledby={`${id}-title`} onCancel={(event) => { event.preventDefault(); close(); }} onClose={onClose}>
       <div className="mt5-connect-head"><h2 id={`${id}-title`}>连接 MT5</h2><button type="button" className="tool-btn" aria-label="关闭连接窗口" onClick={close}>×</button></div>
-      <p className="dim">输入 EA 图表上的配对码，自动识别 SyncNote 或 SyncTrade。</p>
+      <p className="dim">{hasPairing ? '如需更换 EA，请先断开当前连接或解除同步授权。' : '输入 EA 图表上的配对码，自动识别 SyncNote 或 SyncTrade。'}</p>
       {cloud?.last_sync ? <p className="dim">最近同步 {stamp(cloud.last_sync)}</p> : null}
-      <form onSubmit={async (event) => {
+      {!hasPairing ? <form onSubmit={async (event) => {
         event.preventDefault();
-        if (busy || !/^\d{8}$/.test(code)) return;
+        if (hasPairing || busy || !/^\d{8}$/.test(code)) return;
         const abort = new AbortController(); attempt.current = abort;
         setBusy(true); setError(''); setNotice('正在识别 EA…');
         try {
@@ -80,7 +81,7 @@ export function MT5Connection({ state, open, onOpen, onClose }: { state: LocalTe
       }}>
         <label htmlFor={`${id}-code`}>EA 配对码</label>
         <div className="local-buttons"><input ref={input} id={`${id}-code`} autoComplete="off" inputMode="numeric" pattern="[0-9]{8}" maxLength={8} placeholder="输入 8 位配对码" value={code} disabled={busy} onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} /><button type="submit" className="primary" disabled={busy || !/^\d{8}$/.test(code)}>{busy ? '连接中…' : '连接'}</button></div>
-      </form>
+      </form> : null}
       <p role="status" className={`local-notice${!busy && !error && (connected || cloud?.status === 'approved') ? ' is-success' : ''}`} aria-live="polite">{busy ? notice : connected ? <><strong className="mt5-success-title">✓ SyncTrade 本机已连接</strong><span className="mt5-success-hint">可以关闭此窗口。行情与数据续传需保持网页打开。</span></> : cloud?.status === 'approved' ? <><strong className="mt5-success-title">✓ SyncNote 已授权只读同步</strong><span className="mt5-success-hint">可以关闭本页面了，保持 MT5 与 EA 运行即可继续同步。</span></> : cloud?.status === 'claimed' ? '已识别 SyncNote，请回 MT5 核对同频账号并允许只读同步。' : notice || (summary !== '未连接' ? summary : '')}</p>
       {error || (kind === 'synctrade' && state.error) ? <p className="local-error" role="alert">{error || state.error}</p> : null}
       {connected || state.phase === 'confirming' ? <button type="button" className="tool-btn" onClick={() => { localTerminal.disconnect(); setNotice('本机连接已断开。'); }}>断开本机连接</button> : null}
