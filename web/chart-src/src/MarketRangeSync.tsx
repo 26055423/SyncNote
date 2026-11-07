@@ -3,7 +3,7 @@ import { api, stamp } from './api';
 import { getDisplayZone } from './lib/time';
 import { calendarSyncRange, dateInZone, shiftDate } from './lib/dateRange';
 
-interface SyncJob {
+export interface SyncJob {
   job_id: string;
   symbol: string;
   from: number;
@@ -22,7 +22,7 @@ const labels: Record<SyncJob['status'], string> = {
   completed: '所选区间已同步', error: '同步未完成', cancelled: '同步已取消',
 };
 
-export function MarketRangeSync({ symbol, onUpdated }: { symbol: string; onUpdated?: () => void }) {
+export function MarketRangeSync({ symbol, onUpdated, onJobChange, onViewBars }: { symbol: string; onUpdated?: () => void; onJobChange?: (job: SyncJob | null) => void; onViewBars?: () => void }) {
   const id = useId();
   const zone = getDisplayZone();
   const today = dateInZone(Date.now(), zone);
@@ -39,12 +39,15 @@ export function MarketRangeSync({ symbol, onUpdated }: { symbol: string; onUpdat
   const notified = useRef('');
   const callback = useRef(onUpdated);
   callback.current = onUpdated;
+  const jobCallback = useRef(onJobChange);
+  jobCallback.current = onJobChange;
   symbolRef.current = symbol;
   const apply = (value: SyncJob | null) => {
     if (value && value.symbol !== symbolRef.current) return;
     if (value && jobRef.current?.job_id === value.job_id && value.updated < jobRef.current.updated) return;
     jobRef.current = value;
     setJob(value);
+    jobCallback.current?.(value);
     if (value && value.bars_received > 0) {
       const key = `${value.job_id}:${value.bars_received}:${value.processed_segments}:${value.status}`;
       if (notified.current !== key) { notified.current = key; callback.current?.(); }
@@ -106,6 +109,7 @@ export function MarketRangeSync({ symbol, onUpdated }: { symbol: string; onUpdat
       <div className="market-range-count"><span>已处理 {job.processed_segments} / {job.total_segments} 段</span><span>已接收 {job.bars_received.toLocaleString()} 根</span></div>
       {job.status === 'waiting' ? <p>请保持 MT5 和 SyncNote 1.016 或更新版本运行；无需换到这个品种的图表。</p> : null}
       {job.status === 'partial' ? <p>休市或券商历史缺失的时段未计为完整覆盖，可补齐 MT5 历史后重新同步。</p> : null}
+      {(job.status === 'partial' || job.status === 'error') && job.bars_received > 0 && onViewBars ? <button type="button" className="primary" onClick={onViewBars}>查看已同步 K 线</button> : null}
       {job.last_error ? <p className="market-range-detail">{({ history_unavailable: 'MT5 暂未提供这段历史，请等待下载或补齐 MT5 历史后重新同步。', empty_window: '这段区间未返回 K 线，可能为休市或券商未提供历史。', partial_window: '这段区间只返回了部分 K 线，已保存实际收到的数据。' } as Record<string, string>)[job.last_error] || job.last_error}</p> : null}
       {waiting ? <button type="button" className="tool-btn" disabled={busy} onClick={async () => {
         const requestedSymbol = symbol;

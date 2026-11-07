@@ -26,6 +26,7 @@ import { localHistorySync } from './localHistorySync';
 import { backfillBars, useBackfillBars } from './backfillBars';
 import { SymbolPicker, type MarketSymbol } from './SymbolPicker';
 import { MarketRangeSync } from './MarketRangeSync';
+import { syncChartReady, type MarketSyncGateJob } from './marketSyncGate';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -241,6 +242,11 @@ export default function App() {
   const liveSymbol = localConnected ? local.symbol : storedSymbol;
   const cacheScope = `${board?.user.id ?? ''}:${liveSymbol}:${localConnected ? local.server + ':' + local.epoch : 'cloud'}:${catalogSource ?? ''}`;
   const [loadedCacheScope, setLoadedCacheScope] = useState(cacheScope);
+  const [syncGate, setSyncGate] = useState<{ scope: string; checked: boolean; job: MarketSyncGateJob | null; acknowledged: string | null }>({ scope: '', checked: false, job: null, acknowledged: null });
+  const chartSyncReady = localConnected || syncChartReady(syncGate.scope === cacheScope && syncGate.checked, syncGate.job, syncGate.acknowledged);
+  const receiveSyncJob = (job: MarketSyncGateJob | null) => setSyncGate((current) => ({ scope: cacheScope, checked: true, job,
+    acknowledged: current.scope === cacheScope && current.job?.job_id === job?.job_id ? current.acknowledged : null }));
+  const viewPartialBars = () => setSyncGate((current) => ({ ...current, acknowledged: current.job?.job_id ?? null }));
   useEffect(() => {
     if (localConnected) setStoredSymbol(local.symbol);
   }, [localConnected, local.symbol]);
@@ -1445,7 +1451,7 @@ export default function App() {
             {replayArmed && ghostX != null ? (
               <div className="replay-ghost" style={{ left: ghostX }} aria-hidden="true" />
             ) : null}
-            {mode === 'live' && liveSeries ? (
+            {mode === 'live' && liveSeries && chartSyncReady ? (
               <ChartWorkspace
                 key={`live:${marketInfo?.source ?? 'loading'}:${liveSymbol}`}
                 ref={chartRef}
@@ -1507,7 +1513,7 @@ export default function App() {
                   {mode === 'live'
                     ? (localConnected
                       ? (local.history_ready ? '本机历史暂不可用，请在 MT5 加载历史后重新连接' : '正在加载本机四周期 K 线…')
-                      : symbolOptions.find((item) => item.symbol === liveSymbol)?.has_bars === false ? `${liveSymbol} 尚未同步 K 线` : '等待行情数据…')
+                      : syncGate.scope === cacheScope && (syncGate.job?.status === 'waiting' || syncGate.job?.status === 'running') ? `${liveSymbol} 正在同步 K 线，完成后自动打开图表` : syncGate.scope === cacheScope && syncGate.job?.status === 'partial' ? `${liveSymbol} 部分行情尚未获取` : symbolOptions.find((item) => item.symbol === liveSymbol)?.has_bars === false ? `${liveSymbol} 尚未同步 K 线` : '正在检查行情同步状态…')
                     : target
                       ? (ready ? '正在读取服务器复盘历史…' : entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…')
                       : '还没有可复盘的交易'}
@@ -1519,7 +1525,7 @@ export default function App() {
                       ? (ready ? '无需连接 EA，读取完成后图表会自动出现。' : '同步完成后图表会自动出现。')
                       : '在 MT5 同步一笔成交，或从底部「历史」打开已有交易。'}
                 </p>
-                {mode === 'live' && !localConnected ? <MarketRangeSync key={liveSymbol} symbol={liveSymbol} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
+                {mode === 'live' && !localConnected ? <MarketRangeSync key={cacheScope} symbol={liveSymbol} onJobChange={receiveSyncJob} onViewBars={viewPartialBars} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                 <div className="empty-actions">
                   {mode === 'review' && !target && myHistory[0] ? (
                     <button type="button" className="primary" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>
@@ -1576,7 +1582,7 @@ export default function App() {
               {tab === 'trade' ? (
                 <div className="pane">
                   <LocalTradePanel key={`${local.server}:${local.account_id}:${local.symbol}`} state={local} />
-                  {mode === 'live' && !localConnected && liveSeries ? <MarketRangeSync key={liveSymbol} symbol={liveSymbol} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
+                  {mode === 'live' && !localConnected && liveSeries && chartSyncReady ? <MarketRangeSync key={cacheScope} symbol={liveSymbol} onJobChange={receiveSyncJob} onViewBars={viewPartialBars} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
 
                   {/* 成交历史统一放在底部「历史」页签里，右栏不再重复列一遍。 */}
