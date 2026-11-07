@@ -1522,12 +1522,8 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .unified-topbar .top-actions .settings-trigger { height: 30px; padding: 0 8px; font-size: 13px; }
 .unified-topbar .top-actions > a::before { content: none; }
 .mt5-header-connection { display: flex; align-items: center; gap: 5px; flex: none; }
-.mt5-header-status { max-width: 145px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 1200px) {
-  .mt5-header-status { font-size: 0; padding: 0; border: 0; background: transparent; }
-  .mt5-header-status::before { content: ''; display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
-  .mt5-header-status.on::before { background: var(--good); }
-}
+.unified-topbar .mt5-connection-trigger.on,
+.unified-topbar .mt5-connection-trigger.on:hover { color: var(--good-ink); background: var(--good-bg); }
 .mt5-connect-dialog {
   width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
   overflow-y: auto; box-sizing: border-box; padding: 22px;

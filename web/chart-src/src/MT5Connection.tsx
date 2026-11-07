@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { api, stamp } from './api';
 import { localTerminal, type LocalTerminalState } from './localTerminal';
 import { pairLocalMT5 } from './mt5Pairing';
-import { ToolbarIcon } from './ui/ToolbarIcon';
 
 interface CloudStatus { status: 'none' | 'claimed' | 'approved' | 'rejected'; last_sync: number | null; expires_at: number | null }
 
@@ -40,15 +39,17 @@ export function MT5Connection({ state, open, onOpen, onClose }: { state: LocalTe
         : cloud?.status === 'approved' ? (cloud.last_sync && Date.now() / 1000 - cloud.last_sync < 90 ? 'SyncNote · 数据同步中' : 'SyncNote · 已授权，等待续传')
           : cloud?.status === 'rejected' ? '已拒绝配对' : '未连接';
 
-  const authorized = connected || cloud?.status === 'approved';
   /** 绿点 = 正在同步；红点 = 断了 / 没连上。名字只留 SyncTrade / SyncNote。 */
   const lastSync = cloud?.last_sync ?? 0;
   const syncing = connected || (cloud?.status === 'approved' && lastSync > 0 && Date.now() / 1000 - lastSync < 90);
   const eaName = connected || state.phase === 'confirming' ? 'SyncTrade'
     : cloud?.status === 'approved' || cloud?.status === 'claimed' ? 'SyncNote' : '未同步';
   return <div className="mt5-header-connection">
-    <button type="button" className="tool-btn" aria-label={authorized ? '连接设置' : '连接 MT5'} onClick={onOpen} title="MT5 连接设置"><ToolbarIcon name="terminal" /><span>{authorized ? '连接设置' : '连接 MT5'}</span></button>
-    <span className={`link-state mt5-header-status ea-chip ${syncing ? 'on' : 'off'}`} title={summary} aria-label={summary} role="status"><i className="ea-dot" aria-hidden="true" />{eaName}</span>
+    <button type="button" className={`tool-btn mt5-connection-trigger ea-chip ${syncing ? 'on' : 'off'}`}
+      aria-label={eaName === '未同步' ? '连接 MT5' : `连接设置：${summary}`} aria-haspopup="dialog" aria-expanded={open}
+      onClick={onOpen} title={`${summary}；点击打开连接设置`}>
+      <i className="ea-dot" aria-hidden="true" /><span>{eaName === '未同步' ? '连接 MT5' : eaName}</span>
+    </button>
     {createPortal(<dialog ref={dialog} className="mt5-connect-dialog" aria-labelledby={`${id}-title`} onCancel={(event) => { event.preventDefault(); close(); }} onClose={onClose}>
       <div className="mt5-connect-head"><h2 id={`${id}-title`}>连接 MT5</h2><button type="button" className="tool-btn" aria-label="关闭连接窗口" onClick={close}>×</button></div>
       <p className="dim">输入 EA 图表上的配对码，自动识别 SyncNote 或 SyncTrade。</p>
