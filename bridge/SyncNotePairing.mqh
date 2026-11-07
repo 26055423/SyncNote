@@ -117,20 +117,10 @@ string SNPairTokenPath()
 }
 string SNPairLoadToken()
 {
- string path=SNPairTokenPath();bool recover=!FileIsExist(path);
- // 1.012/1.013 may have written the full approved token to .next, then
- // rejected its CRLF-expanded byte count before the atomic replacement.
- if(recover)path+=".next";
- int f=FileOpen(path,FILE_READ|FILE_TXT|FILE_ANSI,0,CP_UTF8);
+ int f=FileOpen(SNPairTokenPath(),FILE_READ|FILE_TXT|FILE_ANSI,0,CP_UTF8);
  if(f==INVALID_HANDLE)return "";
- string magic=FileReadString(f),origin=FileReadString(f),account=FileReadString(f),token=FileReadString(f);
- bool extra=!FileIsEnding(f);FileClose(f);
- if(extra||magic!="SYNCNOTE_PAIR_1"||origin!=g_sn_origin||account!=g_sn_key||!SNPairTokenValid(token))return "";
- if(recover)
- {
-  if(StringLen(token)!=64||!SNPairSaveToken(token))return "";
-  Print("SyncNote: recovered previously approved local authorization; no new pairing needed");
- }
+ string magic=FileReadString(f),origin=FileReadString(f),account=FileReadString(f),token=FileReadString(f);FileClose(f);
+ if(magic!="SYNCNOTE_PAIR_1"||origin!=g_sn_origin||account!=g_sn_key||!SNPairTokenValid(token))return "";
  return token;
 }
 bool SNPairSaveToken(const string token)

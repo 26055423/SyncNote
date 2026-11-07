@@ -14,44 +14,73 @@ def initialize(db):
  CREATE TABLE IF NOT EXISTS bar_sync_segments(job_id TEXT NOT NULL,segment_id TEXT NOT NULL,ordinal INTEGER NOT NULL,tf TEXT NOT NULL,from_server INTEGER NOT NULL,to_server INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'waiting',result_hash TEXT NOT NULL DEFAULT '',accepted INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',PRIMARY KEY(job_id,segment_id));
  CREATE INDEX IF NOT EXISTS idx_bar_sync_segments_order ON bar_sync_segments(job_id,ordinal);
  ''')
+ if 'transport' not in {row[1] for row in db.execute('PRAGMA table_info(bar_sync_jobs)')}:
+  db.execute("ALTER TABLE bar_sync_jobs ADD COLUMN transport TEXT NOT NULL DEFAULT 'syncnote'")
+
+def channel(value):
+ if value not in ('syncnote','synctrade'):raise JobError('同步方式不正确')
+ return value
 
 def integer(value,name):
  if type(value) is not int or not 1<=value<=32535215999:raise JobError('时间参数不正确：'+name)
  return value
 
-def link_of(db,uid):
- link=db.execute('SELECT * FROM mt5_links WHERE user_id=?',(uid,)).fetchone()
+def link_of(db,uid,transport='syncnote'):
+ transport=channel(transport)
  feed=bars.feed_of(db,uid)
- if not link or not link['token_hash'] or not feed or link['account_key']!=feed['account_key']:raise JobError('请先授权 SyncNote 并同步券商账户',409)
+ if transport=='synctrade':
+  if not feed:raise JobError('请先提交当前 MT5 账户的同步任务',409)
+  return {'user_id':uid,'account_key':feed['account_key'],'token_hash':''},feed
+ link=db.execute('SELECT * FROM mt5_links WHERE user_id=?',(uid,)).fetchone()
+ if not feed or not link or link['account_key']!=feed['account_key']:raise JobError('请先同步当前 MT5 券商账户',409)
+ if not link['token_hash']:raise JobError('请先授权 SyncNote 并同步券商账户',409)
  return link,feed
+
+def bind_local_request(db,uid,data,now):
+ if data.get('website_user_id')!=uid:raise JobError('网站登录账号已改变，请重新授权同步',409)
+ account,server,key=sync_history.identity(data)
+ linked=db.execute('SELECT account_key FROM mt5_links WHERE user_id=?',(uid,)).fetchone()
+ if linked and linked['account_key'] and linked['account_key']!=key:raise JobError('当前网站账号已绑定其他 MT5 账户，请先解除绑定',409)
+ # Clicking explicit range sync grants metadata/data upload only; never mint a bearer.
+ if not linked:db.execute('INSERT INTO mt5_links(user_id,token_hash,account_key,updated) VALUES(?,NULL,NULL,?)',(uid,now))
+ if not bars.feed_of(db,uid):
+  try:bars.bind_feed(db,uid,account,server,now)
+  except bars.BarsError as error:raise JobError(error.text,error.code)
+ return link_of(db,uid,'synctrade')
 
 def public(row):
  if row is None:return None
- return {key:row[key] for key in ('job_id','symbol','status','processed_segments','total_segments','bars_received','last_error','created','updated')}|{'from':row['from_utc'],'to':row['to_utc']}
+ return {key:row[key] for key in ('job_id','symbol','status','processed_segments','total_segments','bars_received','last_error','created','updated','transport')}|{'from':row['from_utc'],'to':row['to_utc']}
 
-def current(db,uid,symbol=None):
- link,feed=link_of(db,uid)
- sql='SELECT * FROM bar_sync_jobs WHERE user_id=? AND account_key=? AND token_hash=?'
- params=[uid,feed['account_key'],link['token_hash']]
+def current(db,uid,symbol=None,transport='syncnote'):
+ link,feed=link_of(db,uid,transport)
+ sql='SELECT * FROM bar_sync_jobs WHERE user_id=? AND account_key=? AND token_hash=? AND transport=?'
+ params=[uid,feed['account_key'],link['token_hash'],transport]
  if symbol:
   sql+=' AND symbol=?';params.append(symbol)
  return db.execute(sql+' ORDER BY created DESC,rowid DESC LIMIT 1',params).fetchone()
 
-def status(db,uid,symbol=None):
- try:return {'job':public(current(db,uid,symbol))}
+def status(db,uid,symbol=None,transport='syncnote'):
+ transport=channel(transport)
+ try:return {'job':public(current(db,uid,symbol,transport))}
  except JobError:return {'job':None}
 
 def create(db,uid,data,now=None):
  now=time.time() if now is None else now
- link,feed=link_of(db,uid)
+ transport=channel(data.get('transport','syncnote'))
  symbol=data.get('symbol')
- if not isinstance(symbol,str) or not symbol or len(symbol)>64:raise JobError('请选择券商原始品种代码')
- catalog=market_symbols.read(db,uid,feed['source'])
- if not any(item['symbol']==symbol for item in catalog['symbols']):raise JobError('该品种不属于当前券商目录，请先更新 SyncNote 品种目录',409)
+ if not isinstance(symbol,str) or not symbol or len(symbol)>64 or any(ord(c)<32 for c in symbol):raise JobError('请选择券商原始品种代码')
  begin=integer(data.get('from'),'from');end=integer(data.get('to'),'to')
  if end<=begin or end-begin>365*86400:raise JobError('同步区间需大于 0 且不超过 365 天')
  if end>now+60:raise JobError('不能同步未来行情')
- active=db.execute("SELECT * FROM bar_sync_jobs WHERE user_id=? AND account_key=? AND token_hash=? AND status IN ('waiting','running') ORDER BY created DESC LIMIT 1",(uid,feed['account_key'],link['token_hash'])).fetchone()
+ if transport=='synctrade':
+  link,feed=bind_local_request(db,uid,data,now)
+  identity(db,link,data,transport)
+ else:
+  link,feed=link_of(db,uid,transport)
+  catalog=market_symbols.read(db,uid,feed['source'])
+  if not any(item['symbol']==symbol for item in catalog['symbols']):raise JobError('该品种不属于当前券商目录，请先更新 SyncNote 品种目录',409)
+ active=db.execute("SELECT * FROM bar_sync_jobs WHERE user_id=? AND account_key=? AND token_hash=? AND transport=? AND status IN ('waiting','running') ORDER BY created DESC LIMIT 1",(uid,feed['account_key'],link['token_hash'],transport)).fetchone()
  if active:raise JobError('已有 '+active['symbol']+' 同步任务，请等待完成或先取消',409)
  offset=trade_time.offset_for(db,feed['source'])
  queues=[]
@@ -69,38 +98,44 @@ def create(db,uid,data,now=None):
    if index<len(queue):segments.append(queue[index])
  if not segments:raise JobError('区间内没有已收盘 K 线，请选择更早的开始时间')
  job_id=secrets.token_hex(16)
- db.execute('INSERT INTO bar_sync_jobs(job_id,user_id,account_key,token_hash,source,symbol,from_utc,to_utc,status,total_segments,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(job_id,uid,feed['account_key'],link['token_hash'],feed['source'],symbol,begin,end,'waiting',len(segments),now,now))
+ db.execute('INSERT INTO bar_sync_jobs(job_id,user_id,account_key,token_hash,source,symbol,from_utc,to_utc,status,total_segments,created,updated,transport) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(job_id,uid,feed['account_key'],link['token_hash'],feed['source'],symbol,begin,end,'waiting',len(segments),now,now,transport))
  db.executemany('INSERT INTO bar_sync_segments(job_id,segment_id,ordinal,tf,from_server,to_server) VALUES(?,?,?,?,?,?)',[(job_id,secrets.token_hex(12),i,tf,start,end) for i,(tf,start,end) in enumerate(segments)])
  return {'job':public(db.execute('SELECT * FROM bar_sync_jobs WHERE job_id=?',(job_id,)).fetchone())}
 
 def cancel(db,uid,data,now=None):
  now=time.time() if now is None else now
- link,feed=link_of(db,uid)
- row=db.execute('SELECT * FROM bar_sync_jobs WHERE job_id=? AND user_id=? AND account_key=? AND token_hash=?',(str(data.get('job_id') or ''),uid,feed['account_key'],link['token_hash'])).fetchone()
+ transport=channel(data.get('transport','syncnote'))
+ link,feed=link_of(db,uid,transport)
+ row=db.execute('SELECT * FROM bar_sync_jobs WHERE job_id=? AND user_id=? AND account_key=? AND token_hash=? AND transport=?',(str(data.get('job_id') or ''),uid,feed['account_key'],link['token_hash'],transport)).fetchone()
  if not row:raise JobError('同步任务不存在',404)
  if row['status'] in ACTIVE:db.execute("UPDATE bar_sync_jobs SET status='cancelled',updated=? WHERE job_id=?",(now,row['job_id']))
  return {'job':public(db.execute('SELECT * FROM bar_sync_jobs WHERE job_id=?',(row['job_id'],)).fetchone())}
 
-def identity(db,link,data):
+def identity(db,link,data,transport='syncnote'):
  account,server,key=sync_history.identity(data)
  if not link['account_key'] or key!=link['account_key']:raise JobError('此 EA 账户与绑定账户不一致',403)
+ if transport=='synctrade':
+  if data.get('website_user_id')!=link['user_id']:raise JobError('网站登录账号已改变，请重新授权同步',409)
+  feed=bars.feed_of(db,link['user_id'])
+  if not feed or feed['account_key']!=key:raise JobError('本机 MT5 账户已改变，请重新连接后同步',403)
+  return account,server,key
  if not link['token_hash'] or not db.execute('SELECT 1 FROM mt5_links WHERE user_id=? AND account_key=? AND token_hash=?',(link['user_id'],key,link['token_hash'])).fetchone():raise JobError('同步授权已撤销',401)
  return account,server,key
 
-def poll(db,link,data,now=None):
+def poll(db,link,data,now=None,transport='syncnote'):
  now=time.time() if now is None else now
- account,server,key=identity(db,link,data)
- row=db.execute("SELECT * FROM bar_sync_jobs WHERE user_id=? AND account_key=? AND token_hash=? AND status IN ('waiting','running') ORDER BY created LIMIT 1",(link['user_id'],key,link['token_hash'])).fetchone()
+ account,server,key=identity(db,link,data,transport)
+ row=db.execute("SELECT * FROM bar_sync_jobs WHERE user_id=? AND account_key=? AND token_hash=? AND transport=? AND status IN ('waiting','running') ORDER BY created LIMIT 1",(link['user_id'],key,link['token_hash'],transport)).fetchone()
  if not row:return {'ok':True,'job':None}
  segment=db.execute("SELECT * FROM bar_sync_segments WHERE job_id=? AND state='waiting' ORDER BY ordinal LIMIT 1",(row['job_id'],)).fetchone()
  if not segment:return {'ok':True,'job':None}
  db.execute("UPDATE bar_sync_jobs SET status='running',updated=? WHERE job_id=?",(now,row['job_id']))
  return {'ok':True,'job':{'job_id':row['job_id'],'segment_id':segment['segment_id'],'account_key':key,'account':account,'server':server,'symbol':row['symbol'],'tf':segment['tf'],'from_server':segment['from_server'],'to_server':segment['to_server']}}
 
-def result(db,link,data,now=None):
+def result(db,link,data,now=None,transport='syncnote'):
  now=time.time() if now is None else now
- account,server,key=identity(db,link,data)
- row=db.execute('SELECT * FROM bar_sync_jobs WHERE job_id=? AND user_id=? AND account_key=? AND token_hash=?',(str(data.get('job_id') or ''),link['user_id'],key,link['token_hash'])).fetchone()
+ account,server,key=identity(db,link,data,transport)
+ row=db.execute('SELECT * FROM bar_sync_jobs WHERE job_id=? AND user_id=? AND account_key=? AND token_hash=? AND transport=?',(str(data.get('job_id') or ''),link['user_id'],key,link['token_hash'],transport)).fetchone()
  if not row or row['status']=='cancelled':raise JobError('任务已取消、账户已改变或同步授权已失效',409)
  segment=db.execute('SELECT * FROM bar_sync_segments WHERE job_id=? AND segment_id=?',(row['job_id'],str(data.get('segment_id') or ''))).fetchone()
  if not segment:raise JobError('同步分段不存在',409)
@@ -138,3 +173,12 @@ def result(db,link,data,now=None):
  except Exception:
   db.execute('ROLLBACK TO bar_sync_result');db.execute('RELEASE bar_sync_result');raise
  return ack(len(raw),status)
+
+
+def local_poll(db,uid,data,now=None):
+ link,_=link_of(db,uid,'synctrade')
+ return poll(db,link,data,now,'synctrade')
+
+def local_result(db,uid,data,now=None):
+ link,_=link_of(db,uid,'synctrade')
+ return result(db,link,data,now,'synctrade')

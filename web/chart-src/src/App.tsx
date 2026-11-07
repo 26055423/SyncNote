@@ -22,7 +22,8 @@ import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { ToolbarIcon } from './ui/ToolbarIcon';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
-import { localHistorySync } from './localHistorySync';
+import { localHistorySync, historyAccountKey } from './localHistorySync';
+import { localRangeSync, useLocalRangeSync } from './localRangeSync';
 import { backfillBars, useBackfillBars } from './backfillBars';
 import { SymbolPicker, type MarketSymbol } from './SymbolPicker';
 import { MarketRangeSync } from './MarketRangeSync';
@@ -243,10 +244,21 @@ export default function App() {
   const cacheScope = `${board?.user.id ?? ''}:${liveSymbol}:${localConnected ? local.server + ':' + local.epoch : 'cloud'}:${catalogSource ?? ''}`;
   const [loadedCacheScope, setLoadedCacheScope] = useState(cacheScope);
   const [syncGate, setSyncGate] = useState<{ scope: string; checked: boolean; job: MarketSyncGateJob | null; acknowledged: string | null }>({ scope: '', checked: false, job: null, acknowledged: null });
-  const chartSyncReady = localConnected || syncChartReady(syncGate.scope === cacheScope && syncGate.checked, syncGate.job, syncGate.acknowledged);
-  const receiveSyncJob = (job: MarketSyncGateJob | null) => setSyncGate((current) => ({ scope: cacheScope, checked: true, job,
-    acknowledged: current.scope === cacheScope && current.job?.job_id === job?.job_id ? current.acknowledged : null }));
+  const rangeSync = useLocalRangeSync();
+  const syncScope = `${cacheScope}:${localConnected ? 'synctrade' : 'syncnote'}`;
+  const chartSyncReady = syncChartReady(syncGate.scope === syncScope && syncGate.checked, syncGate.job, syncGate.acknowledged);
+  const receiveSyncJob = (job: MarketSyncGateJob | null) => setSyncGate((current) => ({ scope: syncScope, checked: true, job,
+    acknowledged: current.scope === syncScope && current.job?.job_id === job?.job_id ? current.acknowledged : null }));
   const viewPartialBars = () => setSyncGate((current) => ({ ...current, acknowledged: current.job?.job_id ?? null }));
+  const getLocalSyncContext = async () => {
+    const terminal = localTerminal.getSnapshot();
+    const user = board?.user.id;
+    if (!user || terminal.phase !== 'connected') throw new Error('请先连接本机 SyncTrade。');
+    const account_key = await historyAccountKey(terminal.server, terminal.account_id);
+    const current = localTerminal.getSnapshot();
+    if (current.phase !== 'connected' || current.epoch !== terminal.epoch || current.account_id !== terminal.account_id || current.server !== terminal.server || current.symbol !== terminal.symbol) throw new Error('本机账户或品种已改变，请重新选择同步。');
+    return { website_user_id: user, account: terminal.account_id, server: terminal.server, account_key, clock_sample: current.clock_sample };
+  };
   useEffect(() => {
     if (localConnected) setStoredSymbol(local.symbol);
   }, [localConnected, local.symbol]);
@@ -495,6 +507,7 @@ export default function App() {
   useEffect(() => {
     localHistorySync.bindUser(board?.user.id || '');
     backfillBars.bindUser(board?.user.id || '');
+    localRangeSync.bindUser(board?.user.id || '');
   }, [board?.user.id]);
 
   // 连上 EA 后只在后台补近7天缺口，不锁轨道图，也不恢复旧的多年回溯。
@@ -517,7 +530,7 @@ export default function App() {
   }, [board?.user.auto_history_sync, localConnected, local.history_ready, local.features, backfill.phase]);
 
   useEffect(() => {
-    const pause = () => { localHistorySync.stop('网页已关闭，笔记同步已暂停。'); backfillBars.stop('网页已关闭，行情回填已暂停。'); };
+    const pause = () => { localHistorySync.stop('网页已关闭，笔记同步已暂停。'); backfillBars.stop('网页已关闭，行情回填已暂停。'); localRangeSync.stop('网页已关闭，SyncTrade 区间同步已暂停。'); };
     window.addEventListener('pagehide', pause);
     return () => { window.removeEventListener('pagehide', pause); pause(); };
   }, []);
@@ -1511,21 +1524,19 @@ export default function App() {
               <div className="chart-empty">
                 <p>
                   {mode === 'live'
-                    ? (localConnected
-                      ? (local.history_ready ? '本机历史暂不可用，请在 MT5 加载历史后重新连接' : '正在加载本机四周期 K 线…')
-                      : syncGate.scope === cacheScope && (syncGate.job?.status === 'waiting' || syncGate.job?.status === 'running') ? `${liveSymbol} 正在同步 K 线，完成后自动打开图表` : syncGate.scope === cacheScope && syncGate.job?.status === 'partial' ? `${liveSymbol} 部分行情尚未获取` : symbolOptions.find((item) => item.symbol === liveSymbol)?.has_bars === false ? `${liveSymbol} 尚未同步 K 线` : '正在检查行情同步状态…')
+                    ? (syncGate.scope === syncScope && (syncGate.job?.status === 'waiting' || syncGate.job?.status === 'running') ? `${liveSymbol} 正在同步 K 线，完成后自动打开图表` : syncGate.scope === syncScope && syncGate.job?.status === 'partial' ? `${liveSymbol} 部分行情尚未获取` : symbolOptions.find((item) => item.symbol === liveSymbol)?.has_bars === false ? `${liveSymbol} 尚未同步 K 线` : '正在检查行情同步状态…')
                     : target
                       ? (ready ? '正在读取服务器复盘历史…' : entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…')
                       : '还没有可复盘的交易'}
                 </p>
                 <p className="dim">
                   {mode === 'live'
-                    ? (!localConnected ? '选择同步区间，由已授权的 SyncNote 获取该品种 K 线，无需更换 MT5 图表。' : '连接本机 EA 看实时行情，或打开一笔历史复盘。')
+                    ? (localConnected ? '选择区间，通过本机 SyncTrade 读取并上传该品种 K 线，保持网页打开。' : '选择同步区间，由已授权的 SyncNote 获取该品种 K 线，无需更换 MT5 图表。')
                     : target
                       ? (ready ? '无需连接 EA，读取完成后图表会自动出现。' : '同步完成后图表会自动出现。')
                       : '在 MT5 同步一笔成交，或从底部「历史」打开已有交易。'}
                 </p>
-                {mode === 'live' && !localConnected ? <MarketRangeSync key={cacheScope} symbol={liveSymbol} onJobChange={receiveSyncJob} onViewBars={viewPartialBars} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
+                {mode === 'live' ? <MarketRangeSync key={syncScope} symbol={liveSymbol} transport={localConnected ? 'synctrade' : 'syncnote'} getLocalContext={getLocalSyncContext} onStartLocal={() => localRangeSync.start()} onStopLocal={() => localRangeSync.stop('区间任务已取消。')} localStatus={rangeSync} onJobChange={receiveSyncJob} onViewBars={viewPartialBars} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                 <div className="empty-actions">
                   {mode === 'review' && !target && myHistory[0] ? (
                     <button type="button" className="primary" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>
@@ -1582,7 +1593,7 @@ export default function App() {
               {tab === 'trade' ? (
                 <div className="pane">
                   <LocalTradePanel key={`${local.server}:${local.account_id}:${local.symbol}`} state={local} />
-                  {mode === 'live' && !localConnected && liveSeries && chartSyncReady ? <MarketRangeSync key={cacheScope} symbol={liveSymbol} onJobChange={receiveSyncJob} onViewBars={viewPartialBars} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
+                  {mode === 'live' && liveSeries && chartSyncReady ? <MarketRangeSync key={syncScope} symbol={liveSymbol} transport={localConnected ? 'synctrade' : 'syncnote'} getLocalContext={getLocalSyncContext} onStartLocal={() => localRangeSync.start()} onStopLocal={() => localRangeSync.stop('区间任务已取消。')} localStatus={rangeSync} onJobChange={receiveSyncJob} onViewBars={viewPartialBars} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
 
                   {/* 成交历史统一放在底部「历史」页签里，右栏不再重复列一遍。 */}

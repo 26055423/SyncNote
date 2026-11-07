@@ -500,7 +500,7 @@ class Handler(BaseHTTPRequestHandler):
                         source=str(q.get('source',[''])[0]) or (feed['source'] if feed else '')
                         if not source:source=bars.public_source(db) or ''
                         return self.reply({'source':source,**market_symbols.read(db,uid,source),'public':not feed or source!=feed['source']})
-                    if path=='/api/market/sync-jobs':return self.reply(bar_sync_jobs.status(db,uid,str(q.get('symbol',[''])[0]) or None))
+                    if path=='/api/market/sync-jobs':return self.reply(bar_sync_jobs.status(db,uid,str(q.get('symbol',[''])[0]) or None,str(q.get('transport',['syncnote'])[0])))
                     if path=='/api/market/bars':
                         # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
                         # `limit=N&before=UTC秒`：同轨道向前按根数分页，不按日历窗口切。
@@ -715,6 +715,7 @@ class Handler(BaseHTTPRequestHandler):
             if etag:self.send_header('ETag',etag)
             for k,v in [('Content-Type',mime+'; charset=utf-8'),('Cache-Control',cache),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
             self.end_headers();self.wfile.write(body)
+        except bar_sync_jobs.JobError as e:self.reply({'error':e.text},e.code)
         except device_pairing.PairError as e:self.reply({'error':e.text},e.code)
         except sync_history.HistoryError as e:self.reply({'error':e.text},e.code)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
@@ -807,6 +808,10 @@ class Handler(BaseHTTPRequestHandler):
                     result=bar_sync_jobs.create(db,self.user(db)['id'],data,now)
                 elif path=='/api/market/sync-jobs/cancel':
                     result=bar_sync_jobs.cancel(db,self.user(db)['id'],data,now)
+                elif path=='/api/market/sync-jobs/local-poll':
+                    result=bar_sync_jobs.local_poll(db,self.user(db)['id'],data,now)
+                elif path=='/api/market/sync-jobs/local-result':
+                    result=bar_sync_jobs.local_result(db,self.user(db)['id'],data,now)
                 elif path=='/api/mt5/bar-sync/poll':
                     result=bar_sync_jobs.poll(db,self.link_user(db),data,now)
                 elif path=='/api/mt5/bar-sync/result':

@@ -45,6 +45,7 @@ export interface LocalTerminalState {
   product: string;
   features: string[];
   server_offset_sec: number;
+  clock_sample?: { server_time_ms: number; server_offset_sec: number };
   latency: number | null;
   account: Record<string, any>;
   tick: { symbol?: string; bid: number; ask: number; time: number } | null;
@@ -371,6 +372,9 @@ export class LocalTerminal {
         if (message.tick?.symbol && message.tick.symbol !== this.state.symbol) return;
         if (this.state.symbol_switching) return;
         this.update({
+          ...(typeof message.server_time_ms === 'number' && Number.isFinite(message.server_time_ms)
+            && typeof message.server_offset_sec === 'number' && Number.isFinite(message.server_offset_sec)
+            ? { clock_sample: { server_time_ms: message.server_time_ms, server_offset_sec: message.server_offset_sec } } : {}),
           account: message.account && typeof message.account === 'object' ? message.account : this.state.account,
           positions: Array.isArray(message.positions) ? message.positions : this.state.positions,
           orders: Array.isArray(message.orders) ? message.orders : this.state.orders,
