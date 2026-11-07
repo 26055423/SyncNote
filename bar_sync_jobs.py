@@ -35,7 +35,7 @@ def current(db,uid,symbol=None):
  params=[uid,feed['account_key'],link['token_hash']]
  if symbol:
   sql+=' AND symbol=?';params.append(symbol)
- return db.execute(sql+' ORDER BY created DESC,job_id DESC LIMIT 1',params).fetchone()
+ return db.execute(sql+' ORDER BY created DESC,rowid DESC LIMIT 1',params).fetchone()
 
 def status(db,uid,symbol=None):
  try:return {'job':public(current(db,uid,symbol))}

@@ -1,5 +1,6 @@
 """Explicit historical bar jobs preserve source identity and honest missing evidence."""
 import sqlite3,sys,unittest
+from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import bars,bar_sync_jobs as jobs,market_symbols,sync_history
@@ -69,6 +70,20 @@ class RangeJobs(unittest.TestCase):
   with self.assertRaises(jobs.JobError):self.create(end=NOW+3600)
   self.create()
   with self.assertRaises(jobs.JobError):self.create('XAUUSD')
+ def test_latest_job_with_same_timestamp_uses_insertion_order_not_random_id(self):
+  counter=[0]
+  def token(size):
+   counter[0]+=1
+   if size==16:return 'f'*32 if counter[0]==1 else '0'*32
+   return format(counter[0],'024x')
+  with patch('bar_sync_jobs.secrets.token_hex',side_effect=token):
+   old=self.create()
+   jobs.cancel(self.db,'owner',{'job_id':old['job_id']},NOW)
+   new=self.create()
+  self.assertGreater(old['job_id'],new['job_id'])
+  latest=jobs.status(self.db,'owner','NAS100')['job']
+  self.assertEqual(latest['job_id'],new['job_id'])
+  self.assertEqual(latest['status'],'waiting')
  def test_broker_clock_uses_shared_offset_and_does_not_include_next_day(self):
   bars.set_source_offset(self.db,'srv:Broker-A',10800,NOW)
   self.create(begin=NOW-86400,end=NOW)
