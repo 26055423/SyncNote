@@ -96,9 +96,14 @@ test('history errors and read timeouts advance bootstrap without replaying a tra
   const { client, connect, timers } = fixture();
   const socket = connect();
   socket.emit({ type: 'error', code: 'HISTORY_UNAVAILABLE', error: 'load history in MT5', request_id: socket.sent.at(-1).request_id });
+  assert.equal(client.getSnapshot().phase, 'connected');
+  assert.equal(client.getSnapshot().error, '');
+  assert.match(client.getSnapshot().historyWarnings['1m'], /历史行情/);
   assert.equal(socket.sent.at(-1).tf, '5m');
   const timer = [...timers.values()].find((row) => row.ms === 10000);
   timer.callback();
+  assert.equal(client.getSnapshot().error, '');
+  assert.match(client.getSnapshot().historyWarnings['5m'], /加载超时/);
   assert.equal(socket.sent.at(-1).tf, '15m');
   socket.emit({ type: 'bars', tf: '15m', request_id: socket.sent.at(-1).request_id, bars: [[100, 1, 2, 1, 2]] });
   assert.equal(socket.sent.at(-1).tf, '1h');

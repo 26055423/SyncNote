@@ -16,6 +16,7 @@ export interface LocalCommand {
   partial?: boolean;
 }
 export interface LocalTerminalState {
+  historyWarnings: Record<string, string>;
   phase: LocalPhase;
   error: string;
   instance_id: string;
@@ -80,6 +81,7 @@ export interface NoteReviewBars {
 }
 
 const freshState = (): LocalTerminalState => ({
+  historyWarnings: {},
   phase: 'disconnected', error: '', instance_id: '', account_id: '', server: '', epoch: '',
   symbol: 'XAUUSD', read_only: true, demo: false, hedging: false, netting_manage: false, real_trading: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
   latency: null, account: {}, tick: null,
@@ -234,7 +236,7 @@ export class LocalTerminal {
     if (!tf) { this.update({ history_ready: true }); return; }
     const id = crypto.randomUUID();
     const timer = window.setTimeout(() => {
-      this.update({ error: `本机 ${tf} 历史加载超时，继续加载其他周期；可在 MT5 加载历史后重新连接。` });
+      this.update({ historyWarnings: { ...this.state.historyWarnings, [tf]: `${tf} 历史行情加载超时，可在 MT5 加载历史后重新连接。` } });
       this.nextHistory();
     }, 10000);
     this.pendingHistory = { id, tf, timer };
@@ -285,15 +287,24 @@ export class LocalTerminal {
       this.historyQueue = [...tfKeys];
       this.nextHistory();
     } else if (message.type === 'error') {
-      this.update({ error: String(message.error || message.message || 'EA 拒绝了请求。'), ...(this.state.phase === 'confirming' ? { phase: 'pairing' as const } : {}) });
-      if (this.pendingHistory && message.request_id === this.pendingHistory.id) this.nextHistory();
+      const bootstrap = this.pendingHistory && message.request_id === this.pendingHistory.id;
       const read = this.noteReads.get(message.request_id);
+      const reviewRead = this.reviewReads.get(message.request_id);
+      if (bootstrap && this.pendingHistory) {
+        const tf = this.pendingHistory.tf;
+        const detail = String(message.error || message.message || '');
+        const reason = /starts later/.test(detail) ? 'MT5 当前历史起点晚于所请求的范围' : /not ready/.test(detail) ? 'MT5 尚未准备好所请求范围的 K 线' : '本次历史行情读取未完成';
+        this.update({ historyWarnings: { ...this.state.historyWarnings, [tf]: `${tf}：${reason}。` } });
+        this.nextHistory();
+      }
+      if (String(message.code || '') === 'AUTH_REQUIRED' || (!bootstrap && !read && !reviewRead && !String(message.code || '').startsWith('HISTORY_'))) {
+        this.update({ error: String(message.error || message.message || 'EA 拒绝了请求。'), ...(this.state.phase === 'confirming' ? { phase: 'pairing' as const } : {}) });
+      }
       if (read) {
         this.noteReads.delete(message.request_id);
         read.cleanup();
         read.reject(new Error(String(message.error || message.message || 'EA 历史读取失败。')));
       }
-      const reviewRead = this.reviewReads.get(message.request_id);
       if (reviewRead) {
         this.reviewReads.delete(message.request_id);
         reviewRead.cleanup();

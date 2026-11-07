@@ -1539,6 +1539,15 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .mt5-connect-dialog .local-buttons { display: flex; flex-wrap: nowrap; gap: 8px; }
 .mt5-connect-dialog details { margin-top: 16px; font-size: 12px; }
 .mt5-connect-dialog summary { cursor: pointer; color: var(--dim); }
+.trade-identity { margin: 0 0 4px; font-size: 12px; }
+.trade-identity > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.trade-identity strong { color: var(--text); font-weight: 600; }
+.trade-identity > p { display: flex; justify-content: space-between; gap: 12px; margin: 5px 0 0; color: var(--dim); }
+.trade-identity > p > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trade-identity > p > span:last-child { flex: none; }
+.local-history-warning, .local-position-manager { margin: 10px 0; font-size: 12px; }
+.local-history-warning summary, .local-position-manager summary { cursor: pointer; color: var(--dim); }
+.local-history-warning p { color: var(--dim); margin: 8px 0; line-height: 1.6; }
 @media (max-width: 1200px) {
   .unified-topbar .top-actions .action-label { display: none; }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   CONTRACT_SIZE,
   fmtMoney,
@@ -36,6 +36,7 @@ function num(value: string): number {
 const cls = (...parts: Array<string | false | null | undefined>) => parts.filter(Boolean).join(' ');
 
 export interface OrderTicketProps {
+  context?: ReactNode;
   account: Account | null;
   symbol: string;
   bid: number;
@@ -54,7 +55,7 @@ export interface OrderTicketProps {
   onConnect?: () => void;
 }
 
-export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason, real = false, quotaUnrestricted = false, allowedActions = ['market'], submitting = false, onSubmit, onConnect }: OrderTicketProps) {
+export function OrderTicket({ context, account, symbol, bid, ask, connected, lockedReason, real = false, quotaUnrestricted = false, allowedActions = ['market'], submitting = false, onSubmit, onConnect }: OrderTicketProps) {
   const [action, setAction] = useState<OrderAction>('market');
   const [side, setSide] = useState<OrderSide>('buy');
   const [volume, setVolume] = useState('0.01');
@@ -177,8 +178,9 @@ export function OrderTicket({ account, symbol, bid, ask, connected, lockedReason
     <section className={cls('ticket', !connected && 'is-locked')}>
       <header className="ticket-head">
         <h3>下单 {real ? <span className="ticket-real">实盘</span> : null}</h3>
-        <span className="dim">{connected ? '手动 · 非自动' : 'EA 未连接'}</span>
+        <span className="dim">{connected ? '手动 · 非自动' : '交易暂不可用'}</span>
       </header>
+      {context}
 
       {!connected ? (
         <div className="lock-banner">
