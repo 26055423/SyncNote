@@ -20,11 +20,13 @@ export interface Prefs {
   timezone: string;
   /** Vela 图表内部文案的语言（只影响图表，不翻译本站界面）。 */
   chartLocale: ChartLocale;
+  /** 主图与副图的背景网格线，默认隐藏。 */
+  gridVisible: boolean;
 }
 
 const STORAGE_KEY = 'sn-ui.v1';
 
-const DEFAULTS: Prefs = { theme: 'dark', timezone: DEFAULT_ZONE, chartLocale: 'zh-Hans' };
+const DEFAULTS: Prefs = { theme: 'dark', timezone: DEFAULT_ZONE, chartLocale: 'zh-Hans', gridVisible: false };
 
 function load(): Prefs {
   try {
@@ -35,6 +37,7 @@ function load(): Prefs {
         theme: parsed.theme === 'light' ? 'light' : 'dark',
         timezone: typeof parsed.timezone === 'string' && parsed.timezone ? parsed.timezone : DEFAULT_ZONE,
         chartLocale: parsed.chartLocale === 'en' ? 'en' : 'zh-Hans',
+        gridVisible: parsed.gridVisible === true,
       };
     }
   } catch {
@@ -72,6 +75,7 @@ class PrefsStore {
   setTheme = (next: Theme): void => this.set({ theme: next });
   setTimezone = (next: string): void => this.set({ timezone: next || DEFAULT_ZONE });
   setChartLocale = (next: ChartLocale): void => this.set({ chartLocale: next });
+  setGridVisible = (next: boolean): void => this.set({ gridVisible: next });
   toggleTheme = (): void => this.set({ theme: this.state.theme === 'dark' ? 'light' : 'dark' });
 
   private apply(): void {

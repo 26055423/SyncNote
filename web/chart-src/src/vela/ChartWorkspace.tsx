@@ -6,6 +6,15 @@ import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
 import { centerChartOnTime, panChartByTime, restoreChartLeft } from './viewportPan';
 
+/** Local appearance wins over saved charts and applies to newly created cells. */
+function applyGridPreference(cell: any) {
+  const visible = prefs.getState().gridVisible;
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--chart-grid').trim() || 'transparent';
+  cell?.chart?.rendererControl?.renderer?.applyConfig?.({
+    grid: { vertLines: { visible, color }, horzLines: { visible, color } },
+  });
+}
+
 /**
  * Vela 工作区（多窗格 K 线）在同频里的封装。
  *
@@ -289,7 +298,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     }
   };
   const [ready, setReady] = useState(false);
-  const { theme, timezone, chartLocale } = usePrefs();
+  const { theme, timezone, chartLocale, gridVisible } = usePrefs();
   // 标注是在事件回调里画的，回调闭包拿不到最新的 props，用 ref 兜住当前主题。
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -699,6 +708,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         stripRef.current = stripMarks;
 
         const bind = (cell: any) => {
+          if (cell) applyGridPreference(cell);
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
           // A quote or a resize may move the active viewport too; only a real gesture leads.
@@ -779,6 +789,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             /* 没有原生指标 API 时忽略 */
           }
           cell.chart?.on?.('load:end', () => {
+            applyGridPreference(cell);
             focusOne(cell);
             lockDrawings(cell);
             annotate(cell);
@@ -913,6 +924,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     // applyConfig 挂在渲染器上（chart.rendererControl.renderer），不在 chart 上。
     for (const cell of wsRef.current?.cells?.() ?? []) {
       try {
+        applyGridPreference(cell);
         cell.chart?.rendererControl?.renderer?.applyConfig?.({
           crosshair: theme === 'light'
             ? { color: '#3f4c5c', width: 1, style: 'dashed', opacity: 0.9 }
@@ -923,6 +935,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       }
     }
   }, [theme, ready]);
+
+  useEffect(() => {
+    for (const cell of wsRef.current?.cells?.() ?? []) applyGridPreference(cell);
+  }, [gridVisible, ready]);
 
   useEffect(() => {
     try {

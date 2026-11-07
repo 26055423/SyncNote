@@ -12,7 +12,7 @@ import { resolveZone, systemZone, zoneOffsetLabel } from './lib/time';
  * 时区和语言由 `ChartWorkspace` 转给 Vela 的 `setTimezone` / `setLocale`。
  */
 export function SettingsMenu({ name = '账户' }: { name?: string }) {
-  const { theme, timezone, chartLocale } = usePrefs();
+  const { theme, timezone, chartLocale, gridVisible } = usePrefs();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -70,6 +70,15 @@ export function SettingsMenu({ name = '账户' }: { name?: string }) {
             </div>
           </div>
 
+          <div className="settings-group">
+            <span className="settings-title">图表</span>
+            <button type="button" role="switch" aria-label="显示网格线" aria-checked={gridVisible}
+              className={`settings-opt settings-zone ${gridVisible ? 'is-active' : ''}`}
+              onClick={() => prefs.setGridVisible(!gridVisible)}>
+              <span>显示网格线</span><span>{gridVisible ? '开启' : '关闭'}</span>
+            </button>
+            <span className="settings-foot">默认关闭；开启后使用淡色网格。</span>
+          </div>
           <div className="settings-group">
             <span className="settings-title">显示时区</span>
             <div className="settings-list">
