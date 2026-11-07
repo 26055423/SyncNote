@@ -1343,6 +1343,7 @@ export default function App() {
         </div>
 
         <nav className="top-actions">
+          <MT5Connection state={local} open={mt5ConnectionOpen} onOpen={() => setMT5ConnectionOpen(true)} onClose={() => setMT5ConnectionOpen(false)} />
           <a href="/history" target="_blank" rel="noopener noreferrer" aria-label="交易日历（新标签页）" title="交易日历：新标签页打开，保留本机 EA 连接"><ToolbarIcon name="calendar" /><span className="action-label">交易日历</span></a>
           <span className="toolbar-separator" aria-hidden="true" />
           <LayoutMenu disabled={replayActive} compact current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
@@ -1519,7 +1520,6 @@ export default function App() {
         <div className="rail-body">
               {tab === 'trade' ? (
                 <div className="pane">
-                  <MT5Connection state={local} open={mt5ConnectionOpen} onOpen={() => setMT5ConnectionOpen(true)} onClose={() => setMT5ConnectionOpen(false)} />
                   <LocalTradePanel state={local} />
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
 
