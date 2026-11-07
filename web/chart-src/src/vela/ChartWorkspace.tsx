@@ -6,6 +6,20 @@ import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
 import { centerChartOnTime, panChartByTime, restoreChartLeft } from './viewportPan';
 
+/**
+ * 指标选择器（指标库）的排位。
+ *
+ * Vela 的库按**标题** A→Z 排序（`Intl.Collator`，见 `supportedNatives()`），所以真正
+ * 决定顺序的是标题前缀：`★ bigwolf` → `★ hidden OB` → 其余。这里只做兜底：
+ * 万一宿主按目录原顺序渲染，仍然是 bigwolf → hidden OB → 其它。
+ */
+const INDICATOR_ORDER = ['bigwolf', 'hidden-ob'];
+
+function indicatorSeat(type: string, index: number): number {
+  const at = INDICATOR_ORDER.indexOf(type);
+  return at >= 0 ? at : INDICATOR_ORDER.length + index;
+}
+
 /** Local appearance wins over saved charts and applies to newly created cells. */
 function applyGridPreference(cell: any) {
   const visible = prefs.getState().gridVisible;
@@ -550,6 +564,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         // 先注册自写指标和额外布局，工作区启动后才能在选择器里看到。
         await import('./indicators/pdhpdl');
         await import('./indicators/smc');
+        await import('./indicators/hiddenOb');
         await import('./layouts');
         const [{ registerLocale }, zhHans] = await Promise.all([
           import('@luxalgo/vela'),
@@ -775,14 +790,19 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           } catch {
             /* ignore */
           }
-          // 选择列表过滤：bigwolf 的 MACD 副图由代码配对，不从清单里让用户单独加。
+          // 指标库：bigwolf 的 MACD 副图由代码配对，不从清单里让用户单独加；
+          // 顺序见 INDICATOR_ORDER（库最终按标题排序，标题前缀才是真正的排位）。
           try {
             const original = cell.chart?.availableNativeIndicators?.bind(cell.chart);
             if (original && !cell.__tpFiltered) {
               cell.__tpFiltered = true;
               cell.chart.availableNativeIndicators = async () => {
-                const rows = await original();
-                return rows.filter((row: { type: string }) => row.type !== 'bigwolf-macd');
+                const rows = (await original()) as Array<{ type: string }>;
+                const ranked = rows
+                  .map((row, index) => ({ row, index }))
+                  .filter(({ row }) => row.type !== 'bigwolf-macd');
+                ranked.sort((a, b) => indicatorSeat(a.row.type, a.index) - indicatorSeat(b.row.type, b.index));
+                return ranked.map(({ row }) => row);
               };
             }
           } catch {

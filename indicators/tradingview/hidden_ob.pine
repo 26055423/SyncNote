@@ -1,0 +1,206 @@
+//@version=6
+indicator("hidden OB", "hidden OB", overlay = true, max_boxes_count = 100, max_bars_back = 600)
+
+// Process every available closed minute, not one sampled minute per chart bar.
+// Fixed detection defaults; these are not exposed in the settings panel.
+// Confirm each swing with 3 minutes on either side. The OB source must be
+// within 100 minute bars of its breakout; this is not an OB expiry timer.
+const int swingLength = 3
+const int originLookback = 100
+string zoneRange = input.string("整根K线", "OB范围", options = ["整根K线", "实体"], group = "识别")
+string mitigation = input.string("首次触及", "缓解条件（影线）", options = ["首次触及", "触及50%", "完全穿越"], group = "识别")
+bool onlyHighQuality = input.bool(false, "仅显示高质量OB", group = "识别", tooltip = "多头：来源为阴K，紧接一根阳K，第三根最低价严格高于来源最高价；空头镜像。FVG使用完整影线，与OB范围设置无关。在结构突破确认时判定，第三根尚未收盘则不算高质量，不事后升级。")
+bool showText = input.bool(true, "显示文本", group = "识别")
+int historyMinutes = input.int(20000, "请求的1分钟历史根数", minval = 1000, maxval = 100000, step = 1000, group = "数据", tooltip = "实际可用范围还受TradingView套餐、品种数据和主图历史范围限制。只在已加载数据中选择最近OB。")
+int upperCount = input.int(5, "显示当前价格上方的几个隐藏OB", minval = 0, maxval = 50, group = "显示", tooltip = "在当前价格上方的未缓解隐藏OB中，按离当前价格的距离选择最近的几个。设为0隐藏上方OB。")
+int lowerCount = input.int(5, "显示当前价格下方的几个隐藏OB", minval = 0, maxval = 50, group = "显示", tooltip = "在当前价格下方的未缓解隐藏OB中，按离当前价格的距离选择最近的几个。设为0隐藏下方OB。")
+color bullColor = input.color(color.teal, "多头OB", group = "显示")
+color bearColor = input.color(color.red, "空头OB", group = "显示")
+color highQualityBullColor = input.color(color.orange, "高质量多头OB", group = "显示")
+color highQualityBearColor = input.color(color.orange, "高质量空头OB", group = "显示")
+int fillTransparency = input.int(87, "填充透明度", minval = 0, maxval = 100, group = "显示")
+
+type OrderBlock
+    float top
+    float bottom
+    int origin
+    bool bullish
+    bool highQuality
+
+// Same three-candle qualification as bigwolf.pine f_obHq. The source-candle
+// selection and mitigation rules remain this indicator's own rules.
+f_high_quality(int obOff, bool isBullOb) =>
+    bool qualified = false
+    if obOff >= 2
+        if isBullOb
+            qualified := close[obOff] < open[obOff] and close[obOff - 1] > open[obOff - 1] and low[obOff - 2] > high[obOff]
+        else
+            qualified := close[obOff] > open[obOff] and close[obOff - 1] < open[obOff - 1] and high[obOff - 2] < low[obOff]
+    qualified
+
+// Runs in the requested 1m context. Pivots are usable only after confirmation.
+// Each confirmed swing can break once; each source candle can create one OB.
+f_events() =>
+    float ph = ta.pivothigh(high, swingLength, swingLength)
+    float pl = ta.pivotlow(low, swingLength, swingLength)
+    var float swingHigh = na
+    var float swingLow = na
+    var int swingHighTime = na
+    var int swingLowTime = na
+    var bool highArmed = false
+    var bool lowArmed = false
+    var float downTop = na
+    var float downBottom = na
+    var int downTime = na
+    var int downIndex = na
+    var float upTop = na
+    var float upBottom = na
+    var int upTime = na
+    var int upIndex = na
+    var int usedDown = na
+    var int usedUp = na
+
+    if not na(ph)
+        swingHigh := ph
+        swingHighTime := time[swingLength]
+        highArmed := true
+    if not na(pl)
+        swingLow := pl
+        swingLowTime := time[swingLength]
+        lowArmed := true
+
+    float bullTop = na
+    float bullBottom = na
+    int bullTime = na
+    bool bullQuality = false
+    float bearTop = na
+    float bearBottom = na
+    int bearTime = na
+    bool bearQuality = false
+
+    if highArmed and close > swingHigh
+        highArmed := false
+        if not na(downTime) and downTime >= swingHighTime and bar_index - downIndex <= originLookback and (na(usedDown) or downTime != usedDown) and close > downTop and downTop > downBottom
+            bullTop := downTop
+            bullBottom := downBottom
+            bullTime := downTime
+            bullQuality := f_high_quality(bar_index - downIndex, true)
+            usedDown := downTime
+
+    if lowArmed and close < swingLow
+        lowArmed := false
+        if not na(upTime) and upTime >= swingLowTime and bar_index - upIndex <= originLookback and (na(usedUp) or upTime != usedUp) and close < upBottom and upTop > upBottom
+            bearTop := upTop
+            bearBottom := upBottom
+            bearTime := upTime
+            bearQuality := f_high_quality(bar_index - upIndex, false)
+            usedUp := upTime
+
+    // Update after the event: the breakout candle cannot be its own source.
+    if close < open
+        downTop := zoneRange == "实体" ? open : high
+        downBottom := zoneRange == "实体" ? close : low
+        downTime := time
+        downIndex := bar_index
+    if close > open
+        upTop := zoneRange == "实体" ? close : high
+        upBottom := zoneRange == "实体" ? open : low
+        upTime := time
+        upIndex := bar_index
+
+    [time, time_close, high, low, close, bullTop, bullBottom, bullTime, bullQuality, bearTop, bearBottom, bearTime, bearQuality]
+
+f_mitigated(OrderBlock ob, float minuteHigh, float minuteLow) =>
+    float level = mitigation == "触及50%" ? (ob.top + ob.bottom) * 0.5 : mitigation == "完全穿越" ? (ob.bullish ? ob.bottom : ob.top) : (ob.bullish ? ob.top : ob.bottom)
+    ob.bullish ? minuteLow <= level : minuteHigh >= level
+
+// Both visible and hidden candidates remain eligible until mitigated.
+f_process(array<OrderBlock> blocks, float minuteHigh, float minuteLow, float bullTop, float bullBottom, int bullTime, bool bullQuality, float bearTop, float bearBottom, int bearTime, bool bearQuality) =>
+    int i = array.size(blocks) - 1
+    while i >= 0
+        if f_mitigated(array.get(blocks, i), minuteHigh, minuteLow)
+            array.remove(blocks, i)
+        i -= 1
+    // A new OB becomes actionable at the breakout close. Its own confirming
+    // candle is not a subsequent retest, even if that candle overlaps the zone.
+    if not na(bullTime) and (not onlyHighQuality or bullQuality)
+        array.push(blocks, OrderBlock.new(bullTop, bullBottom, bullTime, true, bullQuality))
+    if not na(bearTime) and (not onlyHighQuality or bearQuality)
+        array.push(blocks, OrderBlock.new(bearTop, bearBottom, bearTime, false, bearQuality))
+    0
+
+// Midpoint assigns an overlapping zone to exactly one side. Edge distance is
+// zero inside a zone. Newer sources win equal-distance ties.
+f_nearest(array<OrderBlock> blocks, float price, bool above, int limit) =>
+    array<int> selected = array.new<int>()
+    int count = array.size(blocks)
+    if count > 0 and limit > 0
+        for rank = 0 to limit - 1
+            int best = -1
+            float bestDistance = na
+            int bestTime = na
+            for i = 0 to count - 1
+                OrderBlock ob = array.get(blocks, i)
+                bool onSide = ((ob.top + ob.bottom) * 0.5 >= price) == above
+                if onSide and not array.includes(selected, i)
+                    float distance = math.max(0.0, math.max(ob.bottom - price, price - ob.top))
+                    if best == -1 or distance < bestDistance or (distance == bestDistance and ob.origin > bestTime)
+                        best := i
+                        bestDistance := distance
+                        bestTime := ob.origin
+            if best == -1
+                break
+            array.push(selected, best)
+    selected
+
+f_paint(array<box> drawings, array<OrderBlock> blocks, array<int> selected, int slotOffset, int slots, int rightTime) =>
+    if slots > 0
+        for slot = 0 to slots - 1
+            box drawing = array.get(drawings, slotOffset + slot)
+            if slot < array.size(selected)
+                OrderBlock ob = array.get(blocks, array.get(selected, slot))
+                color tint = ob.highQuality ? (ob.bullish ? highQualityBullColor : highQualityBearColor) : (ob.bullish ? bullColor : bearColor)
+                box.set_lefttop(drawing, ob.origin, ob.top)
+                box.set_rightbottom(drawing, rightTime, ob.bottom)
+                box.set_extend(drawing, extend.right)
+                box.set_border_color(drawing, tint)
+                box.set_bgcolor(drawing, color.new(tint, fillTransparency))
+                box.set_text_color(drawing, tint)
+                box.set_text(drawing, showText ? "1m " + (ob.highQuality ? "高质量" : "") + (ob.bullish ? "多头OB " : "空头OB ") + str.tostring(slot + 1) : "")
+            else
+                box.set_lefttop(drawing, na, na)
+                box.set_rightbottom(drawing, na, na)
+                box.set_text(drawing, "")
+    0
+
+if barstate.isfirst and (not chart.is_standard or timeframe.in_seconds() < 60)
+    runtime.error("请使用1分钟或更高周期的标准K线图。")
+
+// Ordinary var deliberately participates in realtime rollback. Every tick
+// replays all closed minutes of the open chart bar from the last committed
+// chart-bar state. Do not replace with varip or skip previously seen minutes.
+var array<OrderBlock> blocks = array.new<OrderBlock>()
+var array<box> drawings = array.new<box>()
+var int lastMinuteClose = na
+
+if barstate.isfirst and upperCount + lowerCount > 0
+    for i = 0 to upperCount + lowerCount - 1
+        array.push(drawings, box.new(left = na, top = na, right = na, bottom = na, xloc = xloc.bar_time, extend = extend.right, text_size = size.tiny, text_halign = text.align_right))
+
+// The API also accepts an equal timeframe, so the 1m chart follows exactly
+// the same detection, history and lifecycle path as higher chart timeframes.
+[mts, mtcs, mhs, mls, mcs, bts, bbs, btimes, bqualities, sts, sbs, stimes, squalities] = request.security_lower_tf(syminfo.tickerid, "1", f_events(), calc_bars_count = historyMinutes)
+int count = array.size(mts)
+if count > 0
+    for i = 0 to count - 1
+        int minuteClose = array.get(mtcs, i)
+        if not barstate.isrealtime or minuteClose <= timenow
+            f_process(blocks, array.get(mhs, i), array.get(mls, i), array.get(bts, i), array.get(bbs, i), array.get(btimes, i), array.get(bqualities, i), array.get(sts, i), array.get(sbs, i), array.get(stimes, i), array.get(squalities, i))
+            lastMinuteClose := minuteClose
+
+if barstate.islast
+    array<int> upper = f_nearest(blocks, close, true, upperCount)
+    array<int> lower = f_nearest(blocks, close, false, lowerCount)
+    int rightTime = na(lastMinuteClose) ? time : lastMinuteClose
+    f_paint(drawings, blocks, upper, 0, upperCount, rightTime)
+    f_paint(drawings, blocks, lower, upperCount, lowerCount, rightTime)
