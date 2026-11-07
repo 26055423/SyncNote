@@ -71,6 +71,18 @@ class MarketPaging(unittest.TestCase):
   self.assertIsNone(missing['earliest'])
   self.assertFalse(missing['has_more'])
 
+ def test_symbol_catalog_keeps_broker_codes_separate_and_sees_new_ingest(self):
+  self.insert(self.source,1699999900,symbol='NAS100.cash')
+  self.insert(self.source,1699999901,symbol='NAS100.cash',tf='H1')
+  self.insert('srv:Paging-B',1699999900,symbol='USTEC')
+  self.assertEqual(bars.symbols(self.db,self.source),[{'symbol':'EURUSD'},{'symbol':'NAS100.cash'},{'symbol':'XAUUSD'}])
+  self.assertEqual(bars.symbols(self.db,'srv:Paging-B'),[{'symbol':'USTEC'},{'symbol':'XAUUSD'}])
+  self.assertEqual(bars.symbols(self.db,'srv:Missing'),[])
+  self.assertEqual(bars.symbols(self.db,''),[])
+  # 无目录缓存的滞后：刚收到的一个新原始代码也立即可选。
+  self.insert(self.source,1699999902,symbol='NAS100')
+  self.assertIn({'symbol':'NAS100'},bars.symbols(self.db,self.source))
+
  def test_closed_filter_uses_broker_wall_now_and_excludes_forming_or_future_rows(self):
   self.insert(self.source,self.now-30)
   self.insert(self.source,self.now+60)

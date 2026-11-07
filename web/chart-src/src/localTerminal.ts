@@ -16,6 +16,7 @@ export interface LocalCommand {
   partial?: boolean;
 }
 export interface LocalTerminalState {
+  symbol_switching?: boolean;
   historyWarnings: Record<string, string>;
   phase: LocalPhase;
   error: string;
@@ -79,6 +80,16 @@ export interface NoteReviewBars {
   time_basis: 'broker_server';
   bars: number[][];
 }
+export interface MarketSymbol {
+  symbol: string;
+  description: string;
+  path?: string;
+  trade_mode?: number;
+  digits?: number;
+  volume_min?: number;
+  volume_max?: number;
+  volume_step?: number;
+}
 
 const freshState = (): LocalTerminalState => ({
   historyWarnings: {},
@@ -114,13 +125,14 @@ export function localTradeAccess(state: LocalTerminalState) {
     caps: '当前 EA 仍启用了旧版额度限制，请更新并重新加载 EA',
   };
   const lockedReason = state.phase !== 'connected' ? ''
-    : state.read_only ? '已连接，但 EA 不接单：' + (blockText[state.block_reason ?? ''] ?? '请在 MT5 核对本机授权与 EA 状态')
+    : state.symbol_switching ? '品种正在切换，请等待行情就绪。'
+      : state.read_only ? '已连接，但 EA 不接单：' + (blockText[state.block_reason ?? ''] ?? '请在 MT5 核对本机授权与 EA 状态')
       : !accountAllowed ? '已连接，但 EA 未授权当前账户交易，请核对本机授权与 EA 版本'
         : unresolved ? '已连接，但还有未确认的指令，先核对结果再下单' : '';
   return {
     accountAllowed, canManage, lockedReason,
     realTrading: accountAllowed && !state.demo,
-    enabled: state.phase === 'connected' && !state.read_only && accountAllowed && !unresolved,
+    enabled: state.phase === 'connected' && !state.symbol_switching && !state.read_only && accountAllowed && !unresolved,
   };
 }
 
@@ -139,6 +151,7 @@ export class LocalTerminal {
   private deadlines = new Map<string, number>();
   private noteReads = new Map<string, { resolve: (page: NoteHistoryPage) => void; reject: (error: Error) => void; cleanup: () => void }>();
   private reviewReads = new Map<string, { resolve: (page: NoteReviewBars) => void; reject: (error: Error) => void; cleanup: () => void }>();
+  private symbolReads = new Map<string, { type: string; symbol?: string; resolve: (message: Record<string, any>) => void; reject: (error: Error) => void; cleanup: () => void }>();
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -211,6 +224,11 @@ export class LocalTerminal {
       read.reject(new Error('本机连接已结束，复盘同步已暂停。'));
     }
     this.reviewReads.clear();
+    for (const read of this.symbolReads.values()) {
+      read.cleanup();
+      read.reject(new Error('本机连接已结束，品种请求已取消。'));
+    }
+    this.symbolReads.clear();
     const commands = this.state.commands.map((command) => terminalStates.has(command.state) ? command : {
       ...command, state: 'uncertain', error: '连接已结束，执行结果待核实；不会自动重发。',
     });
@@ -290,6 +308,7 @@ export class LocalTerminal {
       const bootstrap = this.pendingHistory && message.request_id === this.pendingHistory.id;
       const read = this.noteReads.get(message.request_id);
       const reviewRead = this.reviewReads.get(message.request_id);
+      const symbolRead = this.symbolReads.get(message.request_id);
       if (bootstrap && this.pendingHistory) {
         const tf = this.pendingHistory.tf;
         const detail = String(message.error || message.message || '');
@@ -297,7 +316,7 @@ export class LocalTerminal {
         this.update({ historyWarnings: { ...this.state.historyWarnings, [tf]: `${tf}：${reason}。` } });
         this.nextHistory();
       }
-      if (String(message.code || '') === 'AUTH_REQUIRED' || (!bootstrap && !read && !reviewRead && !String(message.code || '').startsWith('HISTORY_'))) {
+      if (String(message.code || '') === 'AUTH_REQUIRED' || (!bootstrap && !read && !reviewRead && !symbolRead && !String(message.code || '').startsWith('HISTORY_'))) {
         this.update({ error: String(message.error || message.message || 'EA 拒绝了请求。'), ...(this.state.phase === 'confirming' ? { phase: 'pairing' as const } : {}) });
       }
       if (read) {
@@ -310,6 +329,11 @@ export class LocalTerminal {
         reviewRead.cleanup();
         reviewRead.reject(new EaBarsError(String(message.code || 'HISTORY_UNAVAILABLE'), String(message.error || message.message || '')));
       }
+      if (symbolRead) {
+        this.symbolReads.delete(message.request_id);
+        symbolRead.cleanup();
+        symbolRead.reject(Object.assign(new Error(String(message.error || message.message || '品种请求失败。')), { code: 'EA_REJECTED' }));
+      }
     } else if (message.type === 'account_changed' || message.type === 'revoked') {
       this.disconnect();
       this.update({ phase: 'error', error: 'MT5 账户或本地授权已改变，请重新配对。' });
@@ -321,7 +345,30 @@ export class LocalTerminal {
         this.update({ phase: 'error', error: 'MT5 会话已改变，请重新配对并核查未完成指令。' });
         return;
       }
-      if (message.type === 'snapshot') {
+      if (message.type === 'symbols' || message.type === 'symbol_selected') {
+        const read = this.symbolReads.get(message.request_id);
+        if (!read || read.type !== message.type) return;
+        if (read.symbol && read.symbol !== message.symbol) return;
+        this.symbolReads.delete(message.request_id);
+        read.cleanup();
+        if (message.type === 'symbol_selected') {
+          this.historyQueue = [];
+          if (this.pendingHistory) window.clearTimeout(this.pendingHistory.timer);
+          this.pendingHistory = null;
+          for (const pending of [...this.noteReads.values(), ...this.reviewReads.values()]) {
+            pending.cleanup(); pending.reject(new Error('品种已切换，请重新读取历史。'));
+          }
+          this.noteReads.clear(); this.reviewReads.clear();
+          this.update({ symbol: message.symbol, symbol_switching: false, tick: null, bars: {}, historyWarnings: {}, history_ready: false });
+          this.send({ type: 'snapshot' });
+          this.historyQueue = [...tfKeys];
+          this.nextHistory();
+        }
+        read.resolve(message);
+      } else if (message.type === 'snapshot') {
+        if (message.symbol && message.symbol !== this.state.symbol) return;
+        if (message.tick?.symbol && message.tick.symbol !== this.state.symbol) return;
+        if (this.state.symbol_switching) return;
         this.update({
           account: message.account && typeof message.account === 'object' ? message.account : this.state.account,
           positions: Array.isArray(message.positions) ? message.positions : this.state.positions,
@@ -341,6 +388,7 @@ export class LocalTerminal {
           server_offset_sec: typeof message.server_offset_sec === 'number' && Number.isFinite(message.server_offset_sec) ? message.server_offset_sec : this.state.server_offset_sec,
         });
       } else if (message.type === 'tick') {
+        if (this.state.symbol_switching || ((message.tick?.symbol || message.symbol) && (message.tick?.symbol || message.symbol) !== this.state.symbol)) return;
         this.update({ tick: message.tick || message });
       } else if (message.type === 'bars' && tfKeys.has(message.tf) && Array.isArray(message.bars)) {
         const reviewRead = this.reviewReads.get(message.request_id);
@@ -350,6 +398,7 @@ export class LocalTerminal {
           reviewRead.resolve(message as NoteReviewBars);
           return;
         }
+        if (this.state.symbol_switching || (message.symbol && message.symbol !== this.state.symbol)) return;
         if (!this.pendingHistory || message.request_id !== this.pendingHistory.id || message.tf !== this.pendingHistory.tf) return;
         // range 模式的时间是券商墙钟，减掉券商偏移后与复盘/成交的 UTC 对齐。
         const shift = (message as { range?: unknown }).range ? (this.state.server_offset_sec || 0) : 0;
@@ -357,6 +406,7 @@ export class LocalTerminal {
         this.update({ bars: { ...this.state.bars, [message.tf]: rows.slice(-3000) } });
         this.nextHistory();
       } else if (message.type === 'bar' && tfKeys.has(message.tf)) {
+        if (this.state.symbol_switching || (message.symbol && message.symbol !== this.state.symbol)) return;
         const row = Array.isArray(message.bar) ? message.bar : [message.bar_time, message.open, message.high, message.low, message.close, message.tick_volume || 0];
         if (!row.slice(0, 5).every((value: unknown) => typeof value === 'number' && Number.isFinite(value))) return;
         const previous = this.state.bars[message.tf] || [];
@@ -402,6 +452,7 @@ export class LocalTerminal {
     this.deadlines.set(id, timer);
   }
   command(action: string, payload: Record<string, unknown>) {
+    if (this.state.symbol_switching) throw new Error('品种正在切换，请等待行情就绪。');
     const { accountAllowed, canManage } = localTradeAccess(this.state);
     if (this.state.phase !== 'connected' || this.state.read_only || !accountAllowed || !this.state.capabilities.includes(action)) throw new Error('本机 EA 当前未授权此账户交易操作。');
     if ((action === 'close' || action === 'modify') && !canManage) throw new Error('净额或账户模式未确认：EA 未明确授权持仓管理。');
@@ -422,6 +473,66 @@ export class LocalTerminal {
     const command = this.state.commands.find((row) => row.command_id === command_id);
     if (!command || command.account_id !== this.state.account_id || command.server !== this.state.server) throw new Error('请连接这条指令对应的 MT5 账户后查询。');
     this.send({ type: 'command_status', command_id });
+  }
+  private symbolRequest(type: 'symbols' | 'select_symbol', payload: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, any>> {
+    if (this.state.phase !== 'connected') return Promise.reject(new Error('请先连接本机 MT5。'));
+    if (!this.state.features.includes(type)) return Promise.reject(new Error('当前 EA 不支持品种切换，请更新至 SyncTrade 1.108 或更新版本。'));
+    if (signal?.aborted) return Promise.reject(new Error('品种请求已取消。'));
+    const id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const cancel = () => {
+        const read = this.symbolReads.get(id);
+        if (!read) return;
+        this.symbolReads.delete(id); read.cleanup(); reject(new Error('品种请求已取消。'));
+      };
+      const timer = window.setTimeout(() => {
+        const read = this.symbolReads.get(id);
+        if (!read) return;
+        this.symbolReads.delete(id); read.cleanup(); reject(new Error('读取或切换品种超时，请重新连接核对。'));
+      }, 15000);
+      const cleanup = () => { window.clearTimeout(timer); signal?.removeEventListener('abort', cancel); };
+      this.symbolReads.set(id, { type: type === 'symbols' ? 'symbols' : 'symbol_selected', symbol: type === 'select_symbol' ? String(payload.symbol) : undefined, resolve, reject, cleanup });
+      signal?.addEventListener('abort', cancel, { once: true });
+      try { this.send({ type, request_id: id, ...payload }); }
+      catch (error) { this.symbolReads.delete(id); cleanup(); reject(error instanceof Error ? error : new Error(String(error))); }
+    });
+  }
+  async requestSymbols(signal?: AbortSignal): Promise<MarketSymbol[]> {
+    const rows = new Map<string, MarketSymbol>();
+    const session = `${this.state.instance_id}\n${this.state.account_id}\n${this.state.server}\n${this.state.epoch}`;
+    const checkSession = () => {
+      if (this.state.phase !== 'connected' || session !== `${this.state.instance_id}\n${this.state.account_id}\n${this.state.server}\n${this.state.epoch}`) throw new Error('MT5 会话已改变，请重新读取品种。');
+    };
+    let offset = 0;
+    for (let page = 0; page < 1000; page += 1) {
+      checkSession();
+      const message = await this.symbolRequest('symbols', { offset, limit: 200 }, signal);
+      checkSession();
+      if (!Array.isArray(message.symbols)) throw new Error('EA 品种列表格式不正确。');
+      for (const row of message.symbols) if (typeof row?.symbol === 'string' && row.symbol) {
+        rows.set(row.symbol, { ...row, description: typeof row.description === 'string' ? row.description : '' });
+      }
+      if (message.has_more !== true) return [...rows.values()];
+      if (!Number.isInteger(message.next_offset) || message.next_offset <= offset) throw new Error('EA 品种列表分页没有推进。');
+      offset = message.next_offset;
+    }
+    throw new Error('EA 品种列表超出读取范围。');
+  }
+  async selectSymbol(symbol: string, signal?: AbortSignal): Promise<void> {
+    if (!symbol || symbol.length > 128) throw new Error('请选择 MT5 中的完整品种代码。');
+    if (symbol === this.state.symbol) return;
+    if (this.state.symbol_switching) throw new Error('正在切换品种，请稍候。');
+    if (this.state.commands.some((command) => command.account_id === this.state.account_id && command.server === this.state.server && unresolvedStates.has(command.state))) throw new Error('当前账户有指令的结果尚未确认，请先查询或在 MT5 中核实。');
+    if (!this.state.features.includes('select_symbol')) throw new Error('当前 EA 不支持品种切换，请更新至 SyncTrade 1.108 或更新版本。');
+    this.update({ symbol_switching: true });
+    try { await this.symbolRequest('select_symbol', { symbol }, signal); }
+    catch (error) {
+      if ((error as { code?: string }).code !== 'EA_REJECTED') {
+        this.disconnect();
+        this.update({ phase: 'error', error: '品种切换未获确认，已断开连接；请重新连接核对当前品种。' });
+      }
+      throw error;
+    } finally { this.update({ symbol_switching: false }); }
   }
   requestHistoryPage(range: { from_server: number; to_server: number }, cursor: string, signal: AbortSignal): Promise<NoteHistoryPage> {
     if (this.state.phase !== 'connected' || !this.state.features.includes('history')) return Promise.reject(new Error('当前 EA 不支持笔记历史同步，请使用 SyncTrade（SyncNote Pro）或独立 SyncNote EA。'));

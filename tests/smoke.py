@@ -392,6 +392,13 @@ def main():
    ensure(legacy['source']=='srv:'+server_name,'trades without a server fall back to their owner feed')
    market=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&from='+str(window_from)+'&to='+str(window_to))
    ensure(market['source']=='srv:'+server_name and market['feed']['account']==mt5_account,'market bars use the owner feed')
+   symbol_catalog=alice.request('/api/market/symbols')
+   ensure(symbol_catalog['source']==feed['source'] and symbol_catalog['symbols']==[{'symbol':'XAUUSD'}] and not symbol_catalog['public'],'market symbols default to the personal source')
+   empty_symbols=alice.request('/api/market/symbols?source=srv:Missing-symbol-fixture')
+   ensure(empty_symbols['symbols']==[],'missing symbol source does not borrow codes from another broker')
+   public_symbols=admin.request('/api/market/symbols?source='+feed['source'])
+   ensure(public_symbols['symbols']==symbol_catalog['symbols'] and public_symbols['public'] and 'account' not in public_symbols,'public symbol catalog contains no account identity')
+   anon.request('/api/market/symbols',status=401)
    # 出库统一按 UTC：没记过偏移的源当作 0，记过的话每根 bar 都要被平移。
    probe=sqlite3.connect(':memory:');probe.row_factory=sqlite3.Row;_bars.initialize(probe)
    _bars.set_source_offset(probe,'srv:probe',3600,0)

@@ -249,7 +249,7 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
       <div className="risk">
         <div className="risk-head">
           <span>风险预览</span>
-          <span className="dim" title={`${CONTRACT_SIZE} oz per lot（估算）`}>估算</span>
+          <span className="dim" title={/^XAUUSD(?:[._-].*|m|c)?$/i.test(symbol) ? `${CONTRACT_SIZE} oz per lot（估算）` : '金额需按当前券商合约规格计算'}>估算</span>
         </div>
         <div className="risk-grid">
           <div><em>参考入场</em><b>{entry > 0 ? fmtPrice(entry) : '—'}</b></div>
@@ -268,7 +268,7 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
         {preview.problems.length > 0 ? (
           <ul className="problems">{preview.problems.map((p) => <li key={p}>{p}</li>)}</ul>
         ) : null}
-        {!/XAU/i.test(symbol) ? <p className="hint">风险预览按 XAUUSD 100 oz/手估算；非黄金品种的数值仅作参考。</p> : null}
+        {!/^XAUUSD(?:[._-].*|m|c)?$/i.test(symbol) ? <p className="hint">金额预览请以 MT5 当前品种的合约规格为准。</p> : null}
       </div>
 
       <label className="arm">

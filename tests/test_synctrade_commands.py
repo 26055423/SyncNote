@@ -40,7 +40,7 @@ class CommandHandlerTests(unittest.TestCase):
   no_quotas=re.search(r'^#define\s+LOCAL_NO_QUOTAS\s+[^\r\n]+',source,re.M)
   if not no_quotas:raise AssertionError('Production quota policy declaration not found')
   selected=['LocalDemo','LocalReal','LocalHedging','LocalManageAllowed','LocalCanTrade','BlockReason','NewOrderAction','NettingOrderAllowed','ExposureAllowed','OpeningAllowed','VolumeValid','PriceValid','StopsValid','PendingStopsValid','PendingSideValid','SetFill','HandleTradeCommand']
-  fragments=[(ROOT/'tests/cpp/synctrade_runtime.hpp').read_text(encoding='utf-8'),no_quotas.group(0),cpp_source(inputs),cpp_source((ROOT/'bridge/SyncNoteLocalJson.mqh').read_text(encoding='utf-8-sig'))]
+  fragments=[(ROOT/'tests/cpp/synctrade_runtime.hpp').read_text(encoding='utf-8'),no_quotas.group(0),cpp_source(inputs),'string g_symbol="XAUUSD";',cpp_source((ROOT/'bridge/SyncNoteLocalJson.mqh').read_text(encoding='utf-8-sig'))]
   policy=ROOT/'bridge/SyncNoteLocalSafety.mqh'
   if policy.exists():fragments.append(cpp_source(policy.read_text(encoding='utf-8-sig')))
   fragments.append((ROOT/'tests/cpp/synctrade_commands_support.hpp').read_text(encoding='utf-8'))
@@ -62,6 +62,14 @@ class CommandHandlerTests(unittest.TestCase):
    with self.subTest(scenario=scenario):
     result=self.run_command(scenario);self.assertEqual(result['sends'],1,result)
     self.assertEqual(result['result']['state'],'completed',result)
+
+ def test_selected_symbol_accepts_nasdaq_and_rejects_old_gold_command(self):
+  result=self.run_command('nas100',symbol='NAS100')
+  self.assertEqual(result['sends'],1,result)
+  self.assertEqual(result['result']['state'],'completed',result)
+  result=self.run_command('nas100',symbol='XAUUSD')
+  self.assertEqual(result['sends'],0,result)
+  self.assertEqual(result['result']['state'],'rejected',result)
 
  def test_permission_deadline_and_durable_intent_fail_closed(self):
   for scenario in ('permissions_off','expired','journal_failed','expires_during_flush','account_changes_during_flush'):

@@ -490,6 +490,12 @@ class Handler(BaseHTTPRequestHandler):
                         payload=bars.tracks_utc(db,str(trade.get('symbol') or ''),source,start,end)
                         payload['active_source']=source
                         return self.reply(payload)
+                    if path=='/api/market/symbols':
+                        # 与行情读取共用登录权限和 source 范围；只返回原始代码，不暴露账户。
+                        feed=bars.feed_of(db,uid)
+                        source=str(q.get('source',[''])[0]) or (feed['source'] if feed else '')
+                        if not source:source=bars.public_source(db) or ''
+                        return self.reply({'source':source,'symbols':bars.symbols(db,source),'public':not feed or source!=feed['source']})
                     if path=='/api/market/bars':
                         # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
                         # `limit=N&before=UTC秒`：同轨道向前按根数分页，不按日历窗口切。

@@ -24,6 +24,7 @@ import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
 import { localHistorySync } from './localHistorySync';
 import { backfillBars, useBackfillBars } from './backfillBars';
+import { SymbolPicker, type MarketSymbol } from './SymbolPicker';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -228,7 +229,45 @@ export default function App() {
   const storedTipsRef = useRef<Partial<Record<BaseTimeframe, number>>>({});
   const liveRef = useRef<ReviewCharts>({});
   const liveListeners = useRef(new Set<() => void>());
-  const liveSymbol = localConnected ? local.symbol : 'XAUUSD';
+  const [storedSymbol, setStoredSymbol] = useState('XAUUSD');
+  const [symbolOptions, setSymbolOptions] = useState<MarketSymbol[]>([]);
+  const [symbolsLoading, setSymbolsLoading] = useState(false);
+  const [symbolsError, setSymbolsError] = useState('');
+  const [catalogSource, setCatalogSource] = useState<string | null>(null);
+  const [catalogRevision, setCatalogRevision] = useState(0);
+  const liveSymbol = localConnected ? local.symbol : storedSymbol;
+  const cacheScope = `${board?.user.id ?? ''}:${liveSymbol}:${localConnected ? local.server + ':' + local.epoch : 'cloud'}:${catalogSource ?? ''}`;
+  const [loadedCacheScope, setLoadedCacheScope] = useState(cacheScope);
+  useEffect(() => {
+    if (localConnected) setStoredSymbol(local.symbol);
+  }, [localConnected, local.symbol]);
+  useEffect(() => {
+    if (!board?.user.id) return;
+    const controller = new AbortController();
+    setSymbolsLoading(true); setSymbolsError(''); setSymbolOptions([]); setCatalogSource(null);
+    void (async () => {
+      try {
+        if (localConnected) {
+          if (!local.features.includes('symbols')) throw new Error('更新 SyncTrade EA 后即可在网页切换品种。');
+          const symbols = await localTerminal.requestSymbols(controller.signal);
+          if (!controller.signal.aborted) setSymbolOptions(symbols);
+        } else {
+          const result = await api<{ source: string | null; symbols: MarketSymbol[] }>('/api/market/symbols', undefined, { signal: controller.signal });
+          if (controller.signal.aborted) return;
+          setSymbolOptions(result.symbols); setCatalogSource(result.source);
+          setStoredSymbol((current) => result.symbols.some((item) => item.symbol === current) ? current : result.symbols[0]?.symbol ?? current);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) setSymbolsError(error instanceof Error ? error.message : '品种列表读取失败');
+      } finally { if (!controller.signal.aborted) setSymbolsLoading(false); }
+    })();
+    return () => controller.abort();
+  }, [board?.user.id, localConnected, local.instance_id, local.epoch, local.features.includes('symbols'), catalogRevision]);
+  const chooseSymbol = async (symbol: string) => {
+    if (localConnected) await localTerminal.selectSymbol(symbol);
+    else setStoredSymbol(symbol);
+    setError('');
+  };
   const liveProvider = useMemo(
     () => new LiveProvider(liveRef.current, liveSymbol, (listener) => {
       liveListeners.current.add(listener);
@@ -360,10 +399,11 @@ export default function App() {
     trackSourceRef.current = null;
     storedTipsRef.current = {};
     setMarketInfo(null);
-  }, [liveSymbol, board?.user.id]);
+    setLoadedCacheScope(cacheScope);
+  }, [cacheScope]);
 
   useEffect(() => {
-    if (!localConnected || !marketInfo?.server || marketInfo.server !== local.server) return;
+    if (!localConnected || (marketInfo?.server && marketInfo.server !== local.server)) return;
     // 新 K 线不该把画面推走：先记下每格可见范围，合并后再恢复（自动滚动关闭时）。
     const keepRanges = chartRef.current?.captureRanges();
     const beforeLast: Record<string, number> = {};
@@ -374,10 +414,10 @@ export default function App() {
     // tick 变化也进这里:把最新报价插值进当前蜡烛,蜡烛在两次 EA bar 推送之间随 tick 伸缩。
     // EA 只更新每周期最新一根；历史深度由服务器数据轨道决定。
     const recent = toChartBars(local.bars);
-    for (const base of Object.keys(recent) as BaseTimeframe[]) recent[base] = recent[base]?.slice(-1);
+    for (const base of Object.keys(recent) as BaseTimeframe[]) if (liveRef.current[base]?.length) recent[base] = recent[base]?.slice(-1);
     const incoming = applyTickToBars(recent, local.tick);
     mergeLiveHistory(liveRef.current, incoming);
-    if (trackSourceRef.current && Object.keys(incoming).length) {
+    if (Object.keys(incoming).length) {
       setLiveBars(liveRef.current);
     }
     for (const listener of liveListeners.current) listener();
@@ -482,11 +522,14 @@ export default function App() {
       try {
         const catalog = await api<TrackCatalog>('/api/data/sources');
         if (!alive) return;
-        const source = selectTrackSource(catalog, liveSymbol, localConnected ? local.server : undefined);
+        const source = !localConnected && catalogSource ? catalogSource : selectTrackSource(catalog, liveSymbol, localConnected ? local.server : undefined);
         if (!source) {
-          for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as BaseTimeframe];
-          trackSourceRef.current = null; setLiveBars(null); setMarketSeries(null); setMarketInfo(null);
-          setError('当前券商的数据轨道尚未入库这个品种的行情。');
+          if (!localConnected) {
+            for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as BaseTimeframe];
+            setLiveBars(null);
+          }
+          trackSourceRef.current = null; setMarketSeries(null); setMarketInfo(null);
+          if (!localConnected) setError('当前券商的数据轨道尚未入库这个品种的行情。');
           return;
         }
         if (trackSourceRef.current && trackSourceRef.current !== source) {
@@ -520,7 +563,12 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [mode, localConnected, local.server, local.epoch, liveSymbol, board?.user.id]);
+  }, [mode, localConnected, local.server, local.epoch, liveSymbol, board?.user.id, catalogSource, catalogRevision]);
+  useEffect(() => {
+    if (mode !== 'live' || !localConnected || marketInfo?.source) return;
+    const timer = window.setInterval(() => setCatalogRevision((revision) => revision + 1), 15000);
+    return () => window.clearInterval(timer);
+  }, [mode, localConnected, marketInfo?.source]);
 
   // 补采入库后刷新轨道尾部。通常每周期只取两根，发现落后一段才拉近期窗口补齐。
   const refreshTrackRef = useRef<((forceRecent?: boolean) => void) | null>(null);
@@ -882,7 +930,7 @@ export default function App() {
   // 否则整笔复盘会定位到平仓时间上去（实测 #43442851 就是这样）。
   const openedSeconds = entry?.review?.opened
     ?? (typeof entry?.review?.trade?.opened_server === 'number' ? entry.review.trade.opened_server - serverOffsetSec : null);
-  const liveSeries = liveBars ?? marketSeries;
+  const liveSeries = loadedCacheScope === cacheScope ? liveBars ?? marketSeries : null;
   const marketAnchorMs = (() => {
     const rows = marketSeries?.M1 ?? [];
     const last = rows[rows.length - 1];
@@ -1234,7 +1282,7 @@ export default function App() {
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
         <div className="status-row" title={reviewingOther ? '正在复盘的是别人的交易；账户数字已隐藏，避免和对方混淆' : '我的账户'}>
-          <span className="stat"><b className="stat-v">{mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'}</b></span>
+          {mode === 'live' ? <SymbolPicker symbol={liveSymbol} symbols={symbolOptions} loading={symbolsLoading} error={symbolsError} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} /> : <span className="stat"><b className="stat-v">{trade.symbol || 'XAUUSD'}</b></span>}
           {/* 没有任何账户数据源时不显示净值/余额，避免把云端旧快照当成本机状态。 */}
           {reviewingOther || !(localConnected || mt5Online) ? null : (
             <>
@@ -1399,7 +1447,7 @@ export default function App() {
                 forceLayout={narrow ? '1' : undefined}
                 charts={liveSeries}
                 provider={liveBars ? liveProvider : undefined}
-                providerName={marketInfo?.source ? trackProviderName(marketInfo.source) : 'trackpending'}
+                providerName={trackProviderName(marketInfo?.source ?? `local:${local.server}:${local.account_id}:${local.epoch}`)}
                 symbol={liveSymbol}
                 anchorMs={liveBars ? liveAnchor : marketAnchorMs}
                 savedState={null}
@@ -1520,7 +1568,7 @@ export default function App() {
         <div className="rail-body">
               {tab === 'trade' ? (
                 <div className="pane">
-                  <LocalTradePanel state={local} />
+                  <LocalTradePanel key={`${local.server}:${local.account_id}:${local.symbol}`} state={local} />
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
 
                   {/* 成交历史统一放在底部「历史」页签里，右栏不再重复列一遍。 */}

@@ -1396,7 +1396,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 }
 .unified-topbar .brand { flex: none; white-space: nowrap; }
 .unified-topbar .brand small { display: none; }
-.unified-topbar .status-row { flex: none; gap: 8px; }
+.unified-topbar .status-row { flex: none; gap: 8px; overflow: visible; }
 .unified-topbar .top-actions { flex: none; width: auto; margin-left: 0; gap: 5px; }
 .unified-topbar.toolbar-aligned .top-actions { position: absolute; right: 10px; }
 @media (max-width: 1200px) {
@@ -1522,6 +1522,23 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .unified-topbar .top-actions .settings-trigger { height: 30px; padding: 0 8px; font-size: 13px; }
 .unified-topbar .top-actions > a::before { content: none; }
 .mt5-header-connection { display: flex; align-items: center; gap: 5px; flex: none; }
+.symbol-picker { position: relative; flex: none; }
+.symbol-trigger { display: inline-flex; align-items: center; gap: 6px; }
+.symbol-picker-panel { position: absolute; top: calc(100% + 10px); left: 0; z-index: 100; width: min(330px, calc(100vw - 40px)); padding: 14px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); color: var(--text); box-shadow: var(--shadow); white-space: normal; }
+.symbol-picker-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 14px; }
+.symbol-picker-panel input { width: 100%; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 6px; padding: 9px 10px; background: var(--well); color: var(--text); font: inherit; font-size: 12px; }
+.symbol-picker-panel input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.symbol-picker-note { font-size: 11px; color: var(--dim); line-height: 1.6; margin: 10px 0; }
+.symbol-picker-list { max-height: min(360px, 45dvh); overflow-y: auto; }
+.symbol-picker-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.symbol-picker-row:hover { background: var(--hover); }
+.symbol-picker-row.is-active { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }
+.symbol-picker-row strong { display: block; font-size: 13px; }
+.symbol-picker-row small { display: block; margin-top: 3px; font-size: 11px; color: var(--dim); }
+.unified-topbar:has(.replay-bar) .symbol-picker-panel { position: fixed; top: 48px; left: 10px; }
+@media (max-width: 900px) {
+  .symbol-picker-panel { position: fixed; top: 48px; left: 10px; }
+}
 .unified-topbar .mt5-connection-trigger.on,
 .unified-topbar .mt5-connection-trigger.on:hover { color: var(--good-ink); background: var(--good-bg); }
 .mt5-connect-dialog {

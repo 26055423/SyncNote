@@ -3,7 +3,7 @@
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading requires local pairing consent and durable journals; account-type and quota gates are disabled.
 #property copyright "SyncTrade"
-#property version "1.107"
+#property version "1.108"
 #property strict
 #property description "Windows localhost EA. Local pairing consent required; no account-type or quota gates."
 
@@ -13,7 +13,7 @@
 #include "SyncTradeRisk.mqh"
 
 input string InpAllowedOrigin="https://sync-trade.top"; // Exact HTTPS website origin, no trailing slash
-input string InpSymbol="XAUUSD";                      // Exact broker symbol, suffix included
+input string InpSymbol="";                            // Initial exact broker symbol; empty = current chart
 input bool InpAllowTrading=false;                    // Explicit local opt-in for all trading
 input bool InpAllowRealTrading=false;                 // Allow a REAL account (needs the two caps below)
 input double InpRealMaxLots=0.05;                     // Real account: max lots per order (0 = block real trading)
@@ -38,13 +38,15 @@ input int InpTickPushMs=100;                           // Tick push interval (50
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.107"
+#define LOCAL_VERSION "1.108"
 // Only account-type and volume/exposure/daily quotas are removed. Other protections remain.
 #define LOCAL_NO_QUOTAS true
 #define JOURNAL_MAX 10000
 #define PAIR_TTL_MS 120000
 
 string g_account="",g_server="",g_epoch="",g_instance="",g_token="";
+string g_symbol="";
+long g_symbol_tick_msc=0;
 string g_pair_code="";
 ulong g_pair_until=0;
 int g_pair_attempts=0,g_pending_peer=-1,g_session_peer=-1;
@@ -171,14 +173,14 @@ bool NewOrderAction(const string action)
 bool PendingSideValid(const string action,const bool buy,const double price,const MqlTick &tick)
 {
    if(price<=0 || tick.bid<=0 || tick.ask<=0) return false;
-   double distance=(double)SymbolInfoInteger(InpSymbol,SYMBOL_TRADE_STOPS_LEVEL)*SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
+   double distance=(double)SymbolInfoInteger(g_symbol,SYMBOL_TRADE_STOPS_LEVEL)*SymbolInfoDouble(g_symbol,SYMBOL_POINT);
    if(action=="limit") return buy ? price<tick.ask && tick.ask-price>=distance : price>tick.bid && price-tick.bid>=distance;
    if(action=="stop") return buy ? price>tick.ask && price-tick.ask>=distance : price<tick.bid && tick.bid-price>=distance;
    return false;
 }
 string IdentityFields()
 {
-   return "\"product\":\"SyncTrade\",\"features\":[\"history\"],\"instance_id\":"+JStr(g_instance)+",\"account_id\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+",\"epoch\":"+JStr(g_epoch)+
+   return "\"product\":\"SyncTrade\",\"features\":[\"history\",\"symbols\",\"select_symbol\"],\"instance_id\":"+JStr(g_instance)+",\"account_id\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+",\"epoch\":"+JStr(g_epoch)+
       ",\"demo\":"+JsonBool(LocalDemo())+",\"hedging\":"+JsonBool(LocalHedging()) +",\"netting_manage\":"+JsonBool(InpAllowNettingManage) +",\"real_no_caps\":"+JsonBool(InpRealNoCaps) +",\"unrestricted\":"+JsonBool(InpUnrestricted) +",\"block_reason\":"+JStr(BlockReason()) +",\"real_trading\":"+JsonBool(LocalReal() && LocalCanTrade())+
       ",\"quota_unrestricted\":"+JsonBool(LOCAL_NO_QUOTAS)+",\"read_only\":"+JsonBool(!LocalCanTrade())+",\"trade_enabled\":"+JsonBool(LocalCanTrade())+",\"capabilities\":"+CapabilitiesJson()+",\"server_offset_sec\":"+IntegerToString((long)TimeTradeServer()-(long)TimeGMT())+",\"account_key\":"+JStr(HashHex(g_server+"\n"+g_account));
 }
@@ -308,7 +310,7 @@ void PaintStatus()
    lines[n]=mode;n++;
    lines[n]="网站来源: "+InpAllowedOrigin;n++;
    lines[n]="账号: "+g_account+" @ "+g_server;n++;
-   lines[n]="品种: "+InpSymbol;n++;
+   lines[n]="品种: "+g_symbol;n++;
    if(!active){lines[n]="配对码: "+g_pair_code+" ("+IntegerToString((long)MathMax(0,((long)g_pair_until-(long)GetTickCount64())/1000))+"s)";n++;}
    else {lines[n]="网页关闭或断线后，将清理授权并恢复等待连接。";n++;}
    lines[n]="只监听 127.0.0.1:18765; 不读取/上传交易密码";n++;
@@ -441,7 +443,7 @@ void LocalOpened(const int index)
    for(int i=0;i<LOCAL_PEERS;i++)
       if(i!=index && g_local_peers[i].upgraded && !g_local_peers[i].closing) {WsClose(index,1008);return;}
    WsText(index,"{\"type\":\"hello\",\"protocol\":\"tongpin-local\",\"version\":1,\"ea_version\":"+JStr(LOCAL_VERSION)+
-      ",\"instance_id\":"+JStr(g_instance)+",\"pairing_required\":true,\"product\":\"SyncTrade\",\"features\":[\"history\"]}");
+      ",\"instance_id\":"+JStr(g_instance)+",\"pairing_required\":true,\"product\":\"SyncTrade\",\"features\":[\"history\",\"symbols\",\"select_symbol\"]}");
 }
 void LocalClosed(const int index)
 {
@@ -467,8 +469,8 @@ void UpdatePairingState()
 }
 string TickJson()
 {
-   MqlTick t;if(!SymbolInfoTick(InpSymbol,t)) return "null";
-   return "{\"symbol\":"+JStr(InpSymbol)+",\"bid\":"+JNum(t.bid,g_digits)+",\"ask\":"+JNum(t.ask,g_digits)+
+   MqlTick t;if(!SymbolInfoTick(g_symbol,t)) return "null";
+   return "{\"symbol\":"+JStr(g_symbol)+",\"bid\":"+JNum(t.bid,g_digits)+",\"ask\":"+JNum(t.ask,g_digits)+
       ",\"time\":"+IntegerToString((long)t.time-g_offset)+",\"time_msc\":"+IntegerToString(t.time_msc-g_offset*1000)+"}";
 }
 string PositionsJson()
@@ -506,13 +508,25 @@ string OrdersJson()
    }
    return rows+"]";
 }
+string SymbolSpecJson()
+{
+   return "{\"contract_size\":"+JNum(SymbolInfoDouble(g_symbol,SYMBOL_TRADE_CONTRACT_SIZE),8)+
+      ",\"tick_size\":"+JNum(SymbolInfoDouble(g_symbol,SYMBOL_TRADE_TICK_SIZE),12)+
+      ",\"tick_value_profit\":"+JNum(SymbolInfoDouble(g_symbol,SYMBOL_TRADE_TICK_VALUE_PROFIT),8)+
+      ",\"tick_value_loss\":"+JNum(SymbolInfoDouble(g_symbol,SYMBOL_TRADE_TICK_VALUE_LOSS),8)+
+      ",\"volume_min\":"+JNum(SymbolInfoDouble(g_symbol,SYMBOL_VOLUME_MIN),8)+
+      ",\"volume_max\":"+JNum(SymbolInfoDouble(g_symbol,SYMBOL_VOLUME_MAX),8)+
+      ",\"volume_step\":"+JNum(SymbolInfoDouble(g_symbol,SYMBOL_VOLUME_STEP),8)+
+      ",\"digits\":"+IntegerToString(g_digits)+",\"currency_profit\":"+JStr(SymbolInfoString(g_symbol,SYMBOL_CURRENCY_PROFIT))+
+      ",\"trade_calc_mode\":"+IntegerToString(SymbolInfoInteger(g_symbol,SYMBOL_TRADE_CALC_MODE))+"}";
+}
 void SendSnapshot(const int peer)
 {
    string account="{\"login\":"+JStr(g_account)+",\"server\":"+JStr(g_server)+
       ",\"balance\":"+JNum(AccountInfoDouble(ACCOUNT_BALANCE),2)+",\"equity\":"+JNum(AccountInfoDouble(ACCOUNT_EQUITY),2)+
       ",\"margin\":"+JNum(AccountInfoDouble(ACCOUNT_MARGIN),2)+",\"free_margin\":"+JNum(AccountInfoDouble(ACCOUNT_MARGIN_FREE),2)+
       ",\"profit\":"+JNum(AccountInfoDouble(ACCOUNT_PROFIT),2)+",\"currency\":"+JStr(AccountInfoString(ACCOUNT_CURRENCY))+"}";
-   WsText(peer,"{\"type\":\"snapshot\","+IdentityFields()+",\"account\":"+account+",\"positions\":"+PositionsJson()+
+   WsText(peer,"{\"type\":\"snapshot\",\"symbol\":"+JStr(g_symbol)+",\"symbol_spec\":"+SymbolSpecJson()+","+IdentityFields()+",\"account\":"+account+",\"positions\":"+PositionsJson()+
       ",\"orders\":"+OrdersJson()+",\"tick\":"+TickJson()+",\"bars\":{},\"server_time_ms\":"+IntegerToString(LocalUtcMs())+"}");
 }
 ENUM_TIMEFRAMES LocalTf(const string tf)
@@ -525,8 +539,8 @@ void BeginBars(const int peer,const string js)
    string request_id="",tf="",symbol="";double limit=300,from=0,to=0;
    JsonGetString(js,"request_id",request_id);JsonGetString(js,"tf",tf);JsonGetString(js,"symbol",symbol);
    bool ranged=JsonValuePos(js,"from_server")>=0 || JsonValuePos(js,"to_server")>=0;
-   if(symbol=="") symbol=InpSymbol;
-   if(!ranged && symbol!=InpSymbol) {LocalError(peer,"SYMBOL","Live bars only use the configured EA symbol",request_id);return;}
+   if(symbol=="") symbol=g_symbol;
+   if(!ranged && symbol!=g_symbol) {LocalError(peer,"SYMBOL","Live bars only use the configured EA symbol",request_id);return;}
    if(StringLen(symbol)>80 || StringLen(request_id)>80 || LocalTf(tf)==PERIOD_CURRENT ||
       !JsonNumber(js,"limit",limit,ranged?2000:300) || limit<1 || limit>(ranged?2000:500) || limit!=MathFloor(limit))
    {LocalError(peer,"BARS_REQUEST","Expected symbol/tf and limit 1..500 (range: 1..2000)",request_id);return;}
@@ -647,10 +661,10 @@ void SendCurrentBars(const int peer)
    for(int i=0;i<4;i++)
    {
       ENUM_TIMEFRAMES tf=LocalTf(names[i]);
-      if(!SeriesInfoInteger(InpSymbol,tf,SERIES_SYNCHRONIZED)) continue;
+      if(!SeriesInfoInteger(g_symbol,tf,SERIES_SYNCHRONIZED)) continue;
       MqlRates rates[];
-      if(CopyRates(InpSymbol,tf,0,1,rates)!=1) continue;
-      WsText(peer,"{\"type\":\"bar\",\"symbol\":"+JStr(InpSymbol)+",\"tf\":"+JStr(names[i])+
+      if(CopyRates(g_symbol,tf,0,1,rates)!=1) continue;
+      WsText(peer,"{\"type\":\"bar\",\"symbol\":"+JStr(g_symbol)+",\"tf\":"+JStr(names[i])+
          ",\"bar_time\":"+IntegerToString((long)rates[0].time-g_offset)+",\"open\":"+JNum(rates[0].open,g_digits)+
          ",\"high\":"+JNum(rates[0].high,g_digits)+",\"low\":"+JNum(rates[0].low,g_digits)+
          ",\"close\":"+JNum(rates[0].close,g_digits)+",\"volume\":"+IntegerToString(rates[0].tick_volume)+"}");
@@ -668,7 +682,7 @@ bool Authenticated(const int peer,const string js)
 }
 bool VolumeValid(const double volume)
 {
-   double minv=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_MIN),maxv=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_MAX),step=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_STEP);
+   double minv=SymbolInfoDouble(g_symbol,SYMBOL_VOLUME_MIN),maxv=SymbolInfoDouble(g_symbol,SYMBOL_VOLUME_MAX),step=SymbolInfoDouble(g_symbol,SYMBOL_VOLUME_STEP);
    double lot_cap=(LOCAL_NO_QUOTAS||(LocalReal()&&InpRealNoCaps)||InpUnrestricted)?maxv:InpMaxOrderLots;
    if(!MathIsValidNumber(volume)||step<=0 || volume<minv-1e-9 || volume>maxv+1e-9 || volume>lot_cap+1e-9) return false;
    return MathAbs(volume/step-MathRound(volume/step))<1e-6;
@@ -677,13 +691,13 @@ bool PriceValid(const double price)
 {
    if(!MathIsValidNumber(price)||price<0) return false;
    if(price==0) return true;
-   double step=SymbolInfoDouble(InpSymbol,SYMBOL_TRADE_TICK_SIZE);
+   double step=SymbolInfoDouble(g_symbol,SYMBOL_TRADE_TICK_SIZE);
    return step>0 && MathAbs(price/step-MathRound(price/step))<1e-5;
 }
 bool StopsValid(const bool buy,const double sl,const double tp,const MqlTick &tick)
 {
    if(!PriceValid(sl)||!PriceValid(tp)) return false;
-   double distance=(double)SymbolInfoInteger(InpSymbol,SYMBOL_TRADE_STOPS_LEVEL)*SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
+   double distance=(double)SymbolInfoInteger(g_symbol,SYMBOL_TRADE_STOPS_LEVEL)*SymbolInfoDouble(g_symbol,SYMBOL_POINT);
    double reference=buy ? tick.bid : tick.ask;
    if(sl>0 && (buy ? sl>=reference || reference-sl<distance : sl<=reference || sl-reference<distance)) return false;
    if(tp>0 && (buy ? tp<=reference || tp-reference<distance : tp>=reference || reference-tp<distance)) return false;
@@ -691,17 +705,17 @@ bool StopsValid(const bool buy,const double sl,const double tp,const MqlTick &ti
 }
 bool SetFill(MqlTradeRequest &request)
 {
-   long flags=SymbolInfoInteger(InpSymbol,SYMBOL_FILLING_MODE);
+   long flags=SymbolInfoInteger(g_symbol,SYMBOL_FILLING_MODE);
    if((flags&SYMBOL_FILLING_IOC)!=0) request.type_filling=ORDER_FILLING_IOC;
    else if((flags&SYMBOL_FILLING_FOK)!=0) request.type_filling=ORDER_FILLING_FOK;
-   else if(SymbolInfoInteger(InpSymbol,SYMBOL_TRADE_EXEMODE)!=SYMBOL_TRADE_EXECUTION_MARKET) request.type_filling=ORDER_FILLING_RETURN;
+   else if(SymbolInfoInteger(g_symbol,SYMBOL_TRADE_EXEMODE)!=SYMBOL_TRADE_EXECUTION_MARKET) request.type_filling=ORDER_FILLING_RETURN;
    else return false;
    return true;
 }
 bool PendingStopsValid(const bool buy,const double price,const double sl,const double tp)
 {
    if(price<=0 || !PriceValid(price) || !PriceValid(sl) || !PriceValid(tp)) return false;
-   double distance=(double)SymbolInfoInteger(InpSymbol,SYMBOL_TRADE_STOPS_LEVEL)*SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
+   double distance=(double)SymbolInfoInteger(g_symbol,SYMBOL_TRADE_STOPS_LEVEL)*SymbolInfoDouble(g_symbol,SYMBOL_POINT);
    if(sl>0 && (buy ? sl>=price || price-sl<distance : sl<=price || sl-price<distance)) return false;
    if(tp>0 && (buy ? tp<=price || tp-price<distance : tp>=price || price-tp<distance)) return false;
    return true;
@@ -716,7 +730,7 @@ bool NettingOrderAllowed(const string action,string &error)
       if(PositionGetTicket(i)==0) {error="Cannot verify current position ownership";return false;}
       string symbol=PositionGetString(POSITION_SYMBOL);
       if(symbol=="") {error="Cannot read current position symbol";return false;}
-      if(symbol!=InpSymbol) continue;
+      if(symbol!=g_symbol) continue;
    if(!InpUnrestricted && (!InpAllowNettingManage || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)))
       {error="NETTING_EXPOSURE: a new order could change an existing position outside local consent";return false;}
    }
@@ -725,7 +739,7 @@ bool NettingOrderAllowed(const string action,string &error)
       if(OrderGetTicket(i)==0) {error="Cannot verify current pending-order ownership";return false;}
       string symbol=OrderGetString(ORDER_SYMBOL);
       if(symbol=="") {error="Cannot read pending-order symbol";return false;}
-      if(symbol!=InpSymbol) continue;
+      if(symbol!=g_symbol) continue;
       if(!InpAllowNettingManage || (InpManageOwnMagicOnly && OrderGetInteger(ORDER_MAGIC)!=InpMagic))
       {error="NETTING_EXPOSURE: a pending order may affect this net position";return false;}
    }
@@ -739,7 +753,7 @@ bool ExposureAllowed(const double volume,string &error)
       if(PositionGetTicket(i)==0) {error="Cannot read current exposure";return false;}
       string symbol=PositionGetString(POSITION_SYMBOL);
       if(symbol=="") {error="Cannot read current exposure symbol";return false;}
-      if(symbol!=InpSymbol) continue;
+      if(symbol!=g_symbol) continue;
       double amount=PositionGetDouble(POSITION_VOLUME);
       if(!MathIsValidNumber(amount) || amount<0) {error="Invalid current exposure";return false;}
       exposure+=amount;
@@ -749,7 +763,7 @@ bool ExposureAllowed(const double volume,string &error)
       if(OrderGetTicket(i)==0) {error="Cannot read pending exposure";return false;}
       string symbol=OrderGetString(ORDER_SYMBOL);
       if(symbol=="") {error="Cannot read pending exposure symbol";return false;}
-      if(symbol!=InpSymbol) continue;
+      if(symbol!=g_symbol) continue;
       double amount=OrderGetDouble(ORDER_VOLUME_CURRENT);
       if(!MathIsValidNumber(amount) || amount<0) {error="Invalid pending exposure";return false;}
       exposure+=amount;
@@ -768,7 +782,7 @@ bool OpeningAllowed(const string action,const double volume,string &error)
    if(LocalReal() && !InpRealNoCaps && (InpRealMaxLots<=0 || volume>InpRealMaxLots+1e-9))
    {error="Real account lot cap exceeded";return false;}
    // 不限额时每日已实现亏损也不设上限（LossAllowed 的 cap=0 表示不启用）。
-   return g_risk.LossAllowed(InpSymbol,InpRealNoCaps?0.0:InpMaxDailyLoss,error);
+   return g_risk.LossAllowed(g_symbol,InpRealNoCaps?0.0:InpMaxDailyLoss,error);
 }
 void HandleTradeCommand(const int peer,const string js)
 {
@@ -798,17 +812,17 @@ void HandleTradeCommand(const int peer,const string js)
    else if(!TerminalInfoInteger(TERMINAL_CONNECTED)||!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)||!MQLInfoInteger(MQL_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)||!AccountInfoInteger(ACCOUNT_TRADE_EXPERT)) error="MT5 trading permissions or connection unavailable";
    else if(!LocalDeadlineValid(expires,received_utc)) error="Command expired or deadline is more than 30s ahead; check computer clock";
    else if(GetTickCount64()-g_last_command<500) error="Local command rate limit: wait 500ms";
-   else if(symbol!="" && symbol!=InpSymbol) error="Symbol is not allowed by this EA";
+   else if(symbol!="" && symbol!=g_symbol) error="Symbol is not allowed by this EA";
    else if(deviation<0 || deviation>InpMaxDeviationPoints || deviation!=MathFloor(deviation)) error="Deviation exceeds local limit";
    else if(!PriceValid(sl)||!PriceValid(tp)) error="SL/TP must be finite non-negative prices on tick grid";
    MqlTradeRequest request;MqlTradeResult result;ZeroMemory(request);ZeroMemory(result);
    MqlTick tick;ZeroMemory(tick);
-   if(error=="" && (!SymbolInfoTick(InpSymbol,tick)||tick.bid<=0||tick.ask<=0)) error="No current broker quote";
-   double point=SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
+   if(error=="" && (!SymbolInfoTick(g_symbol,tick)||tick.bid<=0||tick.ask<=0)) error="No current broker quote";
+   double point=SymbolInfoDouble(g_symbol,SYMBOL_POINT);
    if(error=="" && action=="market" && InpMaxSpreadPoints>0 && (point<=0 || (tick.ask-tick.bid)/point>InpMaxSpreadPoints)) error="Spread exceeds local limit";
    if(error=="" && action=="market")
    {
-      if(symbol!=InpSymbol || (side!="buy" && side!="sell") || !VolumeValid(volume)) error="Market order symbol/side/volume invalid";
+      if(symbol!=g_symbol || (side!="buy" && side!="sell") || !VolumeValid(volume)) error="Market order symbol/side/volume invalid";
       bool buy=side=="buy";
       if(error=="" && !StopsValid(buy,sl,tp,tick)) error="SL/TP side or broker stop distance invalid";
       request.action=TRADE_ACTION_DEAL;request.type=buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -818,7 +832,7 @@ void HandleTradeCommand(const int peer,const string js)
    {
       bool buy=side=="buy";
       if(!InpAllowPending) error="Pending orders are disabled by this EA";
-      else if(symbol!=InpSymbol || (side!="buy" && side!="sell") || !VolumeValid(volume)) error="Pending order symbol/side/volume invalid";
+      else if(symbol!=g_symbol || (side!="buy" && side!="sell") || !VolumeValid(volume)) error="Pending order symbol/side/volume invalid";
       else if(!PriceValid(price)) error="Pending price must be a positive price on the tick grid";
       else if(!PendingSideValid(action,buy,price,tick)) error="Pending price is on the wrong side of the market (buy limit < ask, buy stop > ask)";
       else if(!PendingStopsValid(buy,price,sl,tp)) error="Pending SL/TP must use the entry price and broker stop distance";
@@ -842,7 +856,7 @@ void HandleTradeCommand(const int peer,const string js)
    {
       if(!InpAllowClose || !JsonId(js,"position_ticket",position) || !PositionSelectByTicket((ulong)StringToInteger(position))) error="Close disabled or position not found";
       else if(!LocalManageAllowed()) error="Netting account: close is disabled (ownership cannot be proven). Set InpAllowNettingManage=true to override";
-      else if(PositionGetString(POSITION_SYMBOL)!=InpSymbol || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)) error="Position is outside local ownership policy";
+      else if(PositionGetString(POSITION_SYMBOL)!=g_symbol || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)) error="Position is outside local ownership policy";
       else
       {
          double current=PositionGetDouble(POSITION_VOLUME);double amount=volume==0 ? current : volume;
@@ -856,19 +870,19 @@ void HandleTradeCommand(const int peer,const string js)
    else if(error=="" && action=="cancel")
    {
       if(!InpAllowCancel || !JsonId(js,"order_ticket",order) || !OrderSelect((ulong)StringToInteger(order))) error="Cancel disabled or pending order not found";
-      else if(OrderGetString(ORDER_SYMBOL)!=InpSymbol || (InpManageOwnMagicOnly && OrderGetInteger(ORDER_MAGIC)!=InpMagic)) error="Order is outside local ownership policy";
+      else if(OrderGetString(ORDER_SYMBOL)!=g_symbol || (InpManageOwnMagicOnly && OrderGetInteger(ORDER_MAGIC)!=InpMagic)) error="Order is outside local ownership policy";
       else {request.action=TRADE_ACTION_REMOVE;request.order=(ulong)StringToInteger(order);}
    }
    else if(error=="" && action=="modify")
    {
       if(!InpAllowModify || !JsonId(js,"ticket",ticket) || !PositionSelectByTicket((ulong)StringToInteger(ticket))) error="Modify disabled or position not found; pending-order modification is not supported in v1";
       else if(!LocalManageAllowed()) error="Netting account: modify is disabled (ownership cannot be proven). Set InpAllowNettingManage=true to override";
-      else if(PositionGetString(POSITION_SYMBOL)!=InpSymbol || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)) error="Position is outside local ownership policy";
+      else if(PositionGetString(POSITION_SYMBOL)!=g_symbol || (InpManageOwnMagicOnly && PositionGetInteger(POSITION_MAGIC)!=InpMagic)) error="Position is outside local ownership policy";
       else if(JsonValuePos(js,"sl")<0 || JsonValuePos(js,"tp")<0 || !StopsValid(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY,sl,tp,tick)) error="Modify requires explicit valid sl and tp (0 clears)";
       else {request.action=TRADE_ACTION_SLTP;request.position=(ulong)StringToInteger(ticket);request.sl=sl;request.tp=tp;}
    }
    else if(error=="") error="Unsupported trading action";
-   request.symbol=InpSymbol;request.deviation=(ulong)MathMax(0,deviation);
+   request.symbol=g_symbol;request.deviation=(ulong)MathMax(0,deviation);
    request.comment="tpl:"+StringSubstr(id,0,26);
    if(error=="" && request.action==TRADE_ACTION_DEAL && !SetFill(request)) error="No supported broker filling mode; no retry will be attempted";
    if(error=="" && !OpeningAllowed(action,volume,error) && error=="") error="New order risk check failed";
@@ -984,6 +998,54 @@ void ReconcileCommand(const int index)
    g_commands[index].result=CommandResult(g_commands[index].id,state,reason,code,order,deal,price,volume);
    JournalAppend(index);
 }
+// The broker's exact code is the authority. Names/aliases in the website must
+// never rewrite an execution symbol or combine two broker feeds.
+void SendSymbols(const int peer,const string js)
+{
+   string request_id="";double offset=0,limit=100;
+   JsonGetString(js,"request_id",request_id);
+   int total=SymbolsTotal(false);
+   if(StringLen(request_id)>80 || !JsonNumber(js,"offset",offset,0) || !JsonNumber(js,"limit",limit,100) ||
+      offset<0 || offset>total || offset!=MathFloor(offset) || limit<1 || limit>200 || limit!=MathFloor(limit))
+   {LocalError(peer,"SYMBOLS_REQUEST","Expected offset >= 0 and limit 1..200",request_id);return;}
+   int end=(int)MathMin(total,offset+limit);string rows="";
+   for(int i=(int)offset;i<end;i++)
+   {
+      string symbol=SymbolName(i,false);if(symbol=="") continue;
+      if(rows!="") rows+=",";
+      rows+="{\"symbol\":"+JStr(symbol)+",\"description\":"+JStr(SymbolInfoString(symbol,SYMBOL_DESCRIPTION))+
+         ",\"path\":"+JStr(SymbolInfoString(symbol,SYMBOL_PATH))+",\"selected\":"+JsonBool(SymbolInfoInteger(symbol,SYMBOL_SELECT)!=0)+
+         ",\"trade_mode\":"+IntegerToString(SymbolInfoInteger(symbol,SYMBOL_TRADE_MODE))+
+         ",\"digits\":"+IntegerToString(SymbolInfoInteger(symbol,SYMBOL_DIGITS))+
+         ",\"volume_min\":"+JNum(SymbolInfoDouble(symbol,SYMBOL_VOLUME_MIN),8)+
+         ",\"volume_max\":"+JNum(SymbolInfoDouble(symbol,SYMBOL_VOLUME_MAX),8)+
+         ",\"volume_step\":"+JNum(SymbolInfoDouble(symbol,SYMBOL_VOLUME_STEP),8)+"}";
+   }
+   WsText(peer,"{\"type\":\"symbols\",\"request_id\":"+JStr(request_id)+",\"symbols\":["+rows+
+      "],\"next_offset\":"+IntegerToString(end)+",\"has_more\":"+JsonBool(end<total)+"}");
+}
+void SelectSymbol(const int peer,const string js)
+{
+   string request_id="",symbol="";JsonGetString(js,"request_id",request_id);
+   if(StringLen(request_id)>80 || !JsonGetString(js,"symbol",symbol) || symbol=="" || StringLen(symbol)>80)
+   {LocalError(peer,"SYMBOL_REQUEST","Expected an exact broker symbol",request_id);return;}
+   for(int i=0;i<ArraySize(g_commands);i++)
+      if(g_commands[i].state!="completed" && g_commands[i].state!="rejected")
+      {LocalError(peer,"COMMAND_UNRESOLVED","Resolve pending command results before switching symbols",request_id);return;}
+   if(!SymbolSelect(symbol,true))
+   {LocalError(peer,"SYMBOL_UNAVAILABLE","This exact symbol is unavailable on the connected broker account",request_id);return;}
+   // Cancel reads before changing identity; stale responses must not populate
+   // the new chart. The browser can retry independent review reads afterwards.
+   if(g_bars_job.active)
+   {
+      LocalError(g_bars_job.peer,"SYMBOL_CHANGED","Symbol changed; retry the bars request",g_bars_job.request_id);
+      g_bars_job.active=false;ArrayResize(g_bars_job.rates,0);g_bars_job.rows="";
+   }
+   g_symbol=symbol;g_digits=(int)SymbolInfoInteger(g_symbol,SYMBOL_DIGITS);
+   g_symbol_tick_msc=0;g_last_tick=0;g_last_bar=0;g_bar_dirty=true;g_force_snapshot=true;
+   WsText(peer,"{\"type\":\"symbol_selected\",\"request_id\":"+JStr(request_id)+",\"symbol\":"+JStr(g_symbol)+","+IdentityFields()+"}");
+   SendSnapshot(peer);PaintStatus();
+}
 void LocalMessage(const int peer,const string js)
 {
    AccountChanged();
@@ -1003,6 +1065,14 @@ void LocalMessage(const int peer,const string js)
    }
    if(!Authenticated(peer,js)) return;
    string allowed="type,token,account_id,server,epoch";
+   if(type=="symbols" || type=="select_symbol")
+   {
+      string rid="";JsonGetString(js,"request_id",rid);
+      if(!JsonKeysAllowed(allowed+(type=="symbols" ? ",request_id,offset,limit" : ",request_id,symbol")))
+      {LocalError(peer,"FIELDS","Unknown symbol request field",rid);return;}
+      if(type=="symbols") SendSymbols(peer,js);else SelectSymbol(peer,js);
+      return;
+   }
    if(type=="command") {HandleTradeCommand(peer,js);g_history_defer_until=GetTickCount64()+1000;return;}
    if(type=="history")
    {
@@ -1036,6 +1106,7 @@ void LocalMessage(const int peer,const string js)
 }
 int OnInit()
 {
+   g_symbol=InpSymbol=="" ? _Symbol : InpSymbol;
    if(!MQLInfoInteger(MQL_DLLS_ALLOWED)) {Print("SyncTrade: allow system DLL imports in EA settings");return INIT_FAILED;}
    if(StringFind(InpAllowedOrigin,"https://")!=0 || StringFind(InpAllowedOrigin,"/",8)>=0 || StringFind(InpAllowedOrigin," ")>=0 || StringFind(InpAllowedOrigin,"*")>=0)
    {Print("SyncTrade: allowed origin must be one exact https origin without path/wildcards");return INIT_PARAMETERS_INCORRECT;}
@@ -1043,8 +1114,8 @@ int OnInit()
       !MathIsValidNumber(InpMaxDailyLoss) || InpRealMaxLots<0 || InpRealMaxOrdersPerDay<0 || InpMaxDailyLoss<0 ||
       (InpMaxOrderLots<=0 && !InpUnrestricted) || (InpMaxSymbolLots<InpMaxOrderLots && !InpUnrestricted))) ||
       !MathIsValidNumber(InpMaxPendingDeviationPct) || InpMaxPendingDeviationPct<0 ||
-      InpMaxDeviationPoints<0 || InpMaxSpreadPoints<0 || InpMagic<0 || !SymbolSelect(InpSymbol,true)) return INIT_PARAMETERS_INCORRECT;
-   g_digits=(int)SymbolInfoInteger(InpSymbol,SYMBOL_DIGITS);
+      InpMaxDeviationPoints<0 || InpMaxSpreadPoints<0 || InpMagic<0 || !SymbolSelect(g_symbol,true)) return INIT_PARAMETERS_INCORRECT;
+   g_digits=(int)SymbolInfoInteger(g_symbol,SYMBOL_DIGITS);
    g_bar_push_ms=(int)MathMax(50,MathMin(1000,InpBarPushMs));
    g_tick_push_ms=(int)MathMax(50,MathMin(1000,InpTickPushMs));
    g_instance=RandomHex(16);
@@ -1074,6 +1145,9 @@ void OnTimer()
    if(GetTickCount64()>=g_history_defer_until && GetTickCount64()-now<5) {PumpBars();PumpHistory();}
    if(now-g_last_tick>=(ulong)g_tick_push_ms)
    {
+      MqlTick selected_tick;
+      if(SymbolInfoTick(g_symbol,selected_tick) && selected_tick.time_msc!=g_symbol_tick_msc)
+      {g_symbol_tick_msc=selected_tick.time_msc;g_bar_dirty=true;}
       g_last_tick=now;string tick=TickJson();
       for(int i=0;i<LOCAL_PEERS;i++)
          if(g_local_peers[i].authenticated && ArraySize(g_local_peers[i].tx)-g_local_peers[i].tx_offset<32768)
@@ -1123,7 +1197,7 @@ void OnChartEvent(const int id,const long &lparam,const double &dparam,const str
    int peer=g_pending_peer;g_pending_peer=-1;g_pending_until=0;
    g_session_peer=peer;g_local_peers[peer].authenticated=true;
    g_bar_dirty=true;g_last_bar=0;  // 配对后立即推一帧当前 K 线，不等下一个 tick
-   WsText(peer,"{\"type\":\"paired\",\"token\":"+JStr(g_token)+","+IdentityFields()+",\"symbol\":"+JStr(InpSymbol)+"}");
+   WsText(peer,"{\"type\":\"paired\",\"token\":"+JStr(g_token)+",\"symbol\":"+JStr(g_symbol)+","+IdentityFields()+"}");
    if(!HasActiveSession()) {PaintStatus();return;}
    g_pair_code="--------";g_pair_until=0;
    SendSnapshot(peer);PaintStatus();
@@ -1133,9 +1207,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
 {
    AccountChanged();
    g_force_snapshot=true;
+   int trans_digits=trans.symbol=="" ? g_digits : (int)SymbolInfoInteger(trans.symbol,SYMBOL_DIGITS);
    string event="{\"type\":\"trade\",\"trans_type\":"+IntegerToString((long)trans.type)+",\"order\":"+JStr(IntegerToString((long)trans.order))+
       ",\"deal\":"+JStr(IntegerToString((long)trans.deal))+",\"position\":"+JStr(IntegerToString((long)trans.position))+
-      ",\"symbol\":"+JStr(trans.symbol)+",\"price\":"+JNum(trans.price,g_digits)+",\"volume\":"+JNum(trans.volume,8)+"}";
+      ",\"symbol\":"+JStr(trans.symbol)+",\"price\":"+JNum(trans.price,trans_digits)+",\"volume\":"+JNum(trans.volume,8)+"}";
    for(int i=0;i<LOCAL_PEERS;i++) if(g_local_peers[i].authenticated) WsText(i,event);
    for(int i=ArraySize(g_commands)-1;i>=0;i--)
    {

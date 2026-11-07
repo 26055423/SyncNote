@@ -25,6 +25,16 @@ function loadComponent(path) {
   vm.runInNewContext(code, { exports, require: (name) => name.startsWith('.') ? loadComponent(resolve(dirname(path), `${name}.ts`)) : require(name) });
   return exports;
 }
+test('Nasdaq risk preview never inherits the gold contract multiplier', () => {
+  const { previewRisk } = loadComponent(resolve(dirname(fileURLToPath(import.meta.url)), '../src/trade/risk.ts'));
+  const result = previewRisk({ action: 'market', side: 'buy', symbol: 'USTEC', volume: 1, price: 0, sl: 19900, tp: 20200 }, { bid: 19999, ask: 20000 }, { currency: 'USD', balance: 10000, leverage: 100 }, true);
+  assert.equal(result.notional, 0);
+  assert.equal(result.marginUsd, null);
+  assert.equal(result.riskUsd, null);
+  assert.equal(result.rewardUsd, null);
+  assert.equal(result.riskPctBalance, null);
+  assert.equal(result.rr, 2);
+});
 function fixture(secure = true) {
   const timers = new Map();
   let timerId = 0;
@@ -59,6 +69,90 @@ function fixture(secure = true) {
   }
   return { client, connect, Socket, timers, access: exports.localTradeAccess };
 }
+
+test('broker catalog pages preserve exact codes and authenticated request scope', async () => {
+  const { client, connect } = fixture();
+  const socket = connect('1001', { features: ['symbols', 'select_symbol'] });
+  const result = client.requestSymbols();
+  const first = socket.sent.at(-1);
+  assert.equal(first.type, 'symbols');
+  assert.equal(first.token, 'test-session-only');
+  assert.equal(first.offset, 0);
+  socket.emit({ type: 'symbols', request_id: first.request_id, symbols: [{ symbol: 'USTEC.m', description: 'US Tech 100' }], has_more: true, next_offset: 200 });
+  await Promise.resolve();
+  const second = socket.sent.at(-1);
+  assert.equal(second.offset, 200);
+  socket.emit({ type: 'symbols', request_id: second.request_id, symbols: [{ symbol: 'NAS100', description: 'Nasdaq 100 CFD' }], has_more: false });
+  assert.deepEqual(Array.from(await result, (row) => row.symbol), ['USTEC.m', 'NAS100']);
+});
+
+test('symbol switch blocks orders then clears old series and rejects delayed old quotes', async () => {
+  const { client, connect, access } = fixture();
+  const socket = connect('1001', { features: ['symbols', 'select_symbol'] });
+  const oldHistory = socket.sent.at(-1);
+  socket.emit({ type: 'bar', symbol: 'XAUUSD', tf: '1m', bar: [100, 1, 2, 1, 2] });
+  const selected = client.selectSymbol('USTEC.m');
+  const request = socket.sent.at(-1);
+  assert.equal(request.type, 'select_symbol');
+  assert.equal(client.getSnapshot().symbol, 'XAUUSD');
+  assert.equal(access(client.getSnapshot()).enabled, false);
+  assert.throws(() => client.command('market', { symbol: 'XAUUSD' }), /正在切换/);
+  socket.emit({ type: 'symbol_selected', request_id: request.request_id, symbol: 'USTEC.m' });
+  await selected;
+  assert.equal(client.getSnapshot().symbol, 'USTEC.m');
+  assert.equal(Object.keys(client.getSnapshot().bars).length, 0);
+  assert.equal(client.getSnapshot().tick, null);
+  assert.equal(socket.sent.at(-1).symbol, 'USTEC.m');
+  socket.emit({ type: 'bars', request_id: oldHistory.request_id, symbol: 'XAUUSD', tf: '1m', bars: [[100, 1, 2, 1, 2]] });
+  socket.emit({ type: 'bar', symbol: 'XAUUSD', tf: '1m', bar: [200, 1, 2, 1, 2] });
+  socket.emit({ type: 'tick', tick: { symbol: 'XAUUSD', bid: 1, ask: 2 } });
+  socket.emit({ type: 'snapshot', symbol: 'XAUUSD', tick: { symbol: 'XAUUSD', bid: 1, ask: 2 }, account: { marker: 'stale' } });
+  assert.equal(Object.keys(client.getSnapshot().bars).length, 0);
+  assert.equal(client.getSnapshot().tick, null);
+  assert.equal(client.getSnapshot().account.marker, undefined);
+  socket.emit({ type: 'bar', symbol: 'USTEC.m', tf: '1m', bar: [200, 100, 102, 99, 101] });
+  assert.equal(client.getSnapshot().bars['1m'][0][1], 100);
+});
+
+test('unknown order results prevent symbol switching and old EA never receives unsupported frames', async () => {
+  const old = fixture();
+  const oldSocket = old.connect();
+  const sent = oldSocket.sent.length;
+  await assert.rejects(old.client.requestSymbols(), /1\.108/);
+  await assert.rejects(old.client.selectSymbol('USTEC'), /1\.108/);
+  assert.equal(oldSocket.sent.length, sent);
+  const { client, connect } = fixture();
+  const socket = connect('1001', { features: ['symbols', 'select_symbol'] });
+  client.command('market', { symbol: 'XAUUSD', side: 'buy', volume: 0.01 });
+  await assert.rejects(client.selectSymbol('USTEC'), /结果尚未确认/);
+  assert.equal(socket.sent.at(-1).type, 'command');
+});
+
+test('catalog disconnect rejects pending reads and switch timeout fails closed', async () => {
+  const { client, connect, timers } = fixture();
+  connect('1001', { features: ['symbols', 'select_symbol'] });
+  const catalog = client.requestSymbols();
+  client.disconnect();
+  await assert.rejects(catalog, /连接已结束/);
+  connect('1001', { features: ['symbols', 'select_symbol'] });
+  const selected = client.selectSymbol('USTEC');
+  const timer = [...timers.values()].find((row) => row.ms === 15000);
+  timer.callback();
+  await assert.rejects(selected, /超时/);
+  assert.equal(client.getSnapshot().phase, 'error');
+  assert.match(client.getSnapshot().error, /切换未获确认/);
+});
+
+test('EA rejected switch preserves current symbol and connection', async () => {
+  const { client, connect } = fixture();
+  const socket = connect('1001', { features: ['symbols', 'select_symbol'] });
+  const selected = client.selectSymbol('FAKE');
+  socket.emit({ type: 'error', request_id: socket.sent.at(-1).request_id, code: 'SYMBOL', error: 'Unavailable broker symbol' });
+  await assert.rejects(selected, /Unavailable/);
+  assert.equal(client.getSnapshot().phase, 'connected');
+  assert.equal(client.getSnapshot().symbol, 'XAUUSD');
+  assert.equal(client.getSnapshot().symbol_switching, false);
+});
 
 test('HTTP production is blocked before a local connection is opened', () => {
   const { client, Socket } = fixture(false);

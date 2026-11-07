@@ -104,15 +104,17 @@ export function previewRisk(request: OrderRequest, ref: PriceRef, account: Accou
     if (request.side === 'sell' && target >= entry) problems.push('卖单止盈需低于入场价');
   }
 
-  const notional = entry > 0 && request.volume > 0 ? entry * request.volume * CONTRACT_SIZE : 0;
+  // Other contracts must never inherit gold's 100 oz multiplier.
+  const goldEstimate = /^XAUUSD(?:[._-].*|m|c)?$/i.test(request.symbol) && (!account?.currency || account.currency === 'USD');
+  const notional = goldEstimate && entry > 0 && request.volume > 0 ? entry * request.volume * CONTRACT_SIZE : 0;
   const leverage = account && account.leverage && account.leverage > 0 ? account.leverage : 0;
   const marginUsd = notional > 0 && leverage > 0 ? notional / leverage : null;
   // 只有止损/止盈在正确一侧时才算风险收益，否则方向错了也会算出漂亮数字，误导人。
   const stopValid = entry > 0 && stop > 0 && (request.side === 'buy' ? stop < entry : stop > entry);
   const targetValid = entry > 0 && target > 0 && (request.side === 'buy' ? target > entry : target < entry);
-  const riskUsd = stopValid && request.volume > 0 ? Math.abs(entry - stop) * request.volume * CONTRACT_SIZE : null;
-  const rewardUsd = targetValid && request.volume > 0 ? Math.abs(target - entry) * request.volume * CONTRACT_SIZE : null;
-  const rr = riskUsd && riskUsd > 0 && rewardUsd != null ? rewardUsd / riskUsd : null;
+  const riskUsd = goldEstimate && stopValid && request.volume > 0 ? Math.abs(entry - stop) * request.volume * CONTRACT_SIZE : null;
+  const rewardUsd = goldEstimate && targetValid && request.volume > 0 ? Math.abs(target - entry) * request.volume * CONTRACT_SIZE : null;
+  const rr = stopValid && targetValid ? Math.abs(target - entry) / Math.abs(entry - stop) : null;
   const balance = account?.balance ?? 0;
   const riskPctBalance = riskUsd != null && balance > 0 ? (riskUsd / balance) * 100 : null;
 

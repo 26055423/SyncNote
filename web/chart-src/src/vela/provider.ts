@@ -95,7 +95,7 @@ export class ReviewProvider implements DataProvider {
   }
 
   async listSymbols() {
-    return [{ ticker: this.symbol, description: 'Gold / US Dollar', type: 'commodity' }];
+    return [{ ticker: this.symbol, description: this.symbol }];
   }
 
   async getBars(_ticker: string, timeframe: string): Promise<Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>> {
@@ -150,7 +150,7 @@ export class LiveProvider implements DataProvider {
   }
 
   async listSymbols() {
-    return [{ ticker: this.symbol, description: 'Gold / US Dollar', type: 'commodity' }];
+    return [{ ticker: this.symbol, description: this.symbol }];
   }
 
   async getBars(_ticker: string, timeframe: string): Promise<Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>> {

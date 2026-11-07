@@ -605,6 +605,21 @@ def following_utc(db, source, symbol, tf, after, limit=4000, now=None):
 
 # ---------------------------------------------------------------- 数据源目录
 
+def symbols(db, source):
+  """已入库的原始品种名；利用主键逐个 seek，避免扫描整条百万根轨道。"""
+  result = []
+  previous = ''
+  while source:
+    row = db.execute(
+      'SELECT symbol FROM bars WHERE source=? AND symbol>? ORDER BY symbol LIMIT 1',
+      (source, previous),
+    ).fetchone()
+    if not row:
+      break
+    previous = row['symbol']
+    result.append({'symbol': previous})
+  return result
+
 _CATALOG_TTL = 60.0
 _catalog_cache = {'at': 0.0, 'value': None}
 

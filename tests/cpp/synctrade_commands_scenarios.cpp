@@ -2,6 +2,7 @@ int main(int argc,char** argv){
  if(argc!=2)return 2;string scenario=argv[1];
  // Each process is a fresh synthetic account/EA runtime.
  InpAllowTrading=true;
+ if(scenario=="nas100")g_symbol="NAS100";
  if(scenario=="trading_off")InpAllowTrading=false;
  if(scenario.rfind("real",0)==0){fake_mode=ACCOUNT_TRADE_MODE_REAL;InpAllowRealTrading=true;}
  if(scenario=="real_off")InpAllowRealTrading=false;
