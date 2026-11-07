@@ -235,6 +235,7 @@ export default function App() {
   const [symbolsError, setSymbolsError] = useState('');
   const [catalogSource, setCatalogSource] = useState<string | null>(null);
   const [catalogRevision, setCatalogRevision] = useState(0);
+  const [marketRetry, setMarketRetry] = useState(0);
   const liveSymbol = localConnected ? local.symbol : storedSymbol;
   const cacheScope = `${board?.user.id ?? ''}:${liveSymbol}:${localConnected ? local.server + ':' + local.epoch : 'cloud'}:${catalogSource ?? ''}`;
   const [loadedCacheScope, setLoadedCacheScope] = useState(cacheScope);
@@ -563,10 +564,10 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [mode, localConnected, local.server, local.epoch, liveSymbol, board?.user.id, catalogSource, catalogRevision]);
+  }, [mode, localConnected, local.server, local.epoch, liveSymbol, board?.user.id, catalogSource, marketRetry]);
   useEffect(() => {
     if (mode !== 'live' || !localConnected || marketInfo?.source) return;
-    const timer = window.setInterval(() => setCatalogRevision((revision) => revision + 1), 15000);
+    const timer = window.setInterval(() => setMarketRetry((revision) => revision + 1), 15000);
     return () => window.clearInterval(timer);
   }, [mode, localConnected, marketInfo?.source]);
 
