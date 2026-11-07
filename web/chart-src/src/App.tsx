@@ -244,7 +244,7 @@ export default function App() {
   useEffect(() => {
     if (!board?.user.id) return;
     const controller = new AbortController();
-    setSymbolsLoading(true); setSymbolsError(''); setSymbolOptions([]); setCatalogSource(null);
+    setSymbolsLoading(true); setSymbolsError('');
     void (async () => {
       try {
         if (localConnected) {
