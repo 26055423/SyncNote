@@ -3,7 +3,7 @@
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading requires local pairing consent and durable journals; account-type and quota gates are disabled.
 #property copyright "SyncTrade"
-#property version "1.106"
+#property version "1.107"
 #property strict
 #property description "Windows localhost EA. Local pairing consent required; no account-type or quota gates."
 
@@ -38,7 +38,7 @@ input int InpTickPushMs=100;                           // Tick push interval (50
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.106"
+#define LOCAL_VERSION "1.107"
 // Only account-type and volume/exposure/daily quotas are removed. Other protections remain.
 #define LOCAL_NO_QUOTAS true
 #define JOURNAL_MAX 10000
@@ -285,9 +285,23 @@ void MakeButton(const string name,const string label,const int x)
    ObjectSetInteger(0,name,OBJPROP_ZORDER,100);
    ChartRedraw();
 }
+bool HasActiveSession()
+{
+   if(g_token=="" || g_session_peer<0 || g_session_peer>=LOCAL_PEERS) return false;
+   int peer=g_session_peer;
+   return g_local_peers[peer].handle!=WIN_INVALID_SOCKET && g_local_peers[peer].upgraded &&
+      g_local_peers[peer].authenticated && !g_local_peers[peer].closing && GetTickCount64()-g_local_peers[peer].seen_ms<=90000;
+}
+bool HasPendingPairing()
+{
+   if(g_token!="" || g_pending_peer<0 || g_pending_peer>=LOCAL_PEERS || GetTickCount64()>g_pending_until) return false;
+   int peer=g_pending_peer;
+   return g_local_peers[peer].handle!=WIN_INVALID_SOCKET && g_local_peers[peer].upgraded && !g_local_peers[peer].closing;
+}
 void PaintStatus()
 {
-   string mode=!LocalCanTrade() ? "READ ONLY / 只读: "+BlockReason() : (g_token=="" ? "等待本机配对授权 / 无账户类型及额度门槛" : "已获本机授权 / 无账户类型及额度门槛");
+   bool active=HasActiveSession(),pending=HasPendingPairing();
+   string mode=active?"网页已连接 · 本机行情推送中":(pending?"等待在本图表确认连接":"等待网页连接，请在网页输入配对码");
    string lines[12];
    int n=0;
    lines[n]="SyncTrade 本机 EA "+LOCAL_VERSION;n++;
@@ -295,17 +309,22 @@ void PaintStatus()
    lines[n]="网站来源: "+InpAllowedOrigin;n++;
    lines[n]="账号: "+g_account+" @ "+g_server;n++;
    lines[n]="品种: "+InpSymbol;n++;
-   lines[n]="配对码: "+g_pair_code+" ("+IntegerToString((long)MathMax(0,(long)(g_pair_until-GetTickCount64())/1000))+"s)";n++;
+   if(!active){lines[n]="配对码: "+g_pair_code+" ("+IntegerToString((long)MathMax(0,((long)g_pair_until-(long)GetTickCount64())/1000))+"s)";n++;}
+   else {lines[n]="网页关闭或断线后，将清理授权并恢复等待连接。";n++;}
    lines[n]="只监听 127.0.0.1:18765; 不读取/上传交易密码";n++;
-   if(g_pending_peer>=0){lines[n]="网站已输入正确配对码，请核对来源及账号后点击下方【允许本次连接】。";n++;}
+   if(pending){lines[n]="网站已输入正确配对码，请核对来源及账号后点击下方【允许本次连接】。";n++;}
+   if(active && !LocalCanTrade()){lines[n]="只读连接: "+BlockReason();n++;}
    if(!g_journal_ok){lines[n]="交易日志不可用，禁止交易。";n++;}
    if(!g_risk_ok){lines[n]="风控存储不可用，禁止交易。";n++;}
    Comment("");
    PanelBackground(n);
    for(int i=0;i<n;i++) PanelLabel(i,lines[i]);
+   for(int i=n;i<12;i++) ObjectDelete(0,"SyncTrade.Panel."+IntegerToString(i));
    g_panel_button_y=PanelHeightFor(n);
-   MakeButton(g_button_allow,"允许本次连接 / Allow",10);
-   MakeButton(g_button_revoke,"撤销授权 / Revoke",(int)MathRound(175.0*MathMax(100,MathMin(300,InpPanelScale))/100.0));
+   if(pending) MakeButton(g_button_allow,"允许本次连接 / Allow",10);
+   else ObjectDelete(0,g_button_allow);
+   if(active || pending) MakeButton(g_button_revoke,pending?"拒绝本次连接 / Reject":"断开并撤销授权 / Revoke",pending?(int)MathRound(175.0*MathMax(100,MathMin(300,InpPanelScale))/100.0):10);
+   else ObjectDelete(0,g_button_revoke);
    ChartRedraw();
 }
 void ClearAuthorization()
@@ -430,6 +449,21 @@ void LocalClosed(const int index)
    if(g_pending_peer==index) {g_pending_peer=-1;g_pending_until=0;}
    if(g_bars_job.active && g_bars_job.peer==index) g_bars_job.active=false;
    if(g_history_job.active && g_history_job.peer==index) {g_history_job.active=false;g_history_export.Reset();}
+   PaintStatus();
+}
+
+void UpdatePairingState()
+{
+   ulong now=GetTickCount64();
+   if(g_token!="" && !HasActiveSession()) {ClearAuthorization();NewPairCode();PaintStatus();}
+   if(g_pending_peer>=0 && !HasPendingPairing())
+   {
+      int peer=g_pending_peer;
+      if(peer<LOCAL_PEERS && g_local_peers[peer].upgraded && !g_local_peers[peer].closing)
+         LocalError(peer,"PAIR_EXPIRED","Local approval timed out");
+      g_pending_peer=-1;g_pending_until=0;NewPairCode();PaintStatus();
+   }
+   if(g_token=="" && g_pending_peer<0 && now>g_pair_until) {NewPairCode();PaintStatus();}
 }
 string TickJson()
 {
@@ -1033,11 +1067,9 @@ void OnTimer()
 {
    AccountChanged();
    ulong now=GetTickCount64();
-   if(g_pending_peer>=0 && now>g_pending_until)
-   {LocalError(g_pending_peer,"PAIR_EXPIRED","Local approval timed out");g_pending_peer=-1;}
-   if(now>g_pair_until && g_pending_peer<0) NewPairCode();
    g_offset=(long)TimeTradeServer()-(long)TimeGMT();
    WsPump(InpAllowedOrigin,LOCAL_PORT);
+   UpdatePairingState();
    // Let accepted commands settle before optional bars/history backfill.
    if(GetTickCount64()>=g_history_defer_until && GetTickCount64()-now<5) {PumpBars();PumpHistory();}
    if(now-g_last_tick>=(ulong)g_tick_push_ms)
@@ -1074,36 +1106,17 @@ void OnTick() { g_bar_dirty=true; /* 只置脏标记，网络 IO 统一在 OnTim
 void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)
 {
    if(id!=CHARTEVENT_OBJECT_CLICK) {AccountChanged();return;}
-   // 点按钮时不要先跑 AccountChanged：它可能重建配对码/重绘，把这次点击吃掉。
-   // 每一步都留痕，点不动的时候看"专家"日志就知道卡在哪一层。
-   long left=(g_pending_until>GetTickCount64()) ? (long)(g_pending_until-GetTickCount64()) : 0;
-   if(sparam==g_button_allow)
-      Print("SyncTrade: Allow clicked; pending=",g_pending_peer," left_ms=",left,
-            " upgraded=",(g_pending_peer>=0 && g_pending_peer<LOCAL_PEERS ? (string)g_local_peers[g_pending_peer].upgraded : "n/a"));
-   else if(sparam==g_button_revoke)
-      Print("SyncTrade: Revoke clicked; token=",(g_token!=""?"set":"none"));
-   else {AccountChanged();return;}
+   if(sparam!=g_button_allow && sparam!=g_button_revoke) {AccountChanged();return;}
    AccountChanged();
    if(sparam==g_button_revoke)
-   {ClearAuthorization();NewPairCode();ObjectSetInteger(0,g_button_revoke,OBJPROP_STATE,false);PaintStatus();return;}
+   {
+      if(g_token=="" && !HasPendingPairing()) {PaintStatus();return;}
+      if(HasPendingPairing()) LocalError(g_pending_peer,"PAIR_REJECTED","Local pairing was rejected");
+      ClearAuthorization();NewPairCode();ObjectSetInteger(0,g_button_revoke,OBJPROP_STATE,false);PaintStatus();return;
+   }
    ObjectSetInteger(0,g_button_allow,OBJPROP_STATE,false);
-   if(g_pending_peer<0 || g_pending_peer>=LOCAL_PEERS)
-   {
-      // 以前这里静默 return，看起来就是"点了没反应"：明确提示重新输码。
-      Print("SyncTrade: Allow ignored - no pairing request is waiting");
-      NewPairCode();PaintStatus();ChartRedraw();return;
-   }
-   if(GetTickCount64()>g_pending_until)
-   {
-      Print("SyncTrade: Allow ignored - pairing request expired");
-      LocalError(g_pending_peer,"PAIR_EXPIRED","Local approval timed out");g_pending_peer=-1;g_pending_until=0;
-      NewPairCode();PaintStatus();ChartRedraw();return;
-   }
-   if(!g_local_peers[g_pending_peer].upgraded || g_local_peers[g_pending_peer].closing)
-   {
-      Print("SyncTrade: Allow ignored - the website socket is gone, reconnect from the site");
-      g_pending_peer=-1;g_pending_until=0;PaintStatus();ChartRedraw();return;
-   }
+   // A queued/double click after approval must never rotate a live token or code.
+   if(g_token!="" || !HasPendingPairing()) {PaintStatus();return;}
    // The only route to issue a new session token is this local chart click.
    g_token=RandomHex(32);
    if(g_token=="") {LocalError(g_pending_peer,"RNG","Could not create session token");return;}
@@ -1111,7 +1124,8 @@ void OnChartEvent(const int id,const long &lparam,const double &dparam,const str
    g_session_peer=peer;g_local_peers[peer].authenticated=true;
    g_bar_dirty=true;g_last_bar=0;  // 配对后立即推一帧当前 K 线，不等下一个 tick
    WsText(peer,"{\"type\":\"paired\",\"token\":"+JStr(g_token)+","+IdentityFields()+",\"symbol\":"+JStr(InpSymbol)+"}");
-   g_pair_code="--------";g_pair_until=GetTickCount64()+PAIR_TTL_MS;
+   if(!HasActiveSession()) {PaintStatus();return;}
+   g_pair_code="--------";g_pair_until=0;
    SendSnapshot(peer);PaintStatus();
    Print("SyncTrade: pairing approved for peer ",peer);
 }
