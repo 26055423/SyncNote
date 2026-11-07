@@ -25,7 +25,7 @@
 | `sync_history.py` | 只读历史入库：原始 deal 保留，交易由服务器重建 |
 | `bars.py` | K 线序列：按券商 source 累积、只落已收盘、覆盖/缺口、轨道查询 |
 | `tools/import_bars.py` | 把导出的 CSV.gz 灌进 `bars`（幂等，导入后登记 have 覆盖） |
-| `local_ea.py` | 把 `bridge/` 打成 SyncNote / SyncTrade / 旧版三个源码包 |
+| `local_ea.py` | 把 `bridge/` 打成 SyncNote / SyncTrade 两个源码包 |
 | `web/local-ea.html` | 下载页：两款 EA 的对比、安装、权限与「关网页之后」说明 |
 | `web/chart-src/src/App.tsx` | 交易台（顶栏 / K 线 / 右侧五面板 / 底部持仓历史） |
 | `web/chart-src/src/LocalTradePanel.tsx` | 本机 MT5 连接 + 下单面板 |
@@ -115,5 +115,5 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
   群分享留言和切片保存在群消息中；为全部现有成员在同一事务中分批生成分享，新成员打开卡片时按权限补建。
 - 分享兼容限制：`review_shares` 仍按 `(owner,ticket,recipient)` 唯一，重复分享同一交易会更新共用记录，旧卡片可能打开最新分享切片；尚未迁移为每条消息独立快照。
 - **两款 EA 的差别只在"要不要交易"**：SyncNote 只读历史（关浏览器也继续传）；SyncTrade 多了本机 WS，
-  历史由浏览器代传（关网页暂停，下次补齐）。旧的 `web/SyncNoteSync.mq5` 仍会上传余额与持仓，只为兼容保留。
+  历史由浏览器代传（关网页暂停，下次补齐）。旧的单文件采集程序已下线，不再提供下载。
 - 历史重建要证据：缺开仓上下文时宁可标记「无法完整重建」，也不猜开仓价；券商改数据后旧派生交易标 `invalidated` 而不删除。

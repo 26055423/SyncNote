@@ -8,9 +8,9 @@ from local_ea import source_package
 class SourcePackageTests(unittest.TestCase):
  def fixture(self,folder,entry='#include "lib/wire.mqh"\n'):
   root=Path(folder);bridge=root/'bridge';(bridge/'lib').mkdir(parents=True)
-  (bridge/'SyncNoteLocal.mq5').write_text(entry,encoding='utf-8')
+  (bridge/'SyncNote.mq5').write_text(entry,encoding='utf-8')
   (bridge/'lib'/'wire.mqh').write_text('// protocol\n',encoding='utf-8')
-  for name in ('LOCAL_README.md','LOCAL_PROTOCOL.md'):(bridge/name).write_text('public instructions',encoding='utf-8')
+  for name in ('SyncNote_README.md','SYNCNOTE_PROTOCOL.md'):(bridge/name).write_text('public instructions',encoding='utf-8')
   (bridge/'private.key').write_text('must never ship',encoding='utf-8')
   return root
  def note_fixture(self,folder,entry='#include "lib/new-bars.mqh"\n'):
@@ -25,9 +25,9 @@ class SourcePackageTests(unittest.TestCase):
    root=self.fixture(folder);data=source_package(root)
    self.assertEqual(data,source_package(root))
    with zipfile.ZipFile(BytesIO(data)) as archive:
-    self.assertEqual(set(archive.namelist()),{'SyncNoteLocal/'+n for n in ('SyncNoteLocal.mq5','lib/wire.mqh','LOCAL_README.md','LOCAL_PROTOCOL.md','SOURCE_MANIFEST.json')})
-    manifest=json.loads(archive.read('SyncNoteLocal/SOURCE_MANIFEST.json'))
-    for name,digest in manifest['files'].items():self.assertEqual(hashlib.sha256(archive.read('SyncNoteLocal/'+name)).hexdigest(),digest)
+    self.assertEqual(set(archive.namelist()),{'SyncNote/'+n for n in ('SyncNote.mq5','lib/wire.mqh','SyncNote_README.md','SYNCNOTE_PROTOCOL.md','SOURCE_MANIFEST.json')})
+    manifest=json.loads(archive.read('SyncNote/SOURCE_MANIFEST.json'))
+    for name,digest in manifest['files'].items():self.assertEqual(hashlib.sha256(archive.read('SyncNote/'+name)).hexdigest(),digest)
  def test_include_cannot_escape_source_directory(self):
   with tempfile.TemporaryDirectory() as folder:
    root=self.fixture(folder,'#include "../outside.mqh"\n');(root/'outside.mqh').write_text('private',encoding='utf-8')
@@ -72,13 +72,11 @@ class SourcePackageTests(unittest.TestCase):
    root=self.note_fixture(folder)
    (root/'bridge'/'lib'/'nested'/'clock.mqh').write_text('#include <hidden-helper.mqh>\n',encoding='utf-8')
    with self.assertRaises(ValueError):source_package(root,'syncnote')
- def test_other_product_keeps_system_include_behavior(self):
-  for product,entry,folder_name in (('legacy','SyncNoteLocal.mq5','SyncNoteLocal'),('synctrade','SyncTrade.mq5','SyncTrade')):
-   with self.subTest(product=product),tempfile.TemporaryDirectory() as folder:
-    root=self.fixture(folder,'#include <Trade/Trade.mqh>\nCTrade trader;\n')
-    if product=='synctrade':
-     (root/'bridge'/entry).write_text('#include <Trade/Trade.mqh>\nCTrade trader;\n',encoding='utf-8')
-     for name in ('SyncTrade_README.md','SYNCNOTE_PROTOCOL.md'):(root/'bridge'/name).write_text('public instructions',encoding='utf-8')
-    with zipfile.ZipFile(BytesIO(source_package(root,product))) as archive:self.assertIn(folder_name+'/'+entry,archive.namelist())
+ def test_synctrade_keeps_system_include_behavior(self):
+  with tempfile.TemporaryDirectory() as folder:
+   root=self.fixture(folder,'#include <Trade/Trade.mqh>\nCTrade trader;\n')
+   (root/'bridge'/'SyncTrade.mq5').write_text('#include <Trade/Trade.mqh>\nCTrade trader;\n',encoding='utf-8')
+   for name in ('SyncTrade_README.md','SYNCNOTE_PROTOCOL.md','LOCAL_PROTOCOL.md'):(root/'bridge'/name).write_text('public instructions',encoding='utf-8')
+   with zipfile.ZipFile(BytesIO(source_package(root,'synctrade'))) as archive:self.assertIn('SyncTrade/SyncTrade.mq5',archive.namelist())
 
 if __name__=='__main__':unittest.main()

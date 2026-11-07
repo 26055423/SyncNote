@@ -4,12 +4,11 @@ from io import BytesIO
 from pathlib import Path
 
 PRODUCTS={
- 'legacy':('SyncNoteLocal','SyncNoteLocal.mq5',('LOCAL_README.md','LOCAL_PROTOCOL.md')),
  'syncnote':('SyncNote','SyncNote.mq5',('SyncNote_README.md','SYNCNOTE_PROTOCOL.md')),
  'synctrade':('SyncTrade','SyncTrade.mq5',('SyncTrade_README.md','SYNCNOTE_PROTOCOL.md','LOCAL_PROTOCOL.md')),
 }
 
-def source_package(root,product='legacy'):
+def source_package(root,product='syncnote'):
  if product not in PRODUCTS:raise ValueError('Unknown EA product')
  folder,entry,docs=PRODUCTS[product]
  base=(Path(root)/'bridge').resolve()

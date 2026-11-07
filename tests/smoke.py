@@ -44,12 +44,12 @@ def main():
    ensure(client_address.resolve_client_ip('127.0.0.1',{'X-Auth-Client':'203.0.113.9'})=='127.0.0.1','untrusted peer cannot spoof a client ip')
    os.environ.pop('TRUSTED_PROXY_CIDRS',None)
    for path in ('/api/state','/api/profile','/api/history','/api/invite'):anon.request(path,status=401)
-   for path in ('/login','/register','/style.css','/app.js','/downloads/SyncNoteSync.mq5','/local-ea','/local-ea.css'):ensure(len(anon.request(path))>0,'static content '+path)
-   with zipfile.ZipFile(io.BytesIO(anon.request('/downloads/syncnote-local.zip'))) as archive:
-    manifest=json.loads(archive.read('SyncNoteLocal/SOURCE_MANIFEST.json'))
-    ensure('SyncNoteLocal.mq5' in manifest['files'],'EA source entry is packaged')
+   for path in ('/login','/register','/style.css','/app.js','/local-ea','/local-ea.css'):ensure(len(anon.request(path))>0,'static content '+path)
+   with zipfile.ZipFile(io.BytesIO(anon.request('/downloads/syncnote.zip'))) as archive:
+    manifest=json.loads(archive.read('SyncNote/SOURCE_MANIFEST.json'))
+    ensure('SyncNote.mq5' in manifest['files'],'EA source entry is packaged')
     ensure(all(name.endswith(('.mq5','.mqh','.md','.json')) for name in archive.namelist()),'source download contains no executable or credential files')
-    ensure(all(hashlib.sha256(archive.read('SyncNoteLocal/'+name)).hexdigest()==digest for name,digest in manifest['files'].items()),'EA source manifest matches package')
+    ensure(all(hashlib.sha256(archive.read('SyncNote/'+name)).hexdigest()==digest for name,digest in manifest['files'].items()),'EA source manifest matches package')
    admin.request('/api/login',{'username':'admin','password':password})
    ensure(admin.request('/api/me')['user']['role']=='admin','independent owner')
    anon.request('/api/mt5/assistant',{'platform':'mac'},status=401)

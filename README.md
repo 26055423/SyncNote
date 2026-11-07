@@ -48,7 +48,7 @@ npm run build
 
 ### 本机 EA 直连网页（新增预览版）
 
-交易台右侧提供「连接本机 MT5」，安装说明在网站 `/local-ea`，源码包在 `/downloads/syncnote-local.zip`。
+交易台右侧提供「连接本机 MT5」，安装说明在网站 `/local-ea`，源码包在 `/downloads/syncnote.zip` 与 `/downloads/synctrade.zip`。
 用户自行审阅和编译 `bridge/SyncNoteLocal.mq5`，在同一台 Windows 电脑上运行 MT5 和浏览器，通过配对码及 MT5 图表本地确认授权。
 不需要 Python 网关或自定义 DLL；需要允许源码中列明的 Windows 系统 DLL 调用。网页不收集 MT5 密码。
 
@@ -65,9 +65,9 @@ EA 默认只读。旧 SyncNoteLocal 保持模拟对冲账户边界；SyncTrade 1
 - **EA 直连服务器（推荐，架构已跑通）**：`ea_hub.py` 在服务器上监听 `8788`，EA 用同频的连接码握手后长期保持连接，网页直接读它的实时状态。WebBridge.mq5 里把 `InpHost` 改成本站地址、`InpPort` 改 `8788`、`InpToken` 填连接码即可；协议（NDJSON v1）一行不用改。需要在安全组放行 TCP 8788，正式使用前还要加 TLS（等域名）。
 - **已经有 WebBridge 且想保留本地面板**：在运行 MT5 的机器上跑 `python tools/bridge_push.py --token <连接码> --syncnote https://自己的域名`，它只读 bridge 的数据再推给同频。
 
-没有 bridge 时也可以用 `web/SyncNoteSync.mq5`（直接读 MT5 账户历史，需要把网站地址加进 WebRequest 白名单）。
+没有 bridge 时请改用 `bridge/SyncNote.mq5`（只读历史，本站下载页可取得源码包）。
 
-bridge 的成交表只保留 `gateway.py` 启动之后的记录；更早的历史要改用 `SyncNoteSync.mq5`，或者给 bridge 加历史接口。
+bridge 的成交表只保留 `gateway.py` 启动之后的记录；更早的历史请用 SyncNote EA 的补录（HistoryDays）或给 bridge 加历史接口。
 
 ## 发布到自己的域名
 

@@ -22,7 +22,7 @@ SyncNote_README.md
 SYNCNOTE_PROTOCOL.md
 ```
 
-五个代码文件放在同一目录，所有 include 为相对路径。此包没有系统 DLL 导入、本机监听或任何交易执行函数。旧 `web/SyncNoteSync.mq5` 保留兼容，不属于本产品实现。
+五个代码文件放在同一目录，所有 include 为相对路径。此包没有系统 DLL 导入、本机监听或任何交易执行函数。旧的单文件采集程序已下线，不再提供下载。
 
 ## 安装
 

@@ -44,7 +44,7 @@ flowchart LR
 | `bridge/WebBridge.mq5` | 原生 Socket TCP 客户端，tick/bar/账户/持仓/订单、`OrderSend`、开仓/撤单/平仓/改单 | 复用数据和交易语义，保留原文件；新 EA 单独实现本机监听与授权 |
 | `bridge/gateway.py` | 独立 Python 网关、REST 交易、行情 WebSocket、部分限额和幂等 | 保留给已有用户；新方案的终端用户不需要运行它 |
 | `bridge/PROTOCOL.md` | EA → 网关 NDJSON v1 | 保持兼容，不把原 TCP 协议冒充浏览器 WebSocket |
-| `web/SyncNoteSync.mq5` | 只读 HTTP 上传，默认 5 秒 | 继续作为旧采集方式，不承担本机交易 |
+| ~~`web/SyncNoteSync.mq5`~~ | 旧单文件采集程序 | 已下线，不再提供下载 |
 | `ea_hub.py` | EA → 云端的采集连接，未提供网站交易命令通道 | 不作为新方案的交易转发器 |
 | `tools/bridge_push.py` | 每轮默认等待 5 秒，读取网关再上传云端 | 旧同步方式继续可用；不属于新方案必装组件 |
 | `web/chart-src/src/App.tsx` / `vela/provider.ts` | 图表和实时行情的秒级 HTTP 轮询 | 本机模式使用共用连接和缓存；云端复盘保留原来源 |
