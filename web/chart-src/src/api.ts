@@ -1,7 +1,7 @@
 import { fmtLocal } from './lib/time';
 
 /** 同频 API 客户端：读请求短重试，写请求不重试，401 统一回登录页。 */
-export async function api<T = any>(path: string, data?: unknown, init?: { keepalive?: boolean }): Promise<T> {
+export async function api<T = any>(path: string, data?: unknown, init?: { keepalive?: boolean; signal?: AbortSignal }): Promise<T> {
   const writing = data !== undefined;
   for (let attempt = 0; attempt < (writing ? 1 : 3); attempt += 1) {
     let response: Response;
@@ -13,7 +13,8 @@ export async function api<T = any>(path: string, data?: unknown, init?: { keepal
         headers: { Accept: 'application/json', ...(writing ? { 'Content-Type': 'application/json' } : {}) },
         ...(writing ? { method: 'POST', body: JSON.stringify(data) } : {}),
       });
-    } catch {
+    } catch (error) {
+      if (init?.signal?.aborted) throw error;
       if (!writing && attempt < 2) {
         await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
         continue;

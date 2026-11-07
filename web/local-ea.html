@@ -52,7 +52,7 @@
 <li><strong>解压并编译。</strong>把 SyncNote 文件夹放进 MT5 数据目录的 <code>MQL5/Experts/</code>，用 MetaEditor 打开 <code>SyncNote.mq5</code>，F7 编译。</li>
 <li><strong>放行 WebRequest。</strong>MT5 → 工具 → 选项 → EA 交易：勾选「允许 WebRequest」，把本站地址加进白名单（源包里只允许你在参数里填的那一个 HTTPS 域名）。</li>
 <li><strong>挂到图表。</strong>任意图表挂载 EA，核对版本 <b>1.014</b>，<b>WebsiteURL</b> 填本站地址，<b>ConnectionCode 留空</b>。图表会显示 8 位同步配对码；Algo Trading 可以保持关闭，此 EA 不交易。</li>
-<li><strong>网页填码。</strong>在交易台「SyncNote 只读同步」或<a href="/profile#assistant-panel">个人中心</a>填入同步配对码。码在 10 分钟内有效，不要填到 SyncTrade 的交易配对框里。</li>
+<li><strong>网页填码。</strong>点击交易台的「连接 MT5」，填入 EA 图表上的 8 位配对码，网页自动识别 SyncNote 或 SyncTrade。SyncNote 配对码在 10 分钟内有效。</li>
 <li><strong>回 MT5 允许。</strong>核对图表显示的同频账号，再点击「允许只读同步」。拒绝或过期后，在 EA 点击「重新生成配对码」，再用新码配对。凭据只保存在本机、按网站和 MT5 账户隔离，重启可复用；不用每次填码。</li>
 <li><strong>等上传。</strong>EA 开始上传后，个人中心才会出现最近同步时间。首次补录按时间片分页，历史多时需要几分钟。旧版长 ConnectionCode 仍兼容，新安装建议用同步配对码。</li>
 </ol>
@@ -61,7 +61,7 @@
 <ol>
 <li><strong>解压并编译。</strong>把 SyncTrade 文件夹放进 <code>MQL5/Experts/</code>，MetaEditor 打开 <code>SyncTrade.mq5</code>，F7 编译；需要先在 MT5 选项里允许 DLL 导入。</li>
 <li><strong>挂到图表。</strong>在要交易的品种图表上挂载，核对面板版本 <b>1.106</b>。完成本机配对并点击授权后，不再要求 <b>InpAllowTrading / InpAllowRealTrading</b>，也不设置本地单笔手数、品种敞口、每日单数或日亏额度；无需打开旧的 InpUnrestricted。券商手数范围和步长、点差、滑点、挂单偏离、magic 及净额归属检查继续生效。净额账户默认只在该品种无持仓和挂单时允许市价开仓；管理净持仓或创建挂单需额外本地授权。图表面板字号可用 <b>InpPanelScale</b> 调整（100–300%，默认 200%）。同一账户只在一个图表上挂 EA：日志是单写者文件，重复挂载会让后来者拿不到锁。保留日志排查，不通过删除日志重试未确认订单。</li>
-<li><strong>网页配对。</strong>在交易台右栏「本机 MT5」里连接，允许浏览器访问本机网络，输入 MT5 图表显示的一次性配对码，再在 MT5 图表上点击「允许本次连接」。令牌只留在网页内存。</li>
+<li><strong>网页配对。</strong>点击交易台的「连接 MT5」，输入 EA 图表上的配对码，识别后允许浏览器访问本机网络，再在 MT5 图表上点击「允许本次连接」。令牌只留在网页内存。</li>
 <li><strong>核对账户。</strong>对照网页显示的券商、账号、品种和 bid/ask 是否与 MT5 一致，再决定是否开启交易。</li>
 <li><strong>开启笔记同步（可选）。</strong>右栏「交易笔记同步」勾选后，浏览器会把本机历史分页上传到你的网站账户；每页收到确认才推进进度，重新打开网页可继续。</li>
 <li><strong>先对照再操作。</strong>模拟账户也先小额验证。请求超时显示「结果待核实」时，先在 MT5 查询，不要重复点击下 单。</li>

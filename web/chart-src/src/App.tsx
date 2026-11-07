@@ -11,7 +11,7 @@ import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from
 import { readTrackPage, readTrackHead, selectTrackSource, trackProviderName, type TrackCatalog, type TrackPage } from './trackHistory';
 import { readReviewPage, mergeReviewBars, type ReviewDirection } from './reviewHistory';
 import { LocalTradePanel } from './LocalTradePanel';
-import { SyncNotePairing } from './SyncNotePairing';
+import { MT5Connection } from './MT5Connection';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
 import { SettingsMenu } from './SettingsMenu';
@@ -161,6 +161,7 @@ export default function App() {
   const localConnected = local.phase === 'connected';
   const backfill = useBackfillBars();
   const params = useMemo(() => new URLSearchParams(location.search), []);
+  const [mt5ConnectionOpen, setMT5ConnectionOpen] = useState(params.get('connect') === '1');
 
   const [board, setBoard] = useState<Board | null>(null);
   const [entry, setEntry] = useState<Entry | null>(null);
@@ -1470,7 +1471,7 @@ export default function App() {
                     </button>
                   ) : null}
                   {!localConnected && !(mode === 'review' && ready) ? (
-                    <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); }}>连接本机 MT5</button>
+                    <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); setMT5ConnectionOpen(true); }}>连接 MT5</button>
                   ) : null}
                   <a className="tool-btn" href="/local-ea" target="_blank" rel="noopener noreferrer">安装与同步说明 ↗</a>
                 </div>
@@ -1518,7 +1519,7 @@ export default function App() {
         <div className="rail-body">
               {tab === 'trade' ? (
                 <div className="pane">
-                  <SyncNotePairing />
+                  <MT5Connection state={local} open={mt5ConnectionOpen} onOpen={() => setMT5ConnectionOpen(true)} onClose={() => setMT5ConnectionOpen(false)} />
                   <LocalTradePanel state={local} />
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
 

@@ -27,6 +27,7 @@ class PairingTests(unittest.TestCase):
   INSERT INTO users VALUES('alice','alice','Alice',0),('bob','bob','Bob',0);
   CREATE TABLE mt5_links(user_id TEXT PRIMARY KEY,token_hash TEXT,account_key TEXT,updated REAL);''')
   auth_security.initialize(self.db);pair.initialize(self.db)
+  self.db.execute('CREATE TABLE mt5_history_batches(person TEXT,account_key TEXT,updated REAL)')
   self.identity={'account':'123','server':'Synthetic-Broker','account_key':sync_history.account_key('Synthetic-Broker','123')}
  def tearDown(self):
   self.db.close();self.folder.cleanup()
@@ -108,6 +109,33 @@ class PairingTests(unittest.TestCase):
   for _ in range(5):self.assert_error(409,pair.claim,'limit-ip',{'id':'alice'},{'code':'00000000'})
   self.assert_error(429,pair.claim,'limit-ip',{'id':'alice'},{'code':'00000000'})
 
+ def test_resolve_only_identifies_without_claim_or_claim_rate_consumption(self):
+  device=self.start()
+  for _ in range(8):self.assertEqual(self.run_call(pair.resolve,'resolve',{'id':'alice'},{'code':device['code']})['kind'],'syncnote')
+  row=self.db.execute('SELECT status,user_id FROM mt5_device_pairs').fetchone()
+  self.assertEqual(tuple(row),('pending',None))
+  self.claim(device)
+  self.assertEqual(self.run_call(pair.resolve,'resolve',{'id':'alice'},{'code':device['code']})['kind'],'unknown')
+
+ def test_expired_code_is_unknown_and_status_does_not_leak_other_users(self):
+  device=self.start()
+  with self.db:self.db.execute('UPDATE mt5_device_pairs SET expires=0')
+  self.assertEqual(self.run_call(pair.resolve,'resolve',{'id':'alice'},{'code':device['code']})['kind'],'unknown')
+  self.assertEqual(pair.status(self.db,{'id':'bob'})['status'],'none')
+
+ def test_status_keeps_long_lived_authorization_and_observes_revocation(self):
+  device=self.start();self.claim(device)
+  self.assertEqual(pair.status(self.db,{'id':'alice'})['status'],'claimed')
+  self.run_call(pair.confirm,'confirm',self.payload(device))
+  with self.db:
+   self.db.execute('UPDATE mt5_device_pairs SET expires=0')
+   self.db.execute('INSERT INTO mt5_history_batches VALUES(?,?,123)',('alice',self.identity['account_key']))
+  status=pair.status(self.db,{'id':'alice'})
+  self.assertEqual(status,{'ok':True,'status':'approved','last_sync':123})
+  self.assertEqual(pair.status(self.db,{'id':'bob'})['last_sync'],None)
+  with self.db:self.db.execute('UPDATE mt5_links SET token_hash=NULL')
+  self.assertEqual(pair.status(self.db,{'id':'alice'})['status'],'none')
+
 class PairingHttpTests(unittest.TestCase):
  def test_routes_auth_origin_and_unlink_revocation(self):
   with tempfile.TemporaryDirectory() as folder:
@@ -121,14 +149,18 @@ class PairingHttpTests(unittest.TestCase):
      uid=db.execute("SELECT id FROM users WHERE username='admin'").fetchone()[0]
      db.execute('INSERT INTO sessions(hash,user_id,expires) VALUES(?,?,4102444800)',(hashlib.sha256(session.encode()).hexdigest(),uid))
     db.close()
-    def request(endpoint,data,authenticated=False,origin=None):
+    def request(endpoint,data=None,authenticated=False,origin=None):
      headers={'Content-Type':'application/json','Origin':origin or base}
      if authenticated:headers['Cookie']='tongpin_session='+session
-     req=urllib.request.Request(base+'/api/mt5/'+endpoint,data=json.dumps(data).encode(),headers=headers)
+     req=urllib.request.Request(base+'/api/mt5/'+endpoint,data=json.dumps(data).encode() if data is not None else None,headers=headers)
      try:response=urllib.request.urlopen(req,timeout=10)
      except urllib.error.HTTPError as error:response=error
      with response:return response.status,json.load(response)
     status,device=request('device/start',{});self.assertEqual(status,200)
+    self.assertEqual(request('device/status')[0],401)
+    self.assertEqual(request('device/resolve',{'code':device['code']})[0],401)
+    self.assertEqual(request('device/resolve',{'code':device['code']},True),(200,{'ok':True,'kind':'syncnote'}))
+    self.assertEqual(request('device/status',authenticated=True)[1]['status'],'none')
     self.assertEqual(request('device/claim',{'code':device['code']})[0],401)
     self.assertEqual(request('device/claim',{'code':device['code']},True,'https://evil.example')[0],403)
     self.assertEqual(request('device/claim',{'code':device['code']},True)[0],200)

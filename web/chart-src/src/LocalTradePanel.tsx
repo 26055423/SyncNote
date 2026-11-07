@@ -9,7 +9,6 @@ const commandText: Record<string, string> = { sending: '正在发送', received:
 const actionText: Record<string, string> = { market: '市价下单', limit: '限价挂单', stop: '止损挂单', close: '平仓', cancel: '撤单', modify: '修改止损止盈' };
 
 export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
-  const [code, setCode] = useState('');
   const [sl, setSl] = useState('');
   const [tp, setTp] = useState('');
   const [error, setError] = useState('');
@@ -33,32 +32,14 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
   };
 
   return <>
-    {/* ── 数据连接：成交记录 / K 线 / 复盘数据同步 ───────────────── */}
-    <section className="link-block" data-kind="data">
-      <header className="link-head">
-        <h3>SyncTrade 本机数据连接</h3>
-        <span className={`link-state ${connected ? 'on' : 'off'}`}>{connected ? '本机在线' : '未连接'}</span>
-      </header>
-      <p className="dim">成交记录、K 线与复盘数据的续传。<a href="/profile#auto-history-sync-row">在个人中心开启「连上后自动续传」</a>，之后每次连接本机 EA 自动开始。</p>
-      <div className="local-buttons">
-        {state.phase === 'disconnected' || state.phase === 'error' ? <button className="primary" type="button" onClick={() => perform(() => localTerminal.connect())}>连接本机 MT5</button> : <button className="tool-btn" type="button" onClick={() => { localTerminal.disconnect(); setPrepared(null); setCode(''); }}>断开本机</button>}
-        <a href="/local-ea" target="_blank" rel="noopener noreferrer">源码与安装说明 ↗</a>
-      </div>
-      {state.phase === 'pairing' ? <form className="local-pair" onSubmit={(event) => { event.preventDefault(); perform(() => { localTerminal.pair(code); setCode(''); }); }}>
-        <label htmlFor="local-pair-code">EA 图表上的 8 位交易码</label>
-        <div className="local-buttons"><input id="local-pair-code" autoComplete="off" inputMode="numeric" pattern="[0-9]{8}" maxLength={8} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} placeholder="00000000" /><button className="primary" type="submit" disabled={!/^\d{8}$/.test(code)}>配对</button></div>
-      </form> : null}
-      {state.phase === 'confirming' ? <p className="local-notice">请切换到 MT5，在 EA 图表上点击「允许本次连接」。</p> : null}
-      {state.error || error ? <p className="local-error" role="alert">{error || state.error}</p> : null}
-    </section>
-
     {/* ── 交易连接：本机行情 + 下单 ─────────────────────────────── */}
-    <section className="link-block" data-kind="trade">
+    {connected ? <section className="link-block" data-kind="trade">
       <header className="link-head">
         <h3>交易连接</h3>
         <span className={`link-state ${connected ? 'on' : 'off'}`}>{phaseText[state.phase]}</span>
       </header>
       <p className="dim">MT5 密码留在终端。行情和交易指令直接连接本机 EA。</p>
+      {state.error || error ? <p className="local-error" role="alert">{error || state.error}</p> : null}
     <OrderTicket
         key={`${state.instance_id}:${state.epoch}:${state.account_id}:${state.server}:${realTrading}`}
         account={{ login: state.account_id, balance: state.account?.balance, equity: state.account?.equity, currency: state.account?.currency, leverage: state.account?.leverage }}
@@ -88,7 +69,7 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
       {modifyTicket ? <div className="local-notice local-modify"><p>正在编辑 #{modifyTicket}；留空表示清除该价格。</p><div className="local-price-inputs"><label>止损<input type="number" step="0.01" inputMode="decimal" value={sl} onChange={(event) => setSl(event.target.value)} placeholder="价格" /></label><label>止盈<input type="number" step="0.01" inputMode="decimal" value={tp} onChange={(event) => setTp(event.target.value)} placeholder="价格" /></label></div><div className="local-buttons"><button className="primary" type="button" disabled={!enabled || !canManage || !state.capabilities.includes('modify')} onClick={modify}>预览修改</button><button className="link" type="button" onClick={() => setModifyTicket('')}>取消编辑</button></div></div> : null}
     </> : null}
     {prepared && connected && prepared.epoch === state.epoch ? <div className="local-confirm" role="alert"><b>确认{actionText[prepared.action]}</b><p>账户 {state.account_id} · {state.server}</p><p>{prepared.description}</p><div className="local-buttons"><button className="primary" type="button" disabled={!enabled || !state.capabilities.includes(prepared.action) || (['close', 'modify'].includes(prepared.action) && !canManage)} onClick={() => perform(() => { localTerminal.command(prepared.action, prepared.payload); setPrepared(null); setModifyTicket(''); })}>确认发送一次</button><button className="tool-btn" type="button" onClick={() => setPrepared(null)}>取消</button></div></div> : null}
+    </section> : null}
     {state.commands.length ? <div className="local-command-log"><h3>本页交易回报</h3>{state.commands.slice(0, 8).map((command) => <div className="local-command" key={command.command_id}><b>{actionText[command.action]} · {commandText[command.state] || command.state}{command.partial ? ' · 部分成交' : ''}</b><p className="dim">{command.account_id} · {command.command_id.slice(0, 8)}{command.order ? ` · 订单 ${command.order}` : ''}{command.deal ? ` · 成交 ${command.deal}` : ''}</p>{command.error ? <p className="local-error">{command.error}</p> : null}{!['completed', 'rejected'].includes(command.state) ? <button type="button" className="link" disabled={!connected || command.account_id !== state.account_id || command.server !== state.server} onClick={() => perform(() => localTerminal.queryCommand(command.command_id))}>只查询执行结果</button> : null}</div>)}<p className="dim">结果待核实时不会自动重发。刷新网页会清除此处记录，请同时在 MT5 核查。</p></div> : null}
-    </section>
   </>;
 }

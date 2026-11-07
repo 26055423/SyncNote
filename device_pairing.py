@@ -24,7 +24,8 @@ def initialize(db):
  secret_hash TEXT PRIMARY KEY,code_hash TEXT UNIQUE,expires REAL NOT NULL,
  status TEXT NOT NULL DEFAULT 'pending',user_id TEXT REFERENCES users(id),
  claim_id TEXT,nickname TEXT,account_key TEXT,token_hash TEXT);
- CREATE INDEX IF NOT EXISTS idx_mt5_device_pairs_expiry ON mt5_device_pairs(expires);''')
+ CREATE INDEX IF NOT EXISTS idx_mt5_device_pairs_expiry ON mt5_device_pairs(expires);
+ CREATE INDEX IF NOT EXISTS idx_mt5_device_pairs_user_expiry ON mt5_device_pairs(user_id,expires);''')
 
 def limited(db,ip,kind,maximum,window=600):
  if not auth_security.limit(db,'mt5-device:'+kind+':'+ip,maximum,window):
@@ -33,7 +34,8 @@ def limited(db,ip,kind,maximum,window=600):
 def start(db,ip):
  limited(db,ip,'start',30)
  now=time.time();db.execute('BEGIN IMMEDIATE')
- db.execute('DELETE FROM mt5_device_pairs WHERE expires<?',(now-86400,))
+ # The short-lived code expires; an approved history authorization does not.
+ db.execute("DELETE FROM mt5_device_pairs WHERE expires<? AND status<>'approved'",(now-86400,))
  secret=secrets.token_urlsafe(36)
  for _ in range(10):
   code=str(secrets.randbelow(100000000)).zfill(8)
@@ -58,6 +60,31 @@ def claim(db,ip,user,data):
  claim_id=secrets.token_urlsafe(24)
  db.execute("UPDATE mt5_device_pairs SET status='claimed',code_hash=NULL,user_id=?,claim_id=?,nickname=? WHERE secret_hash=?",(user['id'],claim_id,user['nickname'],row['secret_hash']))
  return {'ok':True,'status':'claimed'}
+
+def resolve(db,ip,user,data):
+ owner(db,user['id'])
+ limited(db,ip,'resolve-ip',30)
+ limited(db,user['id'],'resolve-user',30)
+ code=data.get('code')
+ if not isinstance(code,str) or not re.fullmatch('[0-9]{8}',code):raise PairError('请输入 EA 图表上的 8 位配对码')
+ row=db.execute("SELECT 1 FROM mt5_device_pairs WHERE code_hash=? AND status='pending' AND expires>?",(digest(code),time.time())).fetchone()
+ return {'ok':True,'kind':'syncnote' if row else 'unknown'}
+
+def status(db,user):
+ uid=owner(db,user['id'])['id'];now=time.time()
+ link=db.execute('SELECT token_hash,account_key FROM mt5_links WHERE user_id=?',(uid,)).fetchone()
+ result={'ok':True,'status':'none','last_sync':None}
+ if link and link['token_hash'] and link['account_key']:
+  result['last_sync']=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=? AND account_key=?',(uid,link['account_key'])).fetchone()[0]
+ row=db.execute("SELECT * FROM mt5_device_pairs WHERE user_id=? AND (status='approved' OR expires>?) ORDER BY expires DESC LIMIT 1",(uid,now)).fetchone()
+ if not row:return result
+ if row['status']=='approved':
+  if not link or not link['token_hash'] or link['token_hash']!=row['token_hash'] or link['account_key']!=row['account_key']:return result
+  result['status']='approved'
+ elif row['status'] in ('pending','claimed','rejected'):
+  result['status']=row['status']
+  if row['status']=='claimed':result['expires_at']=row['expires']
+ return result
 
 def device(db,data):
  secret=data.get('device_secret')

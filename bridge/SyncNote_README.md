@@ -29,7 +29,7 @@ SYNCNOTE_PROTOCOL.md
 1. MT5「文件→打开数据文件夹」，把目录放到 `MQL5/Experts/SyncNote/`。
 2. 在 MetaEditor 打开 `SyncNote.mq5`，F7 编译，检查错误和警告。
 3. 在 MT5「工具→选项→EA」的 WebRequest 允许地址中添加 `https://sync-trade.top`；自托管时填写自己明确选择的 HTTPS 来源。
-4. 将 EA 挂到一个图表，`WebsiteURL` 填同一个网站，`ConnectionCode` 留空。图表显示 8 位同步配对码后，在交易台「SyncNote 只读同步」或个人中心填写此码；不要填到 SyncTrade 的交易配对框。
+4. 将 EA 挂到一个图表，`WebsiteURL` 填同一个网站，`ConnectionCode` 留空。图表显示 8 位同步配对码后，在网页点击「连接 MT5」并填写此码，系统自动识别 EA 类型；不要填到 SyncTrade 的交易配对框。
 5. 回 MT5 核对图表显示的同频账号，再点击「允许只读同步」。网页提交成功只代表认领配对请求，还没有上传；EA 收到本地许可并开始上传后，网页才会显示最近同步时间。
 6. 配对码 10 分钟内有效。拒绝或过期后，在 EA 点击「重新生成配对码」，再用新码配对。授权凭据只保存在本机，按网站与当前 MT5 账户隔离；重启复用，不必重复填码。可以保持 Algo Trading 关闭；此 EA 不执行交易，也不读取 MT5 密码。
 

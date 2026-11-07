@@ -367,6 +367,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             path=urlparse(self.path).path;q=parse_qs(urlparse(self.path).query)
+            if path=='/api/mt5/device/status':
+                with connect() as db:return self.reply(device_pairing.status(db,self.user(db)))
             if path=='/api/login-challenge':
                 with connect() as db:
                     if not auth_security.limit(db,'challenge:'+self.client_ip(),60,60):raise Error('请求过于频繁',429)
@@ -702,6 +704,7 @@ class Handler(BaseHTTPRequestHandler):
             if etag:self.send_header('ETag',etag)
             for k,v in [('Content-Type',mime+'; charset=utf-8'),('Cache-Control',cache),('Content-Length',str(len(body))),('X-Content-Type-Options','nosniff'),('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")]:self.send_header(k,v)
             self.end_headers();self.wfile.write(body)
+        except device_pairing.PairError as e:self.reply({'error':e.text},e.code)
         except sync_history.HistoryError as e:self.reply({'error':e.text},e.code)
         except journal.JournalError as e:self.reply({'error':e.text},e.code)
         except chart.ChartError as e:self.reply({'error':e.text},e.code)
@@ -722,6 +725,7 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as db:
                 if path.startswith('/api/mt5/device/'):
                     if path=='/api/mt5/device/start':result=device_pairing.start(db,self.client_ip())
+                    elif path=='/api/mt5/device/resolve':result=device_pairing.resolve(db,self.client_ip(),self.user(db),data)
                     elif path=='/api/mt5/device/claim':result=device_pairing.claim(db,self.client_ip(),self.user(db),data)
                     elif path=='/api/mt5/device/poll':result=device_pairing.poll(db,self.client_ip(),data)
                     elif path=='/api/mt5/device/confirm':result=device_pairing.confirm(db,self.client_ip(),data)
