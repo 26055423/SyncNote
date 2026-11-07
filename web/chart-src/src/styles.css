@@ -1599,3 +1599,12 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 /* 右上角动作区：统一 6px 间距，分隔线两侧对齐 */
 .unified-topbar .top-actions { gap: 6px; }
 .unified-topbar .top-actions .toolbar-separator { margin: 0 2px; }
+
+/* 布局按钮在工具条里紧挨「指标」：跟样式按钮同一组靠右 */
+.chart-toolbar .lp { order: 9; }
+.chart-toolbar .style-menu { margin-left: auto; }
+
+/* EA 状态：一个圆点表示连上/断开，后面跟 EA 名字 */
+.ea-chip { display: inline-flex; align-items: center; gap: 6px; }
+.ea-chip .ea-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad) 22%, transparent); }
+.ea-chip.on .ea-dot { background: var(--good); box-shadow: 0 0 0 2px color-mix(in srgb, var(--good) 22%, transparent); }

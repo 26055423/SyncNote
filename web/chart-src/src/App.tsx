@@ -1251,6 +1251,7 @@ export default function App() {
         >
           <span className="toolbar-separator" aria-hidden="true" />
           <TfMenu disabled={replayActive} current={tf} options={availableTfs} scopeAll={Boolean(syncs.timeframe)} onPick={(id) => { chartRef.current?.setTimeframe(id); setTf(id); }} />
+          <LayoutMenu disabled={replayActive} compact current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
           <StyleMenu
             current={priceStyle}
             onPick={(id) => {
@@ -1346,7 +1347,6 @@ export default function App() {
           <MT5Connection state={local} open={mt5ConnectionOpen} onOpen={() => setMT5ConnectionOpen(true)} onClose={() => setMT5ConnectionOpen(false)} />
           <a href="/history" target="_blank" rel="noopener noreferrer" aria-label="交易日历（新标签页）" title="交易日历：新标签页打开，保留本机 EA 连接"><ToolbarIcon name="calendar" /><span className="action-label">交易日历</span></a>
           <span className="toolbar-separator" aria-hidden="true" />
-          <LayoutMenu disabled={replayActive} compact current={layout} onPick={(id) => { chartRef.current?.setLayout(id); setLayout(id); }} syncs={syncs} onToggleSync={toggleSync} />
           <FullscreenButton />
           <SettingsMenu name={me?.nickname || '账户'} />
         </nav>
