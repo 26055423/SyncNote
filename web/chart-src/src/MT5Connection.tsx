@@ -71,7 +71,7 @@ export function MT5Connection({ state, open, onOpen, onClose }: { state: LocalTe
         <label htmlFor={`${id}-code`}>EA 配对码</label>
         <div className="local-buttons"><input ref={input} id={`${id}-code`} autoComplete="off" inputMode="numeric" pattern="[0-9]{8}" maxLength={8} placeholder="输入 8 位配对码" value={code} disabled={busy} onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} /><button type="submit" className="primary" disabled={busy || !/^\d{8}$/.test(code)}>{busy ? '连接中…' : '连接'}</button></div>
       </form>
-      <p role="status" className="local-notice" aria-live="polite">{busy ? notice : connected ? 'SyncTrade 本机已连接，交易权限以 EA 授权为准。' : cloud?.status === 'approved' ? 'SyncNote 已授权只读同步；MT5 运行时，关闭网页后仍会续传。' : cloud?.status === 'claimed' ? '已识别 SyncNote，请回 MT5 核对同频账号并允许只读同步。' : notice || (summary !== '未连接' ? summary : '')}</p>
+      <p role="status" className={`local-notice${!busy && !error && (connected || cloud?.status === 'approved') ? ' is-success' : ''}`} aria-live="polite">{busy ? notice : connected ? 'SyncTrade 本机已连接，交易权限以 EA 授权为准。' : cloud?.status === 'approved' ? 'SyncNote 已授权只读同步；MT5 运行时，关闭网页后仍会续传。' : cloud?.status === 'claimed' ? '已识别 SyncNote，请回 MT5 核对同频账号并允许只读同步。' : notice || (summary !== '未连接' ? summary : '')}</p>
       {error || (kind === 'synctrade' && state.error) ? <p className="local-error" role="alert">{error || state.error}</p> : null}
       {connected || state.phase === 'confirming' ? <button type="button" className="tool-btn" onClick={() => { localTerminal.disconnect(); setNotice('本机连接已断开。'); }}>断开本机连接</button> : null}
       {cloud?.status === 'approved' || cloud?.status === 'claimed' ? <button type="button" className="tool-btn" disabled={busy} onClick={async () => {
