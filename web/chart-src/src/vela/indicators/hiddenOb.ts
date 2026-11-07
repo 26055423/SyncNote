@@ -464,6 +464,9 @@ function buildOutput(
   const bars = ctx.bars();
   const last = bars.length ? bars[bars.length - 1]! : null;
   const price = last ? last.close : Number.NaN;
+  // 区块只画到最后一根已收盘分钟为止：不与 `extend: 'right'` 一起用。
+  // 文本是贴着区块右边缘排的，一旦向右延伸就会跑到图表最右边（右侧留白里），
+  // 和「读最后一根 K 线上的 OB」这件事对不上。
   const right = Number.isFinite(state.lastCloseTime) ? state.lastCloseTime : last ? last.time + 60_000 : 0;
 
   const uppers = nearest(state.blocks, price, true, cfg.upperCount);
@@ -480,7 +483,7 @@ function buildOutput(
       right,
       top: Math.max(ob.top, ob.bottom),
       bottom: Math.min(ob.top, ob.bottom),
-      extend: 'right',
+      extend: 'none',
       bgColor: withAlpha(tint, cfg.fillTransparency),
       borderColor: tint,
       borderWidth: 1,

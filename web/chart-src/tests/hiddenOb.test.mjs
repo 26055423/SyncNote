@@ -100,7 +100,7 @@ test('多头：结构突破把来源阴 K 变成隐藏 OB，并延伸到最后�
   assert.equal(box.right, at(14) + 60_000);
   assert.equal(box.top, 100.9, '整根 K 线的上沿 = 来源最高');
   assert.equal(box.bottom, 100.2, '整根 K 线的下沿 = 来源最低');
-  assert.equal(box.extend, 'right');
+  assert.equal(box.extend, 'none', '不向右延伸：文本要贴着最后一根 K 线，而不是图表最右边');
   assert.equal(box.text, '1m 多头OB 1');
   assert.equal(box.borderColor, '#00897b');
 });
