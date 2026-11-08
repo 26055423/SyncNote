@@ -11,8 +11,8 @@ export interface NoteSection {
   verdict?: Verdict | null;
 }
 export interface NotebookValue { body: string; tags: string[]; sections: NoteSection[] }
-export interface NotebookTemplate { id: string | number; name: string; sections: NoteSection[]; uses: number; last_used: number }
-export interface NotebookPhrase { id: string | number; text: string; uses: number; last_used: number }
+export interface NotebookTemplate { id: string | number; name: string; sections: NoteSection[]; phrases?: string[]; uses: number; last_used: number }
+export interface NotebookPhrase { id: string | number; text: string; uses: number; last_used: number; pinned?: boolean }
 export interface NotebookLibrary {
   templates: NotebookTemplate[];
   phrases: NotebookPhrase[];

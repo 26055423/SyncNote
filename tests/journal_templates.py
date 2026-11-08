@@ -103,6 +103,34 @@ class JournalTemplates(unittest.TestCase):
   self.assertEqual([row['group'] for row in created['sections']],['方向判断','位置',None])
   self.assertTrue(all(row['verdict'] is None and not row['body'] and row['checked'] is False for row in created['sections']))
 
+ def test_template_phrases_are_optional_validated_and_kept_on_rename(self):
+  template=library.save_template(self.db,'alice',{'name':'带话术','sections':[self.section()],'phrases':[' 扫了低点 ','扫了低点','拿了 IDM']})['template']
+  self.assertEqual(template['phrases'],['扫了低点','拿了 IDM'])
+  renamed=library.save_template(self.db,'alice',{'id':template['id'],'name':'改名','sections':template['sections']})['template']
+  self.assertEqual(renamed['phrases'],['扫了低点','拿了 IDM'])
+  with self.assertRaises(library.JournalError):library.save_template(self.db,'alice',{'name':'太长','sections':[self.section()],'phrases':['x'*501]})
+  with self.assertRaises(library.JournalError):library.save_template(self.db,'alice',{'name':'太多','sections':[self.section()],'phrases':['p%d'%i for i in range(21)]})
+
+ def test_phrase_pin_ranks_first_and_only_owner_can_pin(self):
+  a=library.save_phrase(self.db,'alice',{'text':'扫了低点'})['phrase']
+  library.save_phrase(self.db,'alice',{'text':'等待确认'})
+  library.library_item(self.db,'alice',{'phrase_id':a['id']})
+  pinned=library.pin_phrase(self.db,'alice',{'id':a['id'],'pinned':True})
+  self.assertTrue(pinned['pinned'])
+  self.assertEqual(library.library(self.db,'alice')['phrases'][0]['text'],'扫了低点')
+  self.assertTrue(library.library(self.db,'alice')['phrases'][0]['pinned'])
+  with self.assertRaises(library.JournalError) as error:library.pin_phrase(self.db,'bob',{'id':a['id'],'pinned':True})
+  self.assertEqual(error.exception.code,404)
+
+ def test_repeat_use_within_five_seconds_counts_once(self):
+  template=library.save_template(self.db,'alice',{'name':'快速点两次','sections':[self.section()]})['template']
+  library.library_item(self.db,'alice',{'template_id':template['id']})
+  library.library_item(self.db,'alice',{'template_id':template['id']})
+  self.assertEqual(library.library(self.db,'alice')['templates'][0]['uses'],1)
+  self.db.execute('UPDATE journal_templates SET last_used=0 WHERE id=?',(template['id'],))
+  library.library_item(self.db,'alice',{'template_id':template['id']})
+  self.assertEqual(library.library(self.db,'alice')['templates'][0]['uses'],2)
+
  def test_template_names_do_not_silently_overwrite_and_deletion_keeps_notes(self):
   data={'name':'自己的名字','sections':[self.section()]}
   template=library.save_template(self.db,'alice',data)['template']

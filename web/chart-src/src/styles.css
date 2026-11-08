@@ -1886,3 +1886,11 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-verdict.is-no { color: var(--bad-ink); background: var(--bad-bg); border-color: var(--bad-line); }
 .notebook-verdict.is-unclear { color: var(--warn-ink); background: var(--warn-bg); border-color: var(--warn-line); }
 .notebook-section-readonly { padding-bottom: 2px; }
+
+/* 常用语分层与模板提示 */
+.notebook-active-template { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 5px 9px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--dim); font-size: 11px; }
+.notebook-active-template > button { margin-left: auto; border: 0; background: transparent; color: var(--accent-ink); font-size: 11px; }
+.notebook-foot-right { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.notebook-phrase.is-pinned { border-color: var(--accent-line); }
+.notebook-phrase-pin { flex: 0 0 auto; padding: 3px 4px 3px 6px; border: 0; background: transparent; color: var(--dim); font-size: 11px; line-height: 1; }
+.notebook-phrase-pin[aria-pressed='true'] { color: var(--warn-ink); }

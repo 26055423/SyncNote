@@ -10,6 +10,10 @@ def initialize(db):
  CREATE INDEX IF NOT EXISTS journal_templates_owner ON journal_templates(person);
  CREATE TABLE IF NOT EXISTS journal_phrases(id TEXT PRIMARY KEY,person TEXT NOT NULL,text TEXT NOT NULL,uses INTEGER NOT NULL DEFAULT 0,last_used REAL NOT NULL DEFAULT 0,updated REAL NOT NULL,UNIQUE(person,text));
  CREATE INDEX IF NOT EXISTS journal_phrases_owner ON journal_phrases(person);''')
+ for table,column,definition in (('journal_templates','phrases',"TEXT NOT NULL DEFAULT '[]'"),
+                                 ('journal_phrases','pinned','INTEGER NOT NULL DEFAULT 0')):
+  if column not in [row[1] for row in db.execute('PRAGMA table_info(%s)'%table)]:
+   db.execute('ALTER TABLE %s ADD COLUMN %s %s'%(table,column,definition))
 
 VERDICTS=('yes','no','unclear','na')
 
@@ -36,12 +40,25 @@ def sections(value,template=False):
   out.append({'id':ident,'title':title.strip(),'group':group,'body':'' if template else body.strip(),'checked':False if template else checked,'verdict':None if template else verdict})
  return out
 
+MAX_TEMPLATE_PHRASES=20
+
+def phrase_list(value):
+ """模板自带的常用语：纯文本数组，去重后最多 20 条。"""
+ if value is None:return []
+ if not isinstance(value,list) or len(value)>MAX_TEMPLATE_PHRASES:raise JournalError('模板常用语最多 %d 条'%MAX_TEMPLATE_PHRASES)
+ out=[]
+ for item in value:
+  if not isinstance(item,str) or not 1<=len(item.strip())<=500:raise JournalError('常用语需为 1 至 500 字')
+  text=item.strip()
+  if text not in out:out.append(text)
+ return out
+
 def note_sections(db,person):
  return {r['ticket']:json.loads(r['sections']) for r in db.execute('SELECT ticket,sections FROM trade_note_sections WHERE person=?',(person,))}
 
 def library(db,person):
- templates=[{'id':r['id'],'name':r['name'],'sections':json.loads(r['sections']),'uses':r['uses'],'last_used':r['last_used']} for r in db.execute('SELECT * FROM journal_templates WHERE person=? ORDER BY uses DESC,last_used DESC,updated DESC,id',(person,))]
- phrases=[{'id':r['id'],'text':r['text'],'uses':r['uses'],'last_used':r['last_used']} for r in db.execute('SELECT * FROM journal_phrases WHERE person=? ORDER BY uses DESC,last_used DESC,updated DESC,id',(person,))]
+ templates=[{'id':r['id'],'name':r['name'],'sections':json.loads(r['sections']),'phrases':json.loads(r['phrases'] or '[]'),'uses':r['uses'],'last_used':r['last_used']} for r in db.execute('SELECT * FROM journal_templates WHERE person=? ORDER BY uses DESC,last_used DESC,updated DESC,id',(person,))]
+ phrases=[{'id':r['id'],'text':r['text'],'uses':r['uses'],'last_used':r['last_used'],'pinned':bool(r['pinned'])} for r in db.execute('SELECT * FROM journal_phrases WHERE person=? ORDER BY pinned DESC,uses DESC,last_used DESC,updated DESC,id',(person,))]
  # Each title counts once per meaningful trade note, not once per Save click.
  chapters={}
  for row in db.execute('SELECT s.sections,n.updated FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket WHERE s.person=?',(person,)):
@@ -57,30 +74,41 @@ def save_template(db,person,data):
  if not isinstance(name,str) or not 1<=len(name.strip())<=80:raise JournalError('模板名称需为 1 至 80 字')
  content=sections(data.get('sections'),True)
  if not content:raise JournalError('模板至少需要一个章节')
+ phrases=phrase_list(data['phrases']) if 'phrases' in data else None
  name=name.strip();ident=data.get('id');now=time.time()
  if ident is not None:
   if not isinstance(ident,str) or not db.execute('SELECT 1 FROM journal_templates WHERE person=? AND id=?',(person,ident)).fetchone():raise JournalError('模板不存在',404)
   duplicate=db.execute('SELECT id FROM journal_templates WHERE person=? AND name=? AND id<>?',(person,name,ident)).fetchone()
   if duplicate:raise JournalError('已有同名模板，请更换名称',409)
-  db.execute('UPDATE journal_templates SET name=?,sections=?,updated=? WHERE person=? AND id=?',(name,json.dumps(content,ensure_ascii=False),now,person,ident))
+  if phrases is None:db.execute('UPDATE journal_templates SET name=?,sections=?,updated=? WHERE person=? AND id=?',(name,json.dumps(content,ensure_ascii=False),now,person,ident))
+  else:db.execute('UPDATE journal_templates SET name=?,sections=?,phrases=?,updated=? WHERE person=? AND id=?',(name,json.dumps(content,ensure_ascii=False),json.dumps(phrases,ensure_ascii=False),now,person,ident))
  else:
   old=db.execute('SELECT id FROM journal_templates WHERE person=? AND name=?',(person,name)).fetchone()
   if old:raise JournalError('已有同名模板，请更换名称',409)
   if db.execute('SELECT count(*) FROM journal_templates WHERE person=?',(person,)).fetchone()[0]>=100:raise JournalError('个人模板最多 100 个')
   ident=uuid.uuid4().hex
-  db.execute('INSERT INTO journal_templates(id,person,name,sections,updated) VALUES(?,?,?,?,?)',(ident,person,name,json.dumps(content,ensure_ascii=False),now))
+  db.execute('INSERT INTO journal_templates(id,person,name,sections,phrases,updated) VALUES(?,?,?,?,?,?)',(ident,person,name,json.dumps(content,ensure_ascii=False),json.dumps(phrases or [],ensure_ascii=False),now))
  return {'ok':True,'template':next(row for row in library(db,person)['templates'] if row['id']==ident)}
 
 def save_phrase(db,person,data):
  text=data.get('text','')
  if not isinstance(text,str) or not 1<=len(text.strip())<=500:raise JournalError('常用语需为 1 至 500 字')
- text=text.strip();old=db.execute('SELECT id FROM journal_phrases WHERE person=? AND text=?',(person,text)).fetchone()
- if old:ident=old['id']
+ text=text.strip();pinned=1 if data.get('pinned') is True else 0
+ old=db.execute('SELECT id FROM journal_phrases WHERE person=? AND text=?',(person,text)).fetchone()
+ if old:
+  ident=old['id'];db.execute('UPDATE journal_phrases SET pinned=? WHERE id=?',(pinned,ident))
  else:
   if db.execute('SELECT count(*) FROM journal_phrases WHERE person=?',(person,)).fetchone()[0]>=200:raise JournalError('个人常用语最多 200 条')
   ident=uuid.uuid4().hex
-  db.execute('INSERT INTO journal_phrases(id,person,text,updated) VALUES(?,?,?,?)',(ident,person,text,time.time()))
+  db.execute('INSERT INTO journal_phrases(id,person,text,pinned,updated) VALUES(?,?,?,?,?)',(ident,person,text,pinned,time.time()))
  return {'ok':True,'phrase':next(row for row in library(db,person)['phrases'] if row['id']==ident)}
+
+def pin_phrase(db,person,data):
+ ident=data.get('id')
+ if not isinstance(ident,str) or not db.execute('SELECT 1 FROM journal_phrases WHERE person=? AND id=?',(person,ident)).fetchone():raise JournalError('条目不存在',404)
+ pinned=bool(data.get('pinned'))
+ db.execute('UPDATE journal_phrases SET pinned=? WHERE person=? AND id=?',(1 if pinned else 0,person,ident))
+ return {'ok':True,'pinned':pinned}
 
 def library_item(db,person,data,remove=False):
  choices=[(key,table) for key,table in [('template_id','journal_templates'),('phrase_id','journal_phrases')] if key in data]
@@ -88,5 +116,9 @@ def library_item(db,person,data,remove=False):
  key,table=choices[0];ident=data[key]
  if not isinstance(ident,str) or not db.execute('SELECT 1 FROM '+table+' WHERE person=? AND id=?',(person,ident)).fetchone():raise JournalError('条目不存在',404)
  if remove:db.execute('DELETE FROM '+table+' WHERE person=? AND id=?',(person,ident))
- else:db.execute('UPDATE '+table+' SET uses=uses+1,last_used=? WHERE person=? AND id=?',(time.time(),person,ident))
+ else:
+  prior=db.execute('SELECT last_used FROM '+table+' WHERE person=? AND id=?',(person,ident)).fetchone()
+  now=time.time()
+  # 防刷：5 秒内重复点同一条不重复计数。
+  if not prior or now-prior['last_used']>=5:db.execute('UPDATE '+table+' SET uses=uses+1,last_used=? WHERE person=? AND id=?',(now,person,ident))
  return {'ok':True}

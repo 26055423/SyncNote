@@ -40,6 +40,8 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(value.sections[0]?.id ?? null);
   const [templateName, setTemplateName] = useState('');
+  const [templatePhrases, setTemplatePhrases] = useState<string[]>([]);
+  const [phraseDraft, setPhraseDraft] = useState('');
   const [phraseText, setPhraseText] = useState('');
   const [editingTemplate, setEditingTemplate] = useState<string | number | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -49,6 +51,11 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
   const [error, setError] = useState('');
   const [removed, setRemoved] = useState<{ section: NoteSection; index: number } | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [activeTemplate, setActiveTemplate] = useState<{ name: string; phrases: string[] } | null>(null);
+  const [selection, setSelection] = useState<{ id: string; text: string } | null>(null);
+  const areas = useRef(new Map<string, HTMLTextAreaElement>());
+  const carets = useRef(new Map<string, { start: number; end: number }>());
+  const lastFocused = useRef<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -62,6 +69,22 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
     }
     return () => { mounted.current = false; };
   }, [readOnly]);
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const node = document.activeElement as HTMLTextAreaElement | null;
+      if (!node || node.tagName !== 'TEXTAREA') return;
+      for (const [id, area] of areas.current) {
+        if (area !== node) continue;
+        const start = node.selectionStart ?? 0;
+        const end = node.selectionEnd ?? start;
+        carets.current.set(id, { start, end });
+        setSelection(node.value.slice(start, end).trim() ? { id, text: node.value.slice(start, end) } : null);
+        return;
+      }
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, []);
 
   const active = value.sections.find(section => section.id === selected) ?? value.sections[0];
   const progress = checklistProgress(value.sections);
@@ -93,19 +116,61 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
     const result = await api<NotebookLibrary>('/api/journal/library');
     if (mounted.current) setLibrary({ ...EMPTY_LIBRARY, ...result });
   };
+  const rememberCaret = (section: NoteSection, area: HTMLTextAreaElement | null) => {
+    if (!area) return;
+    const start = area.selectionStart ?? area.value.length;
+    const end = area.selectionEnd ?? start;
+    carets.current.set(section.id, { start, end });
+    const picked = area.value.slice(start, end);
+    setSelection(picked.trim() ? { id: section.id, text: picked } : null);
+  };
+  /** 插入到光标处；没有光标信息时退回追加到结尾。 */
   const insertPhrase = (text: string, id?: string | number) => {
-    if (!active) { setError('先添加一个章节，再插入常用语。'); return; }
-    const body = appendPhrase(active.body, text);
+    const goalId = lastFocused.current ?? active?.id ?? null;
+    const goal = value.sections.find(section => section.id === goalId) ?? active;
+    if (!goal) { setError('先添加一个章节，再插入常用语。'); return; }
+    const area = areas.current.get(goal.id);
+    const caret = carets.current.get(goal.id);
+    let body: string;
+    let position: number;
+    if (area && caret) {
+      body = `${goal.body.slice(0, caret.start)}${text}${goal.body.slice(caret.end)}`;
+      position = caret.start + text.length;
+    } else {
+      body = appendPhrase(goal.body, text);
+      position = body.length;
+    }
     if (body.length > 3000) { setError('这一章已接近 3000 字，无法继续插入。'); return; }
-    updateSection(active.id, { body });
-    setError(''); setMessage(`已插入「${active.title.trim() || '未命名章节'}」`);
+    updateSection(goal.id, { body });
+    carets.current.set(goal.id, { start: position, end: position });
+    setError(''); setMessage(`已插入「${goal.title.trim() || '未命名章节'}」`);
+    window.requestAnimationFrame(() => {
+      const node = areas.current.get(goal.id);
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(position, position);
+    });
     if (id != null) void api('/api/journal/library/use', { phrase_id: id }).then(refresh).catch(() => {});
   };
+  const savePhrase = (text: string, pinned = false) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (trimmed.length > 500) { setError('常用语最多 500 字。'); return; }
+    void run(async () => {
+      await api('/api/journal/phrases', { text: trimmed, pinned });
+      await refresh(); setPhraseText(''); setMessage('已保存到我的常用语');
+    });
+  };
+  const togglePin = (phrase: { id: string | number; pinned?: boolean }) => void run(async () => {
+    await api('/api/journal/phrases/pin', { id: phrase.id, pinned: !phrase.pinned });
+    await refresh();
+  });
   const chapterChoices = frequentFirst(library.chapters).map(row => row.title).concat(STARTER_CHAPTERS)
     .filter((title, index, all) => all.indexOf(title) === index && !value.sections.some(section => section.title.trim() === title)).slice(0, 4);
 
   const renderSection = (section: NoteSection, index: number) => {
     const verdict = section.verdict ?? null;
+    const picked = selection?.id === section.id ? selection.text : '';
     return <section key={section.id} className={`notebook-section${section.checked ? ' is-checked' : ''}${active?.id === section.id ? ' is-selected' : ''}`}>
       <div className="notebook-section-head">
         <label className="notebook-check" title="已检查，表示这一项已经看过，不代表交易条件成立">
@@ -137,20 +202,36 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
               onClick={() => updateSection(section.id, { verdict: verdict === choice.id ? null : choice.id, checked: true })}
             >{choice.label}</button>)}
           </div>
-          <textarea aria-label={`${section.title || `第 ${index + 1} 章`}内容`} value={section.body} maxLength={3000} placeholder="写下判断、依据或事后发现……" onFocus={() => setSelected(section.id)} onChange={event => updateSection(section.id, { body: event.target.value })}/>
-          <div className="notebook-section-foot"><button type="button" className="link" onClick={() => { setSelected(section.id); setLibraryOpen(true); }}>插入常用语</button>
-            <button type="button" className="link" title="最多保存 500 字" disabled={!section.body.trim() || section.body.trim().length > 500 || busy} onClick={() => void run(async () => {
-              await api('/api/journal/phrases', { text: section.body.trim() }); await refresh(); setMessage('已保存到我的常用语');
-            })}>存为常用语</button></div>
+          <textarea
+            ref={node => { if (node) areas.current.set(section.id, node); else areas.current.delete(section.id); }}
+            aria-label={`${section.title || `第 ${index + 1} 章`}内容`}
+            value={section.body}
+            maxLength={3000}
+            placeholder="写下判断、依据或事后发现……"
+            onFocus={() => { setSelected(section.id); lastFocused.current = section.id; }}
+            onSelect={event => rememberCaret(section, event.currentTarget)}
+            onKeyUp={event => rememberCaret(section, event.currentTarget)}
+            onMouseUp={event => rememberCaret(section, event.currentTarget)}
+            onChange={event => updateSection(section.id, { body: event.target.value })}
+          />
+          <div className="notebook-section-foot">
+            <button type="button" className="link" onClick={() => { setSelected(section.id); setLibraryOpen(true); }}>插入常用语</button>
+            <div className="notebook-foot-right">
+              <button type="button" className="link" disabled={!picked.trim() || busy} title="把选中文字存成常用语" onClick={() => savePhrase(picked)}>存选中为常用语</button>
+              <button type="button" className="link" title="最多保存 500 字" disabled={!section.body.trim() || section.body.trim().length > 500 || busy} onClick={() => savePhrase(section.body)}>存为常用语</button>
+            </div>
+          </div>
         </>}
     </section>;
   };
 
+  const templateChips = activeTemplate?.phrases ?? [];
   return <div className={`review-notebook${readOnly ? ' is-readonly' : ''}`}>
     <div className="notebook-heading">
       <strong>我的复盘清单</strong>
       <span>{progress.total ? `完成 ${progress.done}/${progress.total}` : value.sections.length ? `已检查 ${value.sections.filter(s => s.checked).length}/${value.sections.length}` : '按自己的习惯记录'}</span>
     </div>
+    {activeTemplate && <div className="notebook-active-template"><span>模板：{activeTemplate.name}</span><button type="button" onClick={() => setActiveTemplate(null)}>清除</button></div>}
     {!readOnly && <>
       <div className="notebook-toolbar">
         <button type="button" onClick={() => addChapter()} disabled={value.sections.length >= MAX_SECTIONS}>＋ 添加章节</button>
@@ -200,29 +281,35 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
         <button type="button" title={`添加 ${template.sections.length} 个章节；保留已有内容`} disabled={!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS || busy} onClick={() => {
           const sections = appendTemplate(value.sections, template);
           onChange({ ...value, sections }); setSelected(sections[value.sections.length]?.id ?? null);
+          setActiveTemplate({ name: template.name, phrases: template.phrases ?? [] });
           setMessage(`已添加「${template.name}」的章节，原有内容已保留。`);
           void api('/api/journal/library/use', { template_id: template.id }).then(refresh).catch(() => {});
-        }}><span>{template.name}</span><small>{template.sections.length} 章 · 用过 {template.uses} 次</small></button>
-        <button type="button" className="notebook-library-remove" aria-label={`编辑模板 ${template.name}`} disabled={busy} onClick={() => { setEditingTemplate(editingTemplate === template.id ? null : template.id); setEditingName(template.name); }}>编辑</button>
+        }}><span>{template.name}</span><small>{template.sections.length} 章{(template.phrases ?? []).length ? ` · ${(template.phrases ?? []).length} 条用语` : ''} · 用过 {template.uses} 次</small></button>
+        <button type="button" className="notebook-library-remove" aria-label={`编辑模板 ${template.name}`} disabled={busy} onClick={() => { setEditingTemplate(editingTemplate === template.id ? null : template.id); setEditingName(template.name); setTemplatePhrases([...(template.phrases ?? [])]); }}>编辑</button>
         <button type="button" className="notebook-library-remove" title="删除我的模板" aria-label={`删除模板 ${template.name}`} disabled={busy} onClick={() => void run(async () => {
           await api('/api/journal/library/remove', { template_id: template.id }); await refresh(); setMessage('模板已删除，当前笔记保留。');
         })}>×</button>
       </div>{editingTemplate === template.id && <div className="notebook-template-edit">
         <div className="notebook-library-form"><input aria-label={`模板 ${template.name} 的新名称`} maxLength={80} value={editingName} onChange={event => setEditingName(event.target.value)}/>
           <button type="button" disabled={busy || !editingName.trim()} onClick={() => void run(async () => {
-            await api('/api/journal/templates', { id: template.id, name: editingName.trim(), sections: template.sections });
-            await refresh(); setEditingTemplate(null); setMessage('模板名称已更新');
-          })}>保存名称</button></div>
+            await api('/api/journal/templates', { id: template.id, name: editingName.trim(), sections: template.sections, phrases: templatePhrases });
+            await refresh(); setEditingTemplate(null); setMessage('模板已更新');
+          })}>保存</button></div>
+        <div className="notebook-library-form"><input aria-label="模板常用语" maxLength={500} placeholder="给这个模板加一条常用语" value={phraseDraft} onChange={event => setPhraseDraft(event.target.value)}/>
+          <button type="button" disabled={!phraseDraft.trim() || templatePhrases.length >= 20} onClick={() => { setTemplatePhrases([...templatePhrases, phraseDraft.trim()]); setPhraseDraft(''); }}>＋</button></div>
+        {!!templatePhrases.length && <div className="notebook-phrases">{templatePhrases.map((text, index) => <span className="notebook-phrase" key={text}>
+          <span>{text}</span><button type="button" className="notebook-phrase-remove" aria-label={`移除模板常用语 ${text}`} onClick={() => setTemplatePhrases(templatePhrases.filter((_, i) => i !== index))}>×</button>
+        </span>)}</div>}
         <button type="button" className="link" disabled={busy || !templateStructure(value.sections).length || !editingName.trim()} onClick={() => void run(async () => {
-          await api('/api/journal/templates', { id: template.id, name: editingName.trim(), sections: templateStructure(value.sections) });
+          await api('/api/journal/templates', { id: template.id, name: editingName.trim(), sections: templateStructure(value.sections), phrases: templatePhrases });
           await refresh(); setEditingTemplate(null); setMessage('模板已更新为当前章节结构');
         })}>用当前章节更新此模板</button>
       </div>}</div>)}
       {!library.templates.length && <p className="notebook-library-hint">保存自己的章节组合，下次可以一键添加。</p>}
       <div className="notebook-library-form"><input aria-label="模板名称" maxLength={80} placeholder="给这套章节起个名字" value={templateName} onChange={event => setTemplateName(event.target.value)}/>
         <button type="button" disabled={busy || !templateName.trim() || !templateStructure(value.sections).length} onClick={() => void run(async () => {
-          await api('/api/journal/templates', { name: templateName.trim(), sections: templateStructure(value.sections) });
-          await refresh(); setTemplateName(''); setMessage('章节结构已存为模板，不含本次交易文字与勾选。');
+          await api('/api/journal/templates', { name: templateName.trim(), sections: templateStructure(value.sections), phrases: templatePhrases });
+          await refresh(); setTemplateName(''); setTemplatePhrases([]); setMessage('章节结构已存为模板，不含本次交易文字与勾选。');
         })}>保存组合</button></div>
       <p className="notebook-library-hint">只保存章节标题、分组和顺序，复盘内容仍属于这笔交易。</p>
 
@@ -231,17 +318,18 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
         {!value.sections.length && <option value="">先添加一个章节</option>}
         {value.sections.map((section, index) => <option key={section.id} value={section.id}>{section.title || `第 ${index + 1} 章`}</option>)}
       </select></label>
-      {!!library.phrases.length && <div className="notebook-phrases" aria-label="我的常用语">{frequentFirst(library.phrases).map(phrase => <span className="notebook-phrase" key={phrase.id}>
+      {!!templateChips.length && <><p className="notebook-library-hint">当前模板用语</p><div className="notebook-phrases" aria-label="当前模板用语">{templateChips.map(text => <button type="button" key={text} disabled={!active} onClick={() => insertPhrase(text)}>{text}</button>)}</div></>}
+      {!!library.phrases.length && <div className="notebook-phrases" aria-label="我的常用语">{frequentFirst(library.phrases).map(phrase => <span className={`notebook-phrase${phrase.pinned ? ' is-pinned' : ''}`} key={phrase.id}>
+        <button type="button" className="notebook-phrase-pin" aria-pressed={Boolean(phrase.pinned)} title={phrase.pinned ? '取消固定' : '固定到前面'} onClick={() => togglePin(phrase)}>{phrase.pinned ? '★' : '☆'}</button>
         <button type="button" disabled={!active} title={`用过 ${phrase.uses} 次`} onClick={() => insertPhrase(phrase.text, phrase.id)}>{phrase.text}</button>
         <button type="button" className="notebook-phrase-remove" aria-label={`删除常用语 ${phrase.text}`} disabled={busy} onClick={() => void run(async () => {
           await api('/api/journal/library/remove', { phrase_id: phrase.id }); await refresh();
         })}>×</button>
       </span>)}</div>}
-      <div className="notebook-phrases" aria-label="常用语示例">{SYSTEM_PHRASES.map(text => <button type="button" key={text} disabled={!active} onClick={() => insertPhrase(text)}>{text}</button>)}</div>
+      <p className="notebook-library-hint">系统词库</p>
+      <div className="notebook-phrases" aria-label="系统常用语">{SYSTEM_PHRASES.map(text => <button type="button" key={text} disabled={!active} onClick={() => insertPhrase(text)}>{text}</button>)}</div>
       <div className="notebook-library-form"><input aria-label="新常用语" maxLength={500} placeholder="写一句自己的常用语" value={phraseText} onChange={event => setPhraseText(event.target.value)}/>
-        <button type="button" disabled={busy || !phraseText.trim()} onClick={() => void run(async () => {
-          await api('/api/journal/phrases', { text: phraseText.trim() }); await refresh(); setPhraseText(''); setMessage('已保存到我的常用语');
-        })}>保存</button></div>
+        <button type="button" disabled={busy || !phraseText.trim()} onClick={() => savePhrase(phraseText)}>保存</button></div>
     </div>}
 
     <div className="notebook-free"><label htmlFor="note-body">自由笔记</label>{readOnly ? <p className="notebook-section-content">{value.body || '暂无自由笔记'}</p> : <textarea id="note-body" value={value.body} maxLength={10000} placeholder="其他想法可以写在这里，原来的笔记也保留在这里。" onChange={event => onChange({ ...value, body: event.target.value })}/>}</div>
