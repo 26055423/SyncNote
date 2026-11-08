@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 const compiled = ts.transpileModule(readFileSync(new URL('../src/notebookModel.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { appendTemplate, templateStructure, moveSection, appendPhrase, frequentFirst, checklistProgress, appendChecklist, DEFAULT_CHECKLIST } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { appendTemplate, templateStructure, moveSection, appendPhrase, frequentFirst, checklistProgress, appendChecklist, DEFAULT_CHECKLIST, summarizeNote } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const a = { id: 'a', title: '先看这里', checked: true, body: '这一笔的判断' };
 const b = { id: 'b', title: '持仓时', checked: false, body: '保留原文' };
 test('applying a template appends independent empty chapters and preserves the original note', () => {
@@ -73,4 +73,23 @@ test('templates keep the group but never the verdict or the trade text', () => {
   assert.equal(applied[0].group, '方向判断');
   assert.equal(applied[0].verdict, null);
   assert.equal(applied[0].body, '');
+});
+
+test('summary lists verdicts, groups, evidence and the free note', () => {
+  const note = {
+    body: '下次提前减仓',
+    tags: [],
+    sections: [
+      { id: '1', title: '方向', checked: true, body: '日线看多', group: '方向判断', verdict: 'yes', evidence: [{ id: 'e1', caption: '15m 需求区', drawing_id: 'd1', timeframe: '15', anchor_ms: 1 }] },
+      { id: '2', title: '位置', checked: true, body: '', group: '位置', verdict: 'no' },
+      { id: '3', title: '自由章', checked: false, body: '随手记' },
+    ],
+  };
+  const text = summarizeNote(note);
+  assert.match(text, /已检查 2\/2/);
+  assert.match(text, /符合 1 · 不符合 1/);
+  assert.match(text, /【方向判断】/);
+  assert.match(text, /\[符合\] 方向/);
+  assert.match(text, /证据：15m 需求区/);
+  assert.match(text, /自由笔记：/);
 });

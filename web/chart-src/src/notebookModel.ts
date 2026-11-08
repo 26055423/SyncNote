@@ -118,6 +118,36 @@ export function frequentFirst<T extends { uses: number; last_used: number }>(ite
   return [...items].sort((a, b) => b.uses - a.uses || b.last_used - a.last_used);
 }
 
+const VERDICT_TEXT: Record<string, string> = { yes: '符合', no: '不符合', unclear: '不确定', na: '不适用' };
+
+/** 只读的复盘摘要：由清单本身生成，不另存第二份正文。 */
+export function summarizeNote(value: NotebookValue): string {
+  const progress = checklistProgress(value.sections);
+  const lines: string[] = [];
+  const head = progress.total ? `复盘摘要（已检查 ${progress.done}/${progress.total}）` : '复盘摘要';
+  lines.push(head);
+  const tally: Record<string, number> = { yes: 0, no: 0, unclear: 0, na: 0 };
+  for (const section of value.sections) {
+    const verdict = section.verdict ?? '';
+    if (verdict in tally) tally[verdict] += 1;
+  }
+  const scored = Object.entries(tally).filter(([, count]) => count > 0).map(([key, count]) => `${VERDICT_TEXT[key]} ${count}`);
+  if (scored.length) lines.push(scored.join(' · '));
+  let section: string | null = null;
+  for (const row of value.sections) {
+    const label = VERDICT_TEXT[row.verdict ?? ''] ?? (row.checked ? '已检查' : '未检查');
+    if (row.group && row.group !== section) {
+      section = row.group;
+      lines.push('', `【${row.group}】`);
+    }
+    lines.push(`- [${label}] ${row.title || '未命名'}`);
+    if (row.body.trim()) lines.push(`  ${row.body.trim()}`);
+    for (const item of row.evidence ?? []) lines.push(`  证据：${item.caption}`);
+  }
+  if (value.body.trim()) lines.push('', '自由笔记：', value.body.trim());
+  return lines.join('\n').trim();
+}
+
 /** 完成度：分母只算检查项，且排除「不适用」——自由章节不拉低完成度。 */
 export function checklistProgress(sections: NoteSection[]): { done: number; total: number } {
   const items = sections.filter(section => section.group && section.verdict !== 'na');

@@ -122,6 +122,19 @@ class JournalTemplates(unittest.TestCase):
   with self.assertRaises(library.JournalError) as error:library.pin_phrase(self.db,'bob',{'id':a['id'],'pinned':True})
   self.assertEqual(error.exception.code,404)
 
+ def test_stats_use_saved_notes_and_verdicts_only(self):
+  self.note('1',sections=[{'id':'a1','title':'方向','group':'方向','checked':True,'verdict':'yes','body':'看多'},
+                          {'id':'a2','title':'位置','group':'位置','checked':False,'body':'等回踩'}])
+  self.note('2',sections=[{'id':'b1','title':'方向','group':'方向','checked':True,'verdict':'no','body':'看空'},
+                          {'id':'b2','title':'位置','group':'位置','checked':False,'body':'没等到'}])
+  result=library.stats(self.db,'alice')
+  self.assertEqual(result['notes'],2)
+  self.assertEqual(result['verdicts']['yes'],1);self.assertEqual(result['verdicts']['no'],1)
+  by_title={row['title']:row for row in result['titles']}
+  self.assertEqual(by_title['方向']['checked'],2)
+  self.assertEqual(by_title['位置']['checked'],0)
+  self.assertEqual(result['skipped'][0]['title'],'位置')
+
  def test_section_evidence_roundtrips_but_templates_drop_it(self):
   evidence=[{'id':'ev-1','caption':'15m 需求区：首次回踩','drawing_id':'d-1','timeframe':'15','anchor_ms':1761998400000,'snapshot':{'type':'trendline'}}]
   saved=self.note(sections=[self.section('结构',group='确认',evidence=evidence)])['sections'][0]

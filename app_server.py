@@ -422,6 +422,8 @@ class Handler(BaseHTTPRequestHandler):
                         note=journal.notes(db,target)['notes'].get(str(ticket)) if (target==uid or row or owner['share_reviews']) else None
                         # 分享切片优先：收件人看到的是分享人当时那个窗口，而不是他后来改过的存档。
                         view=chart.share_view(row) if row else None
+                        # 分享时冻结的笔记优先：收件人看到的是分享当时的内容。
+                        if view and isinstance(view.get('note'),dict):note=view['note']
                         stored=chart.state(db,target,str(ticket))
                         if view and view.get('document'):
                             stored={'document':view['document'],'updated':row['created'],'source':'share'}
@@ -604,6 +606,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({**(journal.notes(db,target) if can else {'categories':journal.DEFAULT_TAGS,'notes':{}}),'can_view':can,'editable':target==uid})
                     if path=='/api/journal/library':return self.reply(journal.journal_templates.library(db,uid))
                     if path=='/api/journal/public':return self.reply({'items':journal.journal_templates.public_list(db,uid,q.get('q',[''])[0],q.get('limit',['50'])[0])})
+                    if path=='/api/journal/stats':return self.reply(journal.journal_templates.stats(db,uid))
                     if path=='/api/trade-review':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
                         if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
@@ -983,7 +986,7 @@ class Handler(BaseHTTPRequestHandler):
                         result=chart.clear_state(db,uid,ticket) if data.get('clear') is True else chart.save_state(db,uid,ticket,data.get('state'))
                     elif path=='/api/reviews/share':
                         ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
-                        result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''),data.get('snapshot'))
+                        result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''),data.get('snapshot'),journal.notes(db,uid)['notes'].get(ticket))
                     elif path=='/api/reviews/share/seen':
                         share_id=data.get('id')
                         if not isinstance(share_id,int) or isinstance(share_id,bool):raise Error('消息编号不正确')

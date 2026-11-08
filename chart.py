@@ -32,6 +32,8 @@ def initialize(db):
     columns = {row[1] for row in db.execute('PRAGMA table_info(review_shares)')}
     if 'snapshot' not in columns:
         db.execute("ALTER TABLE review_shares ADD COLUMN snapshot TEXT NOT NULL DEFAULT ''")
+    if 'note_snapshot' not in columns:
+        db.execute("ALTER TABLE review_shares ADD COLUMN note_snapshot TEXT NOT NULL DEFAULT ''")
 
 
 def state(db, person, ticket):
@@ -93,16 +95,24 @@ def clean_snapshot(snapshot):
 def share_view(row):
     """解析一行的分享切片；旧消息没有切片时返回 None（退回读存档）。"""
     raw = row['snapshot'] if 'snapshot' in row.keys() else ''
-    if not raw:
-        return None
-    try:
-        value = json.loads(raw)
-    except ValueError:
-        return None
-    return value if isinstance(value, dict) else None
+    value = {}
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            value = parsed
+    frozen = row['note_snapshot'] if 'note_snapshot' in row.keys() else ''
+    if frozen:
+        try:
+            value['note'] = json.loads(frozen)
+        except ValueError:
+            value['note'] = None
+    return value or None
 
 
-def share(db, owner, ticket, recipients, message, snapshot=None):
+def share(db, owner, ticket, recipients, message, snapshot=None, note=None):
     """Send one review chart to other users; re-sending the same ticket updates the message."""
     if not isinstance(recipients, list) or not recipients:
         raise ChartError('请选择至少一位收件人')
@@ -111,6 +121,7 @@ def share(db, owner, ticket, recipients, message, snapshot=None):
     if not isinstance(message, str) or len(message) > MAX_MESSAGE:
         raise ChartError('留言最多 %d 字' % MAX_MESSAGE)
     body = clean_snapshot(snapshot)
+    note_body = json.dumps(note, ensure_ascii=False) if isinstance(note, dict) else ''
     ids = []
     for value in recipients:
         if not isinstance(value, str) or not value or value == owner:
@@ -126,7 +137,7 @@ def share(db, owner, ticket, recipients, message, snapshot=None):
         raise ChartError('收件人不存在')
     now = time.time()
     for recipient in ids:
-        db.execute('INSERT INTO review_shares(owner,ticket,recipient,message,created,seen,snapshot) VALUES(?,?,?,?,?,0,?) ON CONFLICT(owner,ticket,recipient) DO UPDATE SET message=excluded.message,created=excluded.created,seen=0,snapshot=excluded.snapshot', (owner, str(ticket), recipient, message.strip(), now, body))
+        db.execute('INSERT INTO review_shares(owner,ticket,recipient,message,created,seen,snapshot,note_snapshot) VALUES(?,?,?,?,?,0,?,?) ON CONFLICT(owner,ticket,recipient) DO UPDATE SET message=excluded.message,created=excluded.created,seen=0,snapshot=excluded.snapshot,note_snapshot=excluded.note_snapshot', (owner, str(ticket), recipient, message.strip(), now, body, note_body))
     return {'ok': True, 'sent': len(ids), 'created': now, 'has_snapshot': bool(body)}
 
 

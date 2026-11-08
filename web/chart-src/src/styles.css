@@ -1920,3 +1920,12 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-evidence-candidate { display: flex; flex-direction: column; width: 100%; gap: 2px; margin-top: 5px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); font-size: 11px; text-align: left; }
 .notebook-evidence-candidate small { color: var(--dim); font-size: 10px; }
 .notebook-evidence-candidate:hover { border-color: var(--accent-line); }
+
+/* 复盘摘要与统计 */
+.notebook-summary { margin: 12px 0; padding: 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel-2); }
+.notebook-summary-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.notebook-summary-head strong { font-size: 12px; }
+.notebook-summary-head span { color: var(--dim); font-size: 10px; }
+.notebook-summary-head .link { margin-left: auto; padding: 2px 4px; font-size: 11px; }
+.notebook-summary-text { margin: 8px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; font-family: inherit; font-size: 11px; line-height: 1.75; color: var(--text); }
+.notebook-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); color: var(--dim); font-size: 10px; }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import {
   appendChecklist, appendPhrase, appendTemplate, checklistProgress, frequentFirst, MAX_SECTIONS, moveSection,
-  newSection, STARTER_CHAPTERS, SYSTEM_PHRASES, templateStructure, VERDICTS,
+  newSection, STARTER_CHAPTERS, summarizeNote, SYSTEM_PHRASES, templateStructure, VERDICTS,
   type NotebookLibrary, type NotebookValue, type NoteSection, type PublicTemplate, type Verdict,
 } from './notebookModel';
 export type { NotebookValue, NoteSection } from './notebookModel';
@@ -22,6 +22,13 @@ interface Props {
   evidence?: EvidenceApi;
 }
 const EMPTY_LIBRARY: NotebookLibrary = { templates: [], phrases: [], chapters: [] };
+
+interface Stats {
+  notes: number;
+  verdicts: Record<string, number>;
+  skipped: Array<{ title: string; total: number; checked: number; rate: number }>;
+  titles: Array<{ title: string; total: number; checked: number; rate: number }>;
+}
 
 type Block =
   | { kind: 'group'; name: string; members: Array<{ section: NoteSection; index: number }> }
@@ -67,6 +74,9 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   const [publicLoading, setPublicLoading] = useState(false);
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<DrawingCandidate[]>([]);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [copied, setCopied] = useState(false);
   const areas = useRef(new Map<string, HTMLTextAreaElement>());
   const carets = useRef(new Map<string, { start: number; end: number }>());
   const lastFocused = useRef<string | null>(null);
@@ -191,6 +201,12 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       if (mounted.current) setPublicLoading(false);
     }
   };
+  const openSummary = () => {
+    setSummaryOpen(true);
+    setCopied(false);
+    if (!readOnly) void api<Stats>('/api/journal/stats').then(setStats).catch(() => setStats(null));
+  };
+  const summaryText = summarizeNote(value);
   const circles = '①②③④⑤⑥⑦⑧⑨⑩';
   const openEvidencePicker = (id: string) => {
     setPickerFor(id);
@@ -328,6 +344,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
           setMessage('已加入通用清单，可以改名、删项或拖动排序。');
         }}>＋ 通用清单</button>}
         <button type="button" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(!libraryOpen)}>我的模板与常用语</button>
+        <button type="button" aria-expanded={summaryOpen} onClick={() => (summaryOpen ? setSummaryOpen(false) : openSummary())}>复盘摘要</button>
       </div>
       {!value.sections.length && <div className="notebook-empty"><p>标题、顺序和内容都由你决定。可以从空白开始，也可以加一套通用清单再改。</p></div>}
       {!value.sections.length && topTemplate && <div className="notebook-hint">
@@ -460,6 +477,26 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       <div className="notebook-phrases" aria-label="系统常用语">{SYSTEM_PHRASES.map(text => <button type="button" key={text} disabled={!active} onClick={() => insertPhrase(text)}>{text}</button>)}</div>
       <div className="notebook-library-form"><input aria-label="新常用语" maxLength={500} placeholder="写一句自己的常用语" value={phraseText} onChange={event => setPhraseText(event.target.value)}/>
         <button type="button" disabled={busy || !phraseText.trim()} onClick={() => savePhrase(phraseText)}>保存</button></div>
+    </div>}
+
+    {summaryOpen && <div className="notebook-summary">
+      <div className="notebook-summary-head">
+        <strong>复盘摘要</strong>
+        <span>由清单生成，只读；改内容请改上面的清单。</span>
+        <button type="button" className="link" onClick={() => {
+          const text = summaryText;
+          const done = () => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); };
+          if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(text).then(done).catch(done);
+          else done();
+        }}>{copied ? '已复制' : '复制'}</button>
+        <button type="button" className="link" onClick={() => setSummaryOpen(false)}>收起</button>
+      </div>
+      <pre className="notebook-summary-text">{summaryText}</pre>
+      {stats && <div className="notebook-stats">
+        <span>已复盘 {stats.notes} 笔</span>
+        <span>符合 {stats.verdicts.yes ?? 0} · 不符合 {stats.verdicts.no ?? 0} · 不确定 {stats.verdicts.unclear ?? 0}</span>
+        {!!stats.skipped.length && <span title="检查率最低的项">最常跳过：{stats.skipped.slice(0, 3).map(row => `${row.title}（${Math.round(row.rate * 100)}%）`).join('、')}</span>}
+      </div>}
     </div>}
 
     <div className="notebook-free"><label htmlFor="note-body">自由笔记</label>{readOnly ? <p className="notebook-section-content">{value.body || '暂无自由笔记'}</p> : <textarea id="note-body" value={value.body} maxLength={10000} placeholder="其他想法可以写在这里，原来的笔记也保留在这里。" onChange={event => onChange({ ...value, body: event.target.value })}/>}</div>

@@ -143,6 +143,31 @@ def pin_item(db,person,data):
  db.execute('UPDATE '+table+' SET pinned=? WHERE person=? AND id=?',(1 if pinned else 0,person,ident))
  return {'ok':True,'pinned':pinned}
 
+def stats(db,person):
+ """个人复盘统计：完成率、结论分布、最常跳过的检查项。只算真正保存过的复盘。"""
+ rows=db.execute('SELECT s.sections FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket WHERE s.person=?',(person,)).fetchall()
+ counts={};notes=0;verdicts={'yes':0,'no':0,'unclear':0,'na':0}
+ for row in rows:
+  try:sections=json.loads(row['sections'])
+  except (TypeError,ValueError):continue
+  meaningful=[s for s in sections if s.get('checked') or str(s.get('body','')).strip()]
+  if not meaningful:continue
+  notes+=1
+  for section in meaningful:
+   title=str(section.get('title','')).strip() or '未命名'
+   entry=counts.setdefault(title,{'title':title,'total':0,'checked':0,'yes':0,'no':0,'unclear':0,'na':0})
+   entry['total']+=1
+   if section.get('checked'):entry['checked']+=1
+   verdict=section.get('verdict')
+   if verdict in verdicts:
+    entry[verdict]+=1;verdicts[verdict]+=1
+ titles=sorted(counts.values(),key=lambda item:(-item['total'],item['title']))[:50]
+ skipped=[item for item in counts.values() if item['total']>=2]
+ skipped=sorted(skipped,key=lambda item:(item['checked']/item['total'],-item['total'],item['title']))[:5]
+ for item in titles+skipped:
+  item['rate']=round(item['checked']/item['total'],3) if item['total'] else 0
+ return {'notes':notes,'titles':titles,'skipped':skipped,'verdicts':verdicts}
+
 def public_list(db,person,query='',limit=50):
  rows=db.execute("SELECT p.*,u.nickname FROM journal_public p JOIN users u ON u.id=p.owner WHERE p.hidden=0 ORDER BY p.favorites DESC,p.uses DESC,p.published DESC LIMIT ?",(max(1,min(int(limit or 50),100)),)).fetchall()
  text=(query or '').strip().lower()
