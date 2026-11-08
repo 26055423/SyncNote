@@ -603,6 +603,7 @@ class Handler(BaseHTTPRequestHandler):
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
                         return self.reply({**(journal.notes(db,target) if can else {'categories':journal.DEFAULT_TAGS,'notes':{}}),'can_view':can,'editable':target==uid})
                     if path=='/api/journal/library':return self.reply(journal.journal_templates.library(db,uid))
+                    if path=='/api/journal/public':return self.reply({'items':journal.journal_templates.public_list(db,uid,q.get('q',[''])[0],q.get('limit',['50'])[0])})
                     if path=='/api/trade-review':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
                         if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
@@ -968,6 +969,10 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'ok':True})
                     if path=='/api/journal':result=journal.save(db,uid,data)
                     elif path=='/api/journal/templates':result=journal.journal_templates.save_template(db,uid,data)
+                    elif path=='/api/journal/public/publish':result=journal.journal_templates.publish(db,uid,data)
+                    elif path=='/api/journal/public/unpublish':result=journal.journal_templates.unpublish(db,uid,data)
+                    elif path=='/api/journal/public/import':result=journal.journal_templates.import_public(db,uid,data)
+                    elif path=='/api/journal/public/favorite':result=journal.journal_templates.favorite_public(db,uid,data)
                     elif path=='/api/journal/phrases':result=journal.journal_templates.save_phrase(db,uid,data)
                     elif path=='/api/journal/phrases/pin':result=journal.journal_templates.pin_phrase(db,uid,data)
                     elif path=='/api/journal/templates/pin':result=journal.journal_templates.pin_item(db,uid,data)

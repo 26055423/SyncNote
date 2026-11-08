@@ -122,6 +122,29 @@ class JournalTemplates(unittest.TestCase):
   with self.assertRaises(library.JournalError) as error:library.pin_phrase(self.db,'bob',{'id':a['id'],'pinned':True})
   self.assertEqual(error.exception.code,404)
 
+ def test_public_library_publishes_structure_only_and_rejects_abuse(self):
+  self.db.executescript("CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,nickname TEXT); INSERT OR IGNORE INTO users VALUES('alice','A'),('bob','B');")
+  self.db.execute("INSERT OR IGNORE INTO users VALUES('alice','A')")
+  sections=[{'id':'s1','title':'方向','group':'方向判断','checked':True,'body':'私人判断','verdict':'yes'}]
+  template=library.save_template(self.db,'alice',{'name':'五问','sections':sections,'phrases':['扫了低点']})['template']
+  published=library.publish(self.db,'alice',{'template_id':template['id'],'summary':'开盘前用','symbol':'XAUUSD','timeframe':'M15'})
+  listing=library.public_list(self.db,'bob')
+  self.assertEqual(len(listing),1)
+  self.assertEqual(listing[0]['chapters'],1);self.assertEqual(listing[0]['phrases'],1)
+  self.assertEqual(listing[0]['owner'],'A')
+  imported=library.import_public(self.db,'bob',{'id':published['id']})['template']
+  self.assertEqual(imported['sections'][0]['body'],'')
+  self.assertIsNone(imported['sections'][0]['verdict'])
+  self.assertEqual(library.public_list(self.db,'bob')[0]['uses'],1)
+  with self.assertRaises(library.JournalError):library.import_public(self.db,'alice',{'id':published['id']})
+  with self.assertRaises(library.JournalError) as error:library.unpublish(self.db,'bob',{'id':published['id']})
+  self.assertEqual(error.exception.code,404)
+  library.favorite_public(self.db,'bob',{'id':published['id'],'on':True})
+  library.favorite_public(self.db,'bob',{'id':published['id'],'on':True})
+  self.assertEqual(library.public_list(self.db,'alice')[0]['favorites'],1)
+  library.unpublish(self.db,'alice',{'id':published['id']})
+  self.assertEqual(library.public_list(self.db,'bob'),[])
+
  def test_template_pin_sorts_first_and_rejects_other_owners(self):
   first=library.save_template(self.db,'alice',{'name':'常用','sections':[self.section()]})['template']
   library.save_template(self.db,'alice',{'name':'以后','sections':[{'id':'other','title':'另一套','body':'','checked':False}]})

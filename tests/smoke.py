@@ -180,7 +180,7 @@ def main():
    alice.request('/api/journal',{'ticket':'fixture-1','body':'等回调确认再入场','tags':['入场时机']})
    # 自由章节与个人素材库沿用当前登录用户，不能用 person 字段切换归属。
    anon.request('/api/journal/library',status=401)
-   for path in ('/api/journal/templates','/api/journal/phrases','/api/journal/library/use','/api/journal/library/remove'):
+   for path in ('/api/journal/templates','/api/journal/phrases','/api/journal/library/use','/api/journal/library/remove','/api/journal/public/publish','/api/journal/public/import','/api/journal/public/unpublish'):
     anon.request(path,{},status=401)
    sections=[{'id':'chapter-a','title':'先问自己是否着急','checked':True,'body':'扫了低点，等回踩确认','group':'确认','verdict':'yes'},
              {'id':'chapter-b','title':'只改一件事','checked':False,'body':''}]
@@ -200,9 +200,17 @@ def main():
    template=alice.request('/api/journal/templates',{'name':'我的开单前五问','sections':sections,'person':b['id']})['template']
    ensure(template['name']=='我的开单前五问' and [s['title'] for s in template['sections']]==[s['title'] for s in sections],'template keeps freely named ordered chapters')
    ensure(all(not s['body'] and not s['checked'] for s in template['sections']),'template does not copy private trade observations or checked state')
+   published=alice.request('/api/journal/public/publish',{'template_id':template['id'],'summary':'开盘前用','symbol':'XAUUSD','timeframe':'M15'})
+   listing=bob.request('/api/journal/public?limit=10')['items']
+   ensure(len(listing)==1 and listing[0]['chapters']==len(sections) and listing[0]['summary']=='开盘前用','public template listing keeps structure only')
+   imported=bob.request('/api/journal/public/import',{'id':published['id']})['template']
+   ensure(all(not s['body'] and s['verdict'] is None for s in imported['sections']),'imported public template copies structure without trade content')
+   alice.request('/api/journal/public/unpublish',{'id':published['id']})
+   ensure(alice.request('/api/journal/public?limit=10')['items']==[],'unpublished template leaves the public list')
    phrase=alice.request('/api/journal/phrases',{'text':' 扫了低点 ','person':b['id']})['phrase']
    ensure(alice.request('/api/journal/phrases',{'text':'扫了低点'})['phrase']['id']==phrase['id'],'personal phrase save is deduplicated')
-   ensure(bob.request('/api/journal/library?person='+a['id'])=={'templates':[],'phrases':[],'chapters':[]},'library query cannot reveal another user templates or phrases')
+   bob_library=bob.request('/api/journal/library?person='+a['id'])
+   ensure(all(row['id']!=template['id'] for row in bob_library['templates']) and all(row['id']!=phrase['id'] for row in bob_library['phrases']),'library query cannot reveal another user templates or phrases')
    for key,ident in [('template_id',template['id']),('phrase_id',phrase['id'])]:
     bob.request('/api/journal/library/use',{key:ident,'person':a['id']},status=404)
     bob.request('/api/journal/library/remove',{key:ident,'person':a['id']},status=404)
