@@ -84,6 +84,99 @@
   --scrim: rgba(3, 7, 11, .72);
 }
 
+/* Indicator library: the same Vela dialog chrome, with room for category and search results. */
+.tp-indicator-dialog {
+  width: min(780px, calc(100vw - 32px)) !important;
+  max-width: calc(100vw - 32px) !important;
+  max-height: calc(100dvh - 48px);
+  color: var(--text);
+}
+.indicator-library-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 20px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--well);
+  color: var(--dim);
+}
+.indicator-library-search:focus-within { border-color: var(--accent); }
+.indicator-library-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.indicator-library-body { display: grid; grid-template-columns: 150px minmax(0, 1fr); min-height: 320px; }
+.indicator-library-nav { padding: 8px; border-right: 1px solid var(--line); background: var(--strip); }
+.indicator-library-tab {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 3px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.indicator-library-tab:hover { background: var(--hover); color: var(--text); }
+.indicator-library-tab.active { background: var(--accent-soft); color: var(--accent); }
+.indicator-library-count { font-size: 11px; font-variant-numeric: tabular-nums; opacity: .8; }
+.indicator-library-results { min-width: 0; }
+.indicator-library-heading { padding: 12px 20px 8px; color: var(--dim); font-size: 11px; }
+.indicator-library-list { height: min(400px, 47vh); overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 12px; }
+.indicator-library-row { display: flex; align-items: center; border-radius: 6px; }
+.indicator-library-row:hover { background: var(--hover); }
+.indicator-library-add {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 47px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.indicator-library-add:disabled { cursor: default; opacity: 1; }
+.indicator-library-add > svg { flex: 0 0 auto; color: var(--dim); }
+.indicator-library-name { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.indicator-library-name strong { overflow-wrap: anywhere; font-weight: 500; }
+.indicator-library-name small { font-size: 11px; color: var(--dim); }
+.indicator-library-plus { margin-left: auto; color: var(--dim); font-size: 20px; line-height: 1; }
+.indicator-library-remove { margin-right: 10px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--dim); cursor: pointer; white-space: nowrap; }
+.indicator-library-remove:hover { border-color: var(--bad-line); color: var(--bad); }
+.indicator-library-feedback { padding: 10px 20px; border-top: 1px solid var(--line); color: var(--dim); font-size: 12px; line-height: 1.6; }
+.indicator-library-empty { padding: 44px 24px; color: var(--dim); line-height: 1.8; text-align: center; font-size: 13px; }
+@media (max-width: 600px) {
+  .indicator-library-body { grid-template-columns: minmax(0, 1fr); min-height: 260px; }
+  .indicator-library-nav { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .indicator-library-tab { width: auto; flex: 0 0 auto; margin: 0 3px 0 0; padding: 8px 10px; }
+  .indicator-library-search { margin: 4px 12px 12px; }
+  .indicator-library-search input { font-size: 12px; }
+  .indicator-library-list { height: min(340px, 42vh); }
+}
+
 /* 亮色：同样的令牌，换一套值。任何一块看起来还是深色，说明那条样式的颜色写死了。 */
 :root[data-theme='light'] {
   --chart-grid: rgba(91, 107, 128, 0.08);

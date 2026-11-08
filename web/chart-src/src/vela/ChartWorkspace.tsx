@@ -5,6 +5,7 @@ import { registerBigwolf } from './bigwolfNative';
 import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
 import { centerChartOnTime, panChartByTime, restoreChartLeft } from './viewportPan';
+import { fitSavedWorkspaceTracks } from './trackSizing';
 
 /**
  * 指标选择器（指标库）的排位。
@@ -116,11 +117,12 @@ export interface ChartHandle {
   applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string, refresh?: boolean): Promise<void>;
 }
 
-export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
+export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'dateRange' | 'drawings' | 'style';
 /** 「时间轴」开关存在本机：只影响点击跳转，不影响缩放。 */
 const TIME_SYNC_KEY = 'sn-time-sync';
 /** 「十字线」联动开关也存在本机，默认开。 */
 const CROSSHAIR_SYNC_KEY = 'sn-crosshair-sync';
+const DATE_RANGE_SYNC_KEY = 'sn-date-range-sync';
 
 interface Props {
   /** Mount the native style/indicators/undo controls in the shared page header. */
@@ -271,10 +273,14 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const crosshairSyncRef = useRef<boolean>((() => {
     try { return localStorage.getItem(CROSSHAIR_SYNC_KEY) !== '0'; } catch { return true; }
   })());
+  const dateRangeSyncRef = useRef<boolean>((() => {
+    try { return localStorage.getItem(DATE_RANGE_SYNC_KEY) === '1'; } catch { return false; }
+  })());
   const stateWithTimeSync = (ws: any): Partial<Record<SyncKind, boolean>> => ({
     ...((ws?.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>),
     viewport: timeSyncRef.current,
     crosshair: crosshairSyncRef.current,
+    dateRange: dateRangeSyncRef.current,
   });
   /** 把除 exceptId 之外的格子平移到 at 附近，保持实际蜡烛宽度。 */
   const jumpAllTo = (at: number | null, exceptId?: string) => {
@@ -309,6 +315,14 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       programmaticUntilRef.current.set(other.id, until);
       // 原生 panBy 保持实际蜡烛宽度；setVisibleRange 跨缺口会重新缩放。
       try { panChartByTime(other.chart, delta); } catch { /* ignore */ }
+    }
+  };
+  const alignDateRanges = (exceptId: string, range: { from: number; to: number }) => {
+    if (!Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return;
+    for (const other of wsRef.current?.cells?.() ?? []) {
+      if (other.id === exceptId) continue;
+      programmaticUntilRef.current.set(other.id, Date.now() + 250);
+      other.chart?.setVisibleRange?.(range);
     }
   };
   const [ready, setReady] = useState(false);
@@ -456,13 +470,23 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     toggleSync(kind) {
       const ws = wsRef.current;
       if (!ws) return;
+      if (kind === 'dateRange') {
+        const next = !dateRangeSyncRef.current;
+        dateRangeSyncRef.current = next;
+        try { localStorage.setItem(DATE_RANGE_SYNC_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+        const cell = ws.active;
+        const range = cell?.chart?.getVisibleRange?.();
+        if (next && range) alignDateRanges(cell.id, range);
+        onSyncs?.(stateWithTimeSync(ws));
+        return;
+      }
       // 「时间轴」不再是 Vela 的缩放同步：本站只做"点击跳转到同一时刻"，
       // 不同窗口的缩放/平移始终互不影响。开关状态自己记，存在本机。
       if (kind === 'viewport') {
         const next = !timeSyncRef.current;
         timeSyncRef.current = next;
         try { localStorage.setItem(TIME_SYNC_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-        if (next) jumpAllTo(activeCenter());
+        if (next && !dateRangeSyncRef.current) jumpAllTo(activeCenter());
         onSyncs?.(stateWithTimeSync(ws));
         return;
       }
@@ -558,6 +582,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     // A rebuilt workspace owns a new native toolbar; remount it once ready.
     setReady(false);
     let disposed = false;
+    const interactionDisposers: Array<() => void> = [];
 
     (async () => {
       try {
@@ -566,6 +591,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         await import('./indicators/smc');
         await import('./indicators/hiddenOb');
         await import('./layouts');
+        const { configurePriceScale } = await import('./chartInteractions');
+        const { attachIndicatorPicker } = await import('./enhancedIndicatorPicker');
         const [{ registerLocale }, zhHans] = await Promise.all([
           import('@luxalgo/vela'),
           import('@luxalgo/vela/locales/zh-Hans'),
@@ -600,6 +627,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         }) as any;
 
         wsRef.current = ws;
+        interactionDisposers.push(attachIndicatorPicker(ws));
         // 调试/端到端检查用：控制台里可以直接看视窗范围、画线存档。
         (window as unknown as Record<string, unknown>).__tpChart = ws;
 
@@ -608,7 +636,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             // 存档里带着当时那台机器的配色（rendererConfig 里有背景/网格/文字色）：
             // 直接套用会让"面板已经换成浅色、K 线还是黑的"。主题由本站设置统一决定，
             // 所以回放前把渲染器配置剥掉。
-            ws.applyState(stripTheme(savedState, providerName, symbol));
+            ws.applyState(fitSavedWorkspaceTracks(
+              stripTheme(savedState, providerName, symbol),
+              Math.max(0, host.clientWidth - (readOnly ? 0 : 44)),
+            ));
           } catch {
             /* 存档不兼容时退回默认布局，不阻塞看图 */
           }
@@ -726,6 +757,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           if (cell) applyGridPreference(cell);
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
+          interactionDisposers.push(configurePriceScale(cell.chart));
           // A quote or a resize may move the active viewport too; only a real gesture leads.
           cell.host?.addEventListener('pointerdown', () => {
             gestureUntilRef.current.set(cell.id, Infinity);
@@ -750,7 +782,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               if (Date.now() < (seriesUpdateUntilRef.current.get(cell.id) ?? 0)) return;
               const programmaticUntil = programmaticUntilRef.current.get(cell.id) ?? 0;
               const gesturing = Date.now() < (gestureUntilRef.current.get(cell.id) ?? 0);
-              if (timeSyncRef.current && gesturing && ws.active?.id === cell.id && Date.now() > programmaticUntil && previous && span > 0) {
+              if (gesturing && ws.active?.id === cell.id && Date.now() > programmaticUntil && previous && span > 0 && dateRangeSyncRef.current) {
+                alignDateRanges(cell.id, range);
+              } else if (timeSyncRef.current && gesturing && ws.active?.id === cell.id && Date.now() > programmaticUntil && previous && span > 0) {
                 const previousSpan = previous.to - previous.from;
                 if (Math.abs(previousSpan - span) < 1) {
                   const delta = range.from - previous.from;
@@ -772,7 +806,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             if (replayArmedRef.current && typeof at === 'number') {
               void startReplay(at, cell.id).catch(error => onError?.(error instanceof Error ? error.message : String(error))); return;
             }
-            if (replaying() || !timeSyncRef.current) return;
+            if (replaying() || !timeSyncRef.current || dateRangeSyncRef.current) return;
             if (typeof at !== 'number') return;
             jumpAllTo(at, cell.id);
           };
@@ -891,6 +925,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
 
     return () => {
       disposed = true;
+      interactionDisposers.forEach(dispose => dispose());
       replayRequestRef.current += 1;
       replayArmedRef.current = false; replayBusyRef.current = false; replayPendingRef.current.clear();
       const ws = wsRef.current;

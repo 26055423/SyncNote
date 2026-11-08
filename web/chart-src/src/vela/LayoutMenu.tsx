@@ -36,13 +36,14 @@ function gridDef(rows: number, cols: number): Pick<LayoutDef, 'cols' | 'rows'> {
   return { cols: Array.from({ length: cols }, () => 1), rows: Array.from({ length: rows }, () => 1) };
 }
 
-export type SyncKindId = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'drawings' | 'style';
+export type SyncKindId = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'dateRange' | 'drawings' | 'style';
 
 /** TradingView's "sync to all charts" list, in their order. 只保留本站真的能改的项。 */
 const SYNC_ROWS: { kind: SyncKindId; label: string; title?: string }[] = [
   { kind: 'timeframe', label: '周期' },
   { kind: 'crosshair', label: '十字线' },
-  { kind: 'viewport', label: '时间定位', title: '点击图表时让其他窗口对齐同一时刻，保持各自缩放；不会统一可见日期范围。' },
+  { kind: 'viewport', label: '时间定位', title: '点击或拖动时对齐时间，保持各窗口的 K 线宽度；日期范围关闭时生效。' },
+  { kind: 'dateRange', label: '日期范围', title: '同步拖动与缩放，所有窗口显示同一段日期。高周期可能只显示少量 K 线；默认关闭。' },
   { kind: 'drawings', label: '绘图同步到所有图表' },
 ];
 
