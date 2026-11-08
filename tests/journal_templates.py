@@ -160,6 +160,10 @@ class JournalTemplates(unittest.TestCase):
   self.assertEqual(titles['扫低后 Flip']['uses'],3)
   self.assertEqual(titles['扫低后 Flip']['group'],'结构')
   self.assertNotIn('空章节',titles)
+  cloud_rows=library.public_chapters(self.db)['chapters']
+  self.assertTrue(cloud_rows[0]['users']>=1 and cloud_rows[0]['title']=='扫低后 Flip')
+  self.assertTrue(any(row.get('system') and row['title']=='订单块（OB）' for row in cloud_rows))
+  self.assertTrue(all(row['users']>=0 for row in cloud_rows))
 
  def test_template_pin_sorts_first_and_rejects_other_owners(self):
   first=library.save_template(self.db,'alice',{'name':'常用','sections':[self.section()]})['template']

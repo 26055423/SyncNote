@@ -140,6 +140,25 @@ def pin_item(db,person,data):
  db.execute('UPDATE '+table+' SET pinned=? WHERE person=? AND id=?',(1 if pinned else 0,person,ident))
  return {'ok':True,'pinned':pinned}
 
+SYSTEM_CHAPTERS=[
+ {'title':'大周期方向','group':'方向判断'},
+ {'title':'扫流动性（扫低/扫高）','group':'结构'},
+ {'title':'结构突破（BOS）','group':'结构'},
+ {'title':'性质转变（CHoCH）','group':'结构'},
+ {'title':'订单块（OB）','group':'位置'},
+ {'title':'公允价值缺口（FVG）','group':'位置'},
+ {'title':'溢价/折价区','group':'位置'},
+ {'title':'前高/前低','group':'位置'},
+ {'title':'回踩确认','group':'确认'},
+ {'title':'入场模型成立','group':'执行'},
+ {'title':'止损位置有依据','group':'执行'},
+ {'title':'仓位符合计划','group':'管理'},
+ {'title':'移动止损/保本','group':'管理'},
+ {'title':'盈亏比与预期','group':'管理'},
+ {'title':'情绪与状态','group':'复盘'},
+ {'title':'下次只改一件事','group':'复盘'},
+]
+
 def public_chapters(db,limit=60,min_users=1):
  """全服条目词云：只回标题、分组、人数与使用笔数，不带任何用户或交易信息。"""
  rows=db.execute('SELECT s.person,s.ticket,s.sections FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket').fetchall()
@@ -165,6 +184,10 @@ def public_chapters(db,limit=60,min_users=1):
   group=max(entry['groups'],key=entry['groups'].get) if entry['groups'] else None
   out.append({'title':entry['title'],'users':users,'uses':entry['uses'],'group':group})
  out.sort(key=lambda item:(-item['users'],-item['uses'],item['title']))
+ have={item['title'] for item in out}
+ for term in SYSTEM_CHAPTERS:
+  if term['title'] in have:continue
+  out.append({'title':term['title'],'users':0,'uses':0,'group':term['group'],'system':True})
  return {'chapters':out[:max(1,min(int(limit or 60),100))],'total':len(out)}
 
 def stats(db,person):

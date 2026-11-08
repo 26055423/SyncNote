@@ -449,10 +449,10 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
               key={item.title}
               className={`notebook-cloud-item${exists ? ' is-used' : ''}`}
               style={{ fontSize: `${(11 + scale * 6).toFixed(1)}px` }}
-              title={`${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
+              title={item.system ? `系统推荐条目${item.group ? ` · 常归在「${item.group}」` : ''}` : `${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
               disabled={exists || value.sections.length >= MAX_SECTIONS}
               onClick={() => addChapter(item.title, item.group)}
-            >{item.title}<small>{item.users}</small></button>;
+            >{item.title}<small>{item.system ? '推荐' : item.users}</small></button>;
           })}
         </div>;
       })()}
@@ -528,10 +528,10 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
                 key={item.title}
                 className={`notebook-cloud-item${exists ? ' is-used' : ''}`}
                 style={{ fontSize: `${(13 + scale * 9).toFixed(1)}px` }}
-                title={`${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
+                title={item.system ? `系统推荐条目${item.group ? ` · 常归在「${item.group}」` : ''}` : `${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
                 disabled={exists || value.sections.length >= MAX_SECTIONS}
                 onClick={() => addChapter(item.title, item.group)}
-              >{item.title}<small>{item.users}</small></button>;
+              >{item.title}<small>{item.system ? '推荐' : item.users}</small></button>;
             })}
           </div>;
         })()}

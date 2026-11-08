@@ -206,7 +206,8 @@ def main():
    bob.request('/api/journal',{'ticket':'fixture-b','body':'','tags':[],'sections':[{'id':'bob-a','title':'先问自己是否着急','checked':True,'body':'同意'}]})
    cloud=alice.request('/api/journal/chapters')
    ensure(any(row['title']=='先问自己是否着急' and row['users']>=2 for row in cloud['chapters']),'public chapter cloud counts people who used a title')
-   ensure(all(row['users']>=1 for row in cloud['chapters']),'public chapter cloud only returns aggregated counts')
+   ensure(any(row.get('system') for row in cloud['chapters']),'public chapter cloud ships system terms')
+   ensure(all(row['users']>=0 for row in cloud['chapters']),'public chapter cloud counts are aggregates only')
    alice.request('/api/journal/phrases',{'text':'   '},status=400)
    phrase=alice.request('/api/journal/phrases',{'text':' 扫了低点 ','person':b['id']})['phrase']
    ensure(alice.request('/api/journal/phrases',{'text':'扫了低点'})['phrase']['id']==phrase['id'],'personal phrase save is deduplicated')
