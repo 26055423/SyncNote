@@ -1936,3 +1936,16 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-cloud-item > small { color: var(--dim); font-size: 9px; }
 .notebook-cloud-item:hover:not(:disabled) { color: var(--accent-ink); }
 .notebook-cloud-item.is-used { color: var(--dim); text-decoration: line-through; opacity: .6; }
+
+/* 灵感：全服条目词云浮层 */
+.notebook-cloud-backdrop { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 24px; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); }
+.notebook-cloud-modal { display: flex; flex-direction: column; gap: 10px; width: min(760px, 94vw); max-height: min(78dvh, 720px); overflow: auto; padding: 16px 18px 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
+.notebook-cloud-modal-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.notebook-cloud-modal-head strong { font-size: 14px; }
+.notebook-cloud-modal-head span { color: var(--dim); font-size: 11px; line-height: 1.6; }
+.notebook-cloud-modal-head .link { margin-left: auto; border: 0; background: transparent; color: var(--dim); font-size: 16px; line-height: 1; }
+.notebook-cloud-tools { display: flex; gap: 8px; }
+.notebook-cloud-tools > input { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); font: inherit; font-size: 12px; }
+.notebook-cloud-tools > button { flex: 0 0 auto; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); font: inherit; font-size: 12px; }
+.notebook-cloud-lg { min-height: 120px; padding: 14px; }
+.notebook-cloud-lg .notebook-cloud-item { padding: 2px 4px; }

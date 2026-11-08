@@ -1,6 +1,6 @@
 export type Verdict = 'yes' | 'no' | 'unclear' | 'na';
 
-/** 挂在章节下的图表证据：图形编号 + 说明 + 关联时的快照。 */
+/** 挂在条目下的图表证据：图形编号 + 说明 + 关联时的快照。 */
 export interface NoteEvidence {
   id: string;
   caption: string;
@@ -15,7 +15,7 @@ export interface NoteSection {
   title: string;
   checked: boolean;
   body: string;
-  /** 分组名（检查项）。空 = 自由章节，不计入完成度。 */
+  /** 分组名（检查项）。空 = 自由条目，不计入完成度。 */
   group?: string | null;
   /** 结论：勾选只表示看过，成立与否单独记。 */
   verdict?: Verdict | null;
@@ -64,7 +64,7 @@ export function newSection(title = '', group: string | null = null): NoteSection
   return { id: crypto.randomUUID(), title, checked: false, body: '', group, verdict: null };
 }
 
-/** 整套通用清单：作为建议插入，不自动套用、不覆盖已有章节。 */
+/** 整套通用清单：作为建议插入，不自动套用、不覆盖已有条目。 */
 export function appendChecklist(current: NoteSection[]): NoteSection[] {
   const room = Math.max(0, MAX_SECTIONS - current.length);
   const added: NoteSection[] = [];
@@ -139,7 +139,7 @@ export function summarizeNote(value: NotebookValue): string {
   return lines.join('\n').trim();
 }
 
-/** 完成度：分母只算检查项，且排除「不适用」——自由章节不拉低完成度。 */
+/** 完成度：分母只算检查项，且排除「不适用」——自由条目不拉低完成度。 */
 export function checklistProgress(sections: NoteSection[]): { done: number; total: number } {
   const items = sections.filter(section => section.group && section.verdict !== 'na');
   return { done: items.filter(section => section.checked).length, total: items.length };

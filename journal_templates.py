@@ -18,9 +18,9 @@ def initialize(db):
    db.execute('ALTER TABLE %s ADD COLUMN %s %s'%(table,column,definition))
 
 def evidence_list(value,template=False):
- """章节下的图表证据：只保留标识、说明与当时的快照，模板里一律清空。"""
+ """条目下的图表证据：只保留标识、说明与当时的快照，模板里一律清空。"""
  if value is None or template:return []
- if not isinstance(value,list) or len(value)>10:raise JournalError('每个章节最多 10 条证据')
+ if not isinstance(value,list) or len(value)>10:raise JournalError('每个条目最多 10 条证据')
  out=[]
  for item in value:
   if not isinstance(item,dict):raise JournalError('证据格式不正确')
@@ -39,25 +39,25 @@ def evidence_list(value,template=False):
 VERDICTS=('yes','no','unclear','na')
 
 def sections(value,template=False):
- if not isinstance(value,list) or len(value)>30:raise JournalError('章节最多 30 个')
+ if not isinstance(value,list) or len(value)>30:raise JournalError('条目最多 30 个')
  out=[];seen=set();total=0
  for item in value:
-  if not isinstance(item,dict):raise JournalError('章节格式不正确')
+  if not isinstance(item,dict):raise JournalError('条目格式不正确')
   ident=item.get('id',uuid.uuid4().hex)
   title=item.get('title','');body=item.get('body','');checked=item.get('checked',False)
   group=item.get('group');verdict=item.get('verdict')
-  if not isinstance(ident,str) or not 1<=len(ident)<=80 or ident in seen:raise JournalError('章节编号不正确或重复')
-  if not isinstance(title,str) or not 1<=len(title.strip())<=80:raise JournalError('章节标题需为 1 至 80 字')
-  if not isinstance(body,str) or len(body)>3000:raise JournalError('每个章节内容最多 3000 字')
-  if not isinstance(checked,bool):raise JournalError('章节检查状态不正确')
+  if not isinstance(ident,str) or not 1<=len(ident)<=80 or ident in seen:raise JournalError('条目编号不正确或重复')
+  if not isinstance(title,str) or not 1<=len(title.strip())<=80:raise JournalError('条目标题需为 1 至 80 字')
+  if not isinstance(body,str) or len(body)>3000:raise JournalError('每个条目内容最多 3000 字')
+  if not isinstance(checked,bool):raise JournalError('条目检查状态不正确')
   if group is not None:
    if not isinstance(group,str) or len(group.strip())>40:raise JournalError('分组名称最多 40 字')
    group=group.strip() or None
   # 结论和「已检查」是两件事：勾选只表示看过，符合与否单独记。
-  if verdict is not None and verdict not in VERDICTS:raise JournalError('章节结论不正确')
+  if verdict is not None and verdict not in VERDICTS:raise JournalError('条目结论不正确')
   evidence=evidence_list(item.get('evidence'),template)
   total+=len(title)+len(body)
-  if total>30000:raise JournalError('章节内容合计最多 30000 字')
+  if total>30000:raise JournalError('条目内容合计最多 30000 字')
   seen.add(ident)
   out.append({'id':ident,'title':title.strip(),'group':group,'body':'' if template else body.strip(),'checked':False if template else checked,'verdict':None if template else verdict,'evidence':evidence})
  return out
@@ -95,7 +95,7 @@ def save_template(db,person,data):
  name=data.get('name','')
  if not isinstance(name,str) or not 1<=len(name.strip())<=80:raise JournalError('模板名称需为 1 至 80 字')
  content=sections(data.get('sections'),True)
- if not content:raise JournalError('模板至少需要一个章节')
+ if not content:raise JournalError('模板至少需要一个条目')
  phrases=phrase_list(data['phrases']) if 'phrases' in data else None
  name=name.strip();ident=data.get('id');now=time.time()
  if ident is not None:
@@ -141,7 +141,7 @@ def pin_item(db,person,data):
  return {'ok':True,'pinned':pinned}
 
 def public_chapters(db,limit=60,min_users=1):
- """全服章节词云：只回标题、分组、人数与使用笔数，不带任何用户或交易信息。"""
+ """全服条目词云：只回标题、分组、人数与使用笔数，不带任何用户或交易信息。"""
  rows=db.execute('SELECT s.person,s.ticket,s.sections FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket').fetchall()
  used=set();titles={}
  for row in rows:
