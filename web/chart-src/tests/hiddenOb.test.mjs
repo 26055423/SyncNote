@@ -100,7 +100,7 @@ test('多头：结构突破把来源阴 K 变成隐藏 OB，并延伸到最后�
   assert.equal(box.right, at(14) + 60_000);
   assert.equal(box.top, 100.9, '整根 K 线的上沿 = 来源最高');
   assert.equal(box.bottom, 100.2, '整根 K 线的下沿 = 来源最低');
-  assert.equal(box.extend, 'none', '不向右延伸：文本要贴着最后一根 K 线，而不是图表最右边');
+  assert.equal(box.extend, 'right', '与 Pine 一样向右延伸未缓解区域');
   assert.equal(box.text, '1m 多头OB 1');
   assert.equal(box.borderColor, '#00897b');
 });
@@ -114,6 +114,30 @@ test('空头：镜像判定', async () => {
   assert.equal(box.bottom, 98.95);
   assert.equal(box.text, '1m 空头OB 1');
   assert.equal(box.borderColor, '#f44336');
+});
+
+test('Pine 枢轴在等高/等低平台取较新的一根，左侧相等不应丢掉突破', async () => {
+  const bull = BULL.map(row => [...row]);
+  bull[7][1] = bull[8][1]; // 较旧的等高不妨碍第 8 根在第 11 根确认。
+  const bullBoxes = await run(bull);
+  assert.equal(bullBoxes.length, 1);
+  assert.equal(bullBoxes[0].id, `hidden-ob-${at(12)}-b`);
+
+  const bear = BEAR.map(row => [...row]);
+  bear[7][2] = bear[8][2];
+  const bearBoxes = await run(bear);
+  assert.equal(bearBoxes.length, 1);
+  assert.equal(bearBoxes[0].id, `hidden-ob-${at(12)}-s`);
+});
+
+test('枢轴右侧相等时等待较新的极值确认，不能提前产生 OB', async () => {
+  const bull = BULL.slice(0, 14).map(row => [...row]);
+  bull[11][1] = bull[8][1]; // 第 11 根直到第 14 根才确认；第 13 根不能提前突破。
+  assert.equal((await run(bull)).length, 0);
+
+  const bear = BEAR.slice(0, 14).map(row => [...row]);
+  bear[11][2] = bear[8][2];
+  assert.equal((await run(bear)).length, 0);
 });
 
 test('OB 范围 = 实体时用开/收', async () => {
@@ -149,4 +173,49 @@ test('缓解：首次触及用影线打掉区，完全穿越要穿到底沿', as
 test('只显示最近的上方/下方：数量为 0 时一侧整体隐藏', async () => {
   assert.equal((await run(BULL, { lowerCount: 0 })).length, 0, 'OB 在现价下方，下方关掉就没了');
   assert.equal((await run(BULL, { upperCount: 0 })).length, 1);
+});
+
+function mounted({ timeframe = '60', chartBars, minutes = minutesOf(BULL), extension = true }) {
+  let output, requested, listener;
+  const provider = {
+    getBars: async () => [], // The visible chart's cached M1 snapshot is empty/stale.
+    ...(extension ? { getIndicatorBars: async (...args) => { requested = args; return minutes; } } : {}),
+    onIndicatorBars: callback => { listener = callback; return () => { listener = null; }; },
+  };
+  const ctx = { id: 'higher', symbol: 'broker-track:TEST', timeframe, live: false,
+    bars: () => chartBars ?? [{ ...minutes[0], close: 102 }],
+    data: { resolve: () => ({ provider: 'broker-track', ticker: 'TEST' }),
+      providerInstance: name => { assert.equal(name, 'broker-track'); return provider; } },
+    emit: value => { output = value; }, setStatus() {}, pushData() {} };
+  const instance = def.create(); instance.start(ctx, def.defaultInputs());
+  return { instance, read: () => output, requested: () => requested,
+    changed: () => listener?.(), close: () => instance.stop() };
+}
+const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+
+test('H1 requests actual one-minute history through its own broker instead of using a stale snapshot', async () => {
+  const f = mounted({}); await settle();
+  assert.equal(f.read().boxes.length, 1);
+  assert.deepEqual(f.requested(), ['TEST', '1', BASE + 3600000, 20000]);
+  assert.match(f.read().boxes[0].text, /^1m /); f.close();
+});
+
+test('replay never consumes future minutes that would mitigate an existing OB', async () => {
+  const minutes = minutesOf(BULL.concat([[101.9, 102, 99, 99.5]]));
+  const f = mounted({ timeframe: '1', chartBars: minutes.slice(0, 14), minutes }); await settle();
+  assert.equal(f.read().boxes.length, 1, 'future touch must remain invisible'); f.close();
+});
+
+test('missing minute history never silently calculates the detector on H1 candles', async () => {
+  const f = mounted({ chartBars: minutesOf(BULL), extension: false }); await settle();
+  assert.equal(f.read().boxes.length, 0); f.close();
+});
+
+test('M1 dependency updates repaint H1 and replay corrections inside already scanned history', async () => {
+  const minutes = minutesOf(BULL), f = mounted({ minutes }); await settle();
+  assert.equal(f.read().boxes[0].top, 100.9);
+  minutes[12] = { ...minutes[12], high: 100.95 };
+  f.changed(); await settle();
+  assert.equal(f.read().boxes[0].top, 100.95, 'interior correction must invalidate scanner and output cache');
+  f.close();
 });

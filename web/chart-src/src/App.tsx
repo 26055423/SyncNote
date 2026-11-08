@@ -10,6 +10,7 @@ import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from 
 import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from './liveHistory';
 import { readTrackPage, readTrackHead, selectTrackSource, trackProviderName, type TrackCatalog, type TrackPage } from './trackHistory';
 import { readReviewPage, mergeReviewBars, type ReviewDirection } from './reviewHistory';
+import { readIndicatorMinutes } from './indicatorHistory';
 import { LocalTradePanel } from './LocalTradePanel';
 import { MT5Connection } from './MT5Connection';
 import { BottomDock } from './BottomDock';
@@ -1046,6 +1047,11 @@ export default function App() {
     seriesRef.current[tf] = bars;
     windowRef.current[tf] = { from: bars[0][0] * 1000, to: bars[bars.length - 1][0] * 1000 };
   };
+  const loadIndicatorMinutes = async (endMs: number, count: number): Promise<number[][]> => {
+    if (mode === 'review') return readIndicatorMinutes(api, { review: { ...ctxRef.current } }, endMs, count);
+    if (!marketInfo?.source) return [];
+    return readIndicatorMinutes(api, { source: marketInfo.source, symbol: liveSymbol }, endMs, count);
+  };
 
   useEffect(() => {
     if (!series) return;
@@ -1469,6 +1475,7 @@ export default function App() {
                 key={`live:${marketInfo?.source ?? 'loading'}:${liveSymbol}`}
                 ref={chartRef}
                 toolbarHost={nativeToolbarHost}
+                loadIndicatorMinutes={loadIndicatorMinutes}
                 forceLayout={narrow ? '1' : undefined}
                 charts={liveSeries}
                 provider={liveBars ? liveProvider : undefined}
@@ -1494,6 +1501,7 @@ export default function App() {
                 toolbarHost={nativeToolbarHost}
                 forceLayout={narrow ? '1' : undefined}
                 charts={series ?? entry!.review.charts}
+                loadIndicatorMinutes={loadIndicatorMinutes}
                 symbol={trade.symbol || 'XAUUSD'}
                 anchorMs={anchorMs}
                 savedState={entry!.chart?.document ?? null}

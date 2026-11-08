@@ -21,8 +21,8 @@ import {
  *   5. 选中：按中轴分上下两侧，取离现价最近的几个，同距取更新的来源。
  *
  * 与 Pine 版的差别只在「怎么取 1 分钟数据」：Pine 用 `request.security_lower_tf`
- * 拉数据，这里直接问当前图表的行情源（provider 的 `1` 分钟序列），拿不到才退回
- * 图表自身周期的 K 线（此时文案前缀会写当前周期，不再是 1m）。
+ * 拉数据，这里通过当前图表的授权行情源读取相同结束时刻之前的一分钟历史，
+ * 不会退回高周期 K 线冒充一分钟判定，也不会读取回放时刻之后的数据。
  */
 
 const SWING = 3;
@@ -185,73 +185,43 @@ function toMinutes(bars: readonly OHLCV[]): Minute[] {
  * `cache` 记住上一次的「原始数组指纹」：行情源每次 `getBars` 都会新建数组，
  * 但同一批数据不必每根 tick 重新映射一遍 6000 条。
  */
-async function loadMinutes(ctx: NativeIndicatorContext, cache: MinuteCache): Promise<Minute[] | null> {
-  const data = ctx.data as unknown as
-    | { resolve?: (symbol: string) => { provider?: string } | null; providerInstance?: (name: string) => unknown }
-    | undefined;
-  if (!data?.providerInstance) return null;
-
-  const names: string[] = [];
-  try {
-    const resolved = data.resolve?.(ctx.symbol);
-    if (resolved?.provider) names.push(resolved.provider);
-  } catch {
-    /* 自定义 dataFeed 上没有 registry，走下面的固定名 */
-  }
-  for (const name of ['review', 'live', 'market']) {
-    if (!names.includes(name)) names.push(name);
-  }
-
-  for (const name of names) {
-    try {
-      const provider = data.providerInstance(name) as { getBars?: (ticker: string, timeframe: string) => Promise<unknown> } | undefined;
-      if (!provider || typeof provider.getBars !== 'function') continue;
-      const rows = (await provider.getBars(ctx.symbol, '1')) as Array<Record<string, number>> | undefined;
-      if (!Array.isArray(rows) || rows.length === 0) continue;
-
-      const first = rows[0]!;
-      const last = rows[rows.length - 1]!;
-      const sig = `${name}|${rows.length}|${first?.time}|${last?.time}|${last?.close}`;
-      if (cache.sig === sig && cache.minutes) return cache.minutes;
-
-      const out: Minute[] = [];
-      for (const row of rows) {
-        const time = Number(row?.time);
-        const open = Number(row?.open);
-        const high = Number(row?.high);
-        const low = Number(row?.low);
-        const close = Number(row?.close);
-        if (![time, open, high, low, close].every(Number.isFinite)) continue;
-        out.push({ time, open, high, low, close });
-      }
-      if (!out.length) continue;
-      // provider 正常按时间升序返回；万一不是，排一次再交给扫描。
-      let ordered = true;
-      for (let i = 1; i < out.length; i += 1) {
-        if (out[i]!.time <= out[i - 1]!.time) {
-          ordered = false;
-          break;
-        }
-      }
-      if (!ordered) out.sort((a, b) => a.time - b.time);
-      cache.sig = sig;
-      cache.minutes = out;
-      return out;
-    } catch {
-      /* 换下一个源 */
-    }
-  }
-  return null;
+async function loadMinutes(ctx: NativeIndicatorContext, cache: MinuteCache, count: number): Promise<Minute[] | null> {
+  const bars = ctx.bars();
+  if (!bars.length) return null;
+  const period = ctx.timeframe === '1D' ? 86400000 : Math.max(1, Number(ctx.timeframe) || 1) * 60000;
+  // Replay and historical charts must never consume minutes past their own last bar.
+  const before = Math.min(Date.now(), bars[bars.length - 1]!.time + period);
+  const resolved = ctx.data?.resolve?.(ctx.symbol);
+  const provider = resolved ? ctx.data.providerInstance(resolved.provider) as unknown as {
+    getBars?: (ticker: string, tf: string) => Promise<OHLCV[]>;
+    getIndicatorBars?: (ticker: string, tf: string, endMs: number, count: number) => Promise<OHLCV[]>;
+  } | undefined : undefined;
+  let rows: readonly OHLCV[] = [];
+  if (provider?.getIndicatorBars) rows = await provider.getIndicatorBars(resolved!.ticker, '1', before, count);
+  else if (provider?.getBars) rows = await provider.getBars(resolved!.ticker, '1');
+  else if (ctx.timeframe === '1') rows = bars;
+  // Never substitute H1/M5 for the promised one-minute detector.
+  const out = toMinutes(rows).filter(row => [row.time, row.open, row.high, row.low, row.close].every(Number.isFinite)
+    && row.time + 60000 <= before).sort((a, b) => a.time - b.time).slice(-count);
+  const previous = cache.minutes;
+  const same = previous?.length === out.length && out.every((row, i) => {
+    const old = previous[i]!;
+    return row.time === old.time && row.open === old.open && row.high === old.high && row.low === old.low && row.close === old.close;
+  });
+  if (same) return previous;
+  cache.sig = String(Number(cache.sig || 0) + 1);
+  cache.minutes = out;
+  return out;
 }
 
 /* ------------------------------------------------------------------ 判定 */
 
-/** `ta.pivothigh(high, 3, 3)`：p 必须是 [p-3, p+3] 里最高的那根（等高不算）。 */
+/** Pine 的枢轴采用最右侧极值：左边可等高，右边等高会把确认留给较新的来源。 */
 function isPivotHigh(list: Minute[], p: number): boolean {
   const value = list[p]!.high;
   for (let k = p - SWING; k <= p + SWING; k += 1) {
     if (k === p) continue;
-    if (list[k]!.high >= value) return false;
+    if (k < p ? list[k]!.high > value : list[k]!.high >= value) return false;
   }
   return true;
 }
@@ -260,7 +230,7 @@ function isPivotLow(list: Minute[], p: number): boolean {
   const value = list[p]!.low;
   for (let k = p - SWING; k <= p + SWING; k += 1) {
     if (k === p) continue;
-    if (list[k]!.low <= value) return false;
+    if (k < p ? list[k]!.low < value : list[k]!.low <= value) return false;
   }
   return true;
 }
@@ -464,9 +434,7 @@ function buildOutput(
   const bars = ctx.bars();
   const last = bars.length ? bars[bars.length - 1]! : null;
   const price = last ? last.close : Number.NaN;
-  // 区块只画到最后一根已收盘分钟为止：不与 `extend: 'right'` 一起用。
-  // 文本是贴着区块右边缘排的，一旦向右延伸就会跑到图表最右边（右侧留白里），
-  // 和「读最后一根 K 线上的 OB」这件事对不上。
+  // 与 Pine 一致：未缓解区域持续向右延伸。
   const right = Number.isFinite(state.lastCloseTime) ? state.lastCloseTime : last ? last.time + 60_000 : 0;
 
   const uppers = nearest(state.blocks, price, true, cfg.upperCount);
@@ -483,7 +451,7 @@ function buildOutput(
       right,
       top: Math.max(ob.top, ob.bottom),
       bottom: Math.min(ob.top, ob.bottom),
-      extend: 'none',
+      extend: 'right',
       bgColor: withAlpha(tint, cfg.fillTransparency),
       borderColor: tint,
       borderWidth: 1,
@@ -603,22 +571,38 @@ const descriptor: NativeIndicatorDescriptor = {
     const cache: MinuteCache = { sig: '', minutes: null };
     /** 上一次成功出图的数据指纹：同一批数据 + 同一套输入就不重复 emit。 */
     let lastKey = '';
+    let offMinutes: (() => void) | undefined;
 
     const paint = async (): Promise<void> => {
       const context = ctx;
       if (!context) return;
       const token = (seq += 1);
-      const minutes = await loadMinutes(context, cache);
+      const cfg = readCfg(inputs);
+      const previousMinutes = cache.minutes;
+      let minutes: Minute[] | null;
+      context.setStatus('loading');
+      try { minutes = await loadMinutes(context, cache, cfg.historyMinutes); }
+      catch (error) {
+        if (token !== seq || ctx !== context) return;
+        context.setStatus('idle');
+        console.warn('hidden-ob minute history unavailable', error);
+        context.emit({ boxes: [] });
+        return;
+      }
       if (token !== seq || ctx !== context) return;
 
-      const cfg = readCfg(inputs);
-      const list = minutes && minutes.length ? minutes : toMinutes(context.bars());
-      const unit = minutes && minutes.length ? '1m' : context.timeframe === '1' ? '1m' : `${context.timeframe}m`;
+      const list = minutes ?? [];
+      const unit = '1m';
+      if (previousMinutes && previousMinutes !== minutes && previousMinutes.some((old, i) => {
+        const row = list[i];
+        return !row || old.time !== row.time || old.open !== row.open || old.high !== row.high || old.low !== row.low || old.close !== row.close;
+      })) state = null;
 
       const bars = context.bars();
       const chartTail = bars.length ? `${bars.length}:${bars[bars.length - 1]!.time}:${bars[bars.length - 1]!.close}` : '0';
       const minuteTail = list.length ? `${list.length}:${list[list.length - 1]!.time}` : '0';
-      const key = `${unit}|${chartTail}|${minuteTail}|${JSON.stringify(cfg)}`;
+      const key = `${unit}|${chartTail}|${minuteTail}|${cache.sig}|${JSON.stringify(cfg)}`;
+      context.setStatus(context.live ? 'live' : 'idle');
       if (key === lastKey) return;
 
       const next = scan(list, state, cfg);
@@ -635,6 +619,11 @@ const descriptor: NativeIndicatorDescriptor = {
       start(context, initialInputs) {
         ctx = context;
         inputs = initialInputs;
+        const resolved = context.data?.resolve?.(context.symbol);
+        const provider = resolved ? context.data.providerInstance(resolved.provider) as unknown as {
+          onIndicatorBars?: (listener: () => void) => () => void;
+        } : undefined;
+        offMinutes = provider?.onIndicatorBars?.(() => { void paint(); });
         void paint();
       },
       onBars() {
@@ -657,6 +646,7 @@ const descriptor: NativeIndicatorDescriptor = {
         void paint();
       },
       stop() {
+        offMinutes?.(); offMinutes = undefined;
         ctx = null;
         seq += 1;
       },

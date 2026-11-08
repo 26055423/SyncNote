@@ -147,6 +147,7 @@ interface Props {
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
   provider?: unknown;
+  loadIndicatorMinutes?: (endMs: number, count: number) => Promise<number[][]>;
   providerName?: string;
   onStateChange?: (document: unknown) => void;
   onTimeframe?: (tf: string) => void;
@@ -301,6 +302,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // 拖动联动：记录每格上一次的可见范围，用「时间增量」平移别的格（不是按根数）。
   // 例如 1m 格拖了 60 根 = 60 分钟，15m 格就会平移 60 分钟 = 4 根。
   const lastRangeRef = useRef<Map<string, { from: number; to: number }>>(new Map());
+  const minuteListenersRef = useRef(new Set<() => void>());
+  const minuteLoaderRef = useRef(props.loadIndicatorMinutes);
+  minuteLoaderRef.current = props.loadIndicatorMinutes;
   // 我们自己 panBy 触发的回声要忽略，但只忽略被推的那几格：
   // 按时间窗口一刀切会把源格子自己的连续拖动事件一起吞掉，表现为"拖了半天只跟一下"。
   const programmaticUntilRef = useRef<Map<string, number>>(new Map());
@@ -436,6 +440,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       // The static provider shares this cache, including newly added/layout-switched cells.
       dataRef.current[base] = bars;
       if (replaying()) { replayPendingRef.current.add(base); return; }
+      if (base === 'M1') minuteListenersRef.current.forEach(listener => listener());
       const updates: Promise<void>[] = [];
       for (const cell of wsRef.current?.cells?.() ?? []) {
         // 同基础周期的每个格子都补齐，各自保持原来的位置与蜡烛宽度。
@@ -602,7 +607,32 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         if (disposed || !hostRef.current) return;
 
         Object.assign(dataRef.current, charts);
-        const provider = (props.provider as never) ?? new ReviewProvider(dataRef.current, symbol, props.providerName || 'review');
+        const sourceProvider = (props.provider as any) ?? new ReviewProvider(dataRef.current, symbol, props.providerName || 'review');
+        const minuteRequests = new Map<string, { at: number; promise: Promise<number[][]> }>();
+        // Public provider extension used by lower-timeframe indicators. Cache/deduplicate
+        // identical requests across cells, without changing the visible chart's bars.
+        const provider = Object.assign(Object.create(sourceProvider), {
+          async getIndicatorBars(ticker: string, _tf: string, endMs: number, count: number) {
+            const before = Math.min(endMs, Math.floor(Date.now() / 60000) * 60000);
+            const key = `${before}:${count}`;
+            let request = minuteRequests.get(key);
+            if (!request || Date.now() - request.at > 30000) {
+              const promise = minuteLoaderRef.current?.(before, count) ?? Promise.resolve([]);
+              request = { at: Date.now(), promise };
+              minuteRequests.set(key, request);
+              if (minuteRequests.size > 12) minuteRequests.delete(minuteRequests.keys().next().value!);
+              promise.catch(() => minuteRequests.delete(key));
+            }
+            const stored = await request.promise;
+            const merged = new Map<number, any>(stored.map(row => [row[0] * 1000, toOhlcv(row)]));
+            for (const row of await sourceProvider.getBars(ticker, '1')) if (row.time < before) merged.set(row.time, row);
+            return [...merged.values()].filter(row => row.time + 60000 <= before).sort((a, b) => a.time - b.time).slice(-count);
+          },
+          onIndicatorBars(listener: () => void) {
+            minuteListenersRef.current.add(listener);
+            return () => minuteListenersRef.current.delete(listener);
+          },
+        });
         const providerName = props.provider ? (props.providerName || 'live') : (props.providerName || 'review');
         const initial = prefs.getState();
         await registerBigwolf();
@@ -926,6 +956,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     return () => {
       disposed = true;
       interactionDisposers.forEach(dispose => dispose());
+      minuteListenersRef.current.clear();
       replayRequestRef.current += 1;
       replayArmedRef.current = false; replayBusyRef.current = false; replayPendingRef.current.clear();
       const ws = wsRef.current;

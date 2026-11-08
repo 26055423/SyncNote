@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test:local": "node --test tests/mt5Pairing.test.mjs tests/localTerminal.test.mjs tests/localHistorySync.test.mjs tests/liveHistory.test.mjs tests/backfillBars.test.mjs tests/trackHistory.test.mjs tests/viewportPan.test.mjs tests/reviewHistory.test.mjs tests/replayController.test.mjs tests/dateRange.test.mjs tests/marketSyncGate.test.mjs tests/hiddenOb.test.mjs tests/trackSizing.test.mjs tests/chartInteractions.test.mjs"
+    "test:local": "node --test tests/mt5Pairing.test.mjs tests/localTerminal.test.mjs tests/localHistorySync.test.mjs tests/liveHistory.test.mjs tests/backfillBars.test.mjs tests/trackHistory.test.mjs tests/viewportPan.test.mjs tests/reviewHistory.test.mjs tests/replayController.test.mjs tests/dateRange.test.mjs tests/marketSyncGate.test.mjs tests/hiddenOb.test.mjs tests/trackSizing.test.mjs tests/chartInteractions.test.mjs tests/indicatorHistory.test.mjs"
   },
   "dependencies": {
     "@luxalgo/vela": "0.9.3",
