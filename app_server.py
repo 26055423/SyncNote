@@ -970,6 +970,7 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/journal/templates':result=journal.journal_templates.save_template(db,uid,data)
                     elif path=='/api/journal/phrases':result=journal.journal_templates.save_phrase(db,uid,data)
                     elif path=='/api/journal/phrases/pin':result=journal.journal_templates.pin_phrase(db,uid,data)
+                    elif path=='/api/journal/templates/pin':result=journal.journal_templates.pin_item(db,uid,data)
                     elif path=='/api/journal/library/use':result=journal.journal_templates.library_item(db,uid,data)
                     elif path=='/api/journal/library/remove':result=journal.journal_templates.library_item(db,uid,data,True)
                     elif path=='/api/chart/state':

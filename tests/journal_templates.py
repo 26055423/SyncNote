@@ -122,6 +122,16 @@ class JournalTemplates(unittest.TestCase):
   with self.assertRaises(library.JournalError) as error:library.pin_phrase(self.db,'bob',{'id':a['id'],'pinned':True})
   self.assertEqual(error.exception.code,404)
 
+ def test_template_pin_sorts_first_and_rejects_other_owners(self):
+  first=library.save_template(self.db,'alice',{'name':'常用','sections':[self.section()]})['template']
+  library.save_template(self.db,'alice',{'name':'以后','sections':[{'id':'other','title':'另一套','body':'','checked':False}]})
+  self.assertEqual(len(library.library(self.db,'alice')['templates']),2)
+  library.pin_item(self.db,'alice',{'template_id':first['id'],'pinned':True})
+  ordered=library.library(self.db,'alice')['templates']
+  self.assertEqual(ordered[0]['name'],'常用');self.assertTrue(ordered[0]['pinned'])
+  with self.assertRaises(library.JournalError) as error:library.pin_item(self.db,'bob',{'template_id':first['id'],'pinned':True})
+  self.assertEqual(error.exception.code,404)
+
  def test_repeat_use_within_five_seconds_counts_once(self):
   template=library.save_template(self.db,'alice',{'name':'快速点两次','sections':[self.section()]})['template']
   library.library_item(self.db,'alice',{'template_id':template['id']})

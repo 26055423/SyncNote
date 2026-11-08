@@ -53,6 +53,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeTemplate, setActiveTemplate] = useState<{ name: string; phrases: string[] } | null>(null);
   const [selection, setSelection] = useState<{ id: string; text: string } | null>(null);
+  const [templateHintOff, setTemplateHintOff] = useState(false);
   const areas = useRef(new Map<string, HTMLTextAreaElement>());
   const carets = useRef(new Map<string, { start: number; end: number }>());
   const lastFocused = useRef<string | null>(null);
@@ -165,6 +166,19 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
     await api('/api/journal/phrases/pin', { id: phrase.id, pinned: !phrase.pinned });
     await refresh();
   });
+  const structureKey = (rows: NoteSection[]) => rows.map(row => `${row.group || ''}/${row.title}`).join('|');
+  const applyTemplate = (template: { id: string | number; name: string; sections: NoteSection[]; phrases?: string[] }) => {
+    if (!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS) return;
+    const sections = appendTemplate(value.sections, template);
+    onChange({ ...value, sections });
+    setSelected(sections[value.sections.length]?.id ?? null);
+    setActiveTemplate({ name: template.name, phrases: template.phrases ?? [] });
+    setMessage(`已添加「${template.name}」的章节，原有内容已保留。`);
+    void api('/api/journal/library/use', { template_id: template.id }).then(refresh).catch(() => {});
+  };
+  const topTemplate = frequentFirst(library.templates)[0];
+  const structureMatches = library.templates.some(template => structureKey(template.sections) === structureKey(templateStructure(value.sections)));
+  const suggestTemplate = !readOnly && value.sections.length >= 3 && !structureMatches && !templateHintOff;
   const chapterChoices = frequentFirst(library.chapters).map(row => row.title).concat(STARTER_CHAPTERS)
     .filter((title, index, all) => all.indexOf(title) === index && !value.sections.some(section => section.title.trim() === title)).slice(0, 4);
 
@@ -244,6 +258,19 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
         <button type="button" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(!libraryOpen)}>我的模板与常用语</button>
       </div>
       {!value.sections.length && <div className="notebook-empty"><p>标题、顺序和内容都由你决定。可以从空白开始，也可以加一套通用清单再改。</p></div>}
+      {!value.sections.length && topTemplate && <div className="notebook-hint">
+        <span>上次用的是「{topTemplate.name}」（{topTemplate.sections.length} 章）</span>
+        <button type="button" onClick={() => applyTemplate(topTemplate)}>套用</button>
+      </div>}
+      {suggestTemplate && <div className="notebook-hint">
+        <span>这套结构以后还会用吗？</span>
+        <button type="button" onClick={() => {
+          setLibraryOpen(true);
+          setTemplateName(`我的第 ${library.templates.length + 1} 套`);
+          setTemplatePhrases([]);
+        }}>存为模板</button>
+        <button type="button" className="link" onClick={() => setTemplateHintOff(true)}>不用</button>
+      </div>}
       {!!chapterChoices.length && value.sections.length < MAX_SECTIONS && <div className="notebook-chapter-suggestions" aria-label="推荐章节">
         <span>快捷添加</span>{chapterChoices.map(title => <button type="button" key={title} onClick={() => addChapter(title)}>{title}</button>)}
       </div>}
@@ -278,13 +305,10 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
       {loading && <p className="notebook-library-hint">正在读取个人词库…</p>}
       <h5>章节组合</h5>
       {frequentFirst(library.templates).map(template => <div className="notebook-template" key={template.id}><div className="notebook-library-item">
-        <button type="button" title={`添加 ${template.sections.length} 个章节；保留已有内容`} disabled={!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS || busy} onClick={() => {
-          const sections = appendTemplate(value.sections, template);
-          onChange({ ...value, sections }); setSelected(sections[value.sections.length]?.id ?? null);
-          setActiveTemplate({ name: template.name, phrases: template.phrases ?? [] });
-          setMessage(`已添加「${template.name}」的章节，原有内容已保留。`);
-          void api('/api/journal/library/use', { template_id: template.id }).then(refresh).catch(() => {});
-        }}><span>{template.name}</span><small>{template.sections.length} 章{(template.phrases ?? []).length ? ` · ${(template.phrases ?? []).length} 条用语` : ''} · 用过 {template.uses} 次</small></button>
+        <button type="button" title={`添加 ${template.sections.length} 个章节；保留已有内容`} disabled={!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS || busy} onClick={() => applyTemplate(template)}><span>{template.pinned ? '★ ' : ''}{template.name}</span><small>{template.sections.length} 章{(template.phrases ?? []).length ? ` · ${(template.phrases ?? []).length} 条用语` : ''} · 用过 {template.uses} 次</small></button>
+        <button type="button" className="notebook-library-remove" aria-pressed={Boolean(template.pinned)} title={template.pinned ? '取消固定' : '固定到前面'} aria-label={`固定模板 ${template.name}`} disabled={busy} onClick={() => void run(async () => {
+          await api('/api/journal/templates/pin', { template_id: template.id, pinned: !template.pinned }); await refresh();
+        })}>{template.pinned ? '★' : '☆'}</button>
         <button type="button" className="notebook-library-remove" aria-label={`编辑模板 ${template.name}`} disabled={busy} onClick={() => { setEditingTemplate(editingTemplate === template.id ? null : template.id); setEditingName(template.name); setTemplatePhrases([...(template.phrases ?? [])]); }}>编辑</button>
         <button type="button" className="notebook-library-remove" title="删除我的模板" aria-label={`删除模板 ${template.name}`} disabled={busy} onClick={() => void run(async () => {
           await api('/api/journal/library/remove', { template_id: template.id }); await refresh(); setMessage('模板已删除，当前笔记保留。');
@@ -309,7 +333,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
       <div className="notebook-library-form"><input aria-label="模板名称" maxLength={80} placeholder="给这套章节起个名字" value={templateName} onChange={event => setTemplateName(event.target.value)}/>
         <button type="button" disabled={busy || !templateName.trim() || !templateStructure(value.sections).length} onClick={() => void run(async () => {
           await api('/api/journal/templates', { name: templateName.trim(), sections: templateStructure(value.sections), phrases: templatePhrases });
-          await refresh(); setTemplateName(''); setTemplatePhrases([]); setMessage('章节结构已存为模板，不含本次交易文字与勾选。');
+          await refresh(); setTemplateName(''); setTemplatePhrases([]); setTemplateHintOff(false); setMessage('章节结构已存为模板，不含本次交易文字与勾选。');
         })}>保存组合</button></div>
       <p className="notebook-library-hint">只保存章节标题、分组和顺序，复盘内容仍属于这笔交易。</p>
 

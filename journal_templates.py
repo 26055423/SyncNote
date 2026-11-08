@@ -11,6 +11,7 @@ def initialize(db):
  CREATE TABLE IF NOT EXISTS journal_phrases(id TEXT PRIMARY KEY,person TEXT NOT NULL,text TEXT NOT NULL,uses INTEGER NOT NULL DEFAULT 0,last_used REAL NOT NULL DEFAULT 0,updated REAL NOT NULL,UNIQUE(person,text));
  CREATE INDEX IF NOT EXISTS journal_phrases_owner ON journal_phrases(person);''')
  for table,column,definition in (('journal_templates','phrases',"TEXT NOT NULL DEFAULT '[]'"),
+                                 ('journal_templates','pinned','INTEGER NOT NULL DEFAULT 0'),
                                  ('journal_phrases','pinned','INTEGER NOT NULL DEFAULT 0')):
   if column not in [row[1] for row in db.execute('PRAGMA table_info(%s)'%table)]:
    db.execute('ALTER TABLE %s ADD COLUMN %s %s'%(table,column,definition))
@@ -57,7 +58,7 @@ def note_sections(db,person):
  return {r['ticket']:json.loads(r['sections']) for r in db.execute('SELECT ticket,sections FROM trade_note_sections WHERE person=?',(person,))}
 
 def library(db,person):
- templates=[{'id':r['id'],'name':r['name'],'sections':json.loads(r['sections']),'phrases':json.loads(r['phrases'] or '[]'),'uses':r['uses'],'last_used':r['last_used']} for r in db.execute('SELECT * FROM journal_templates WHERE person=? ORDER BY uses DESC,last_used DESC,updated DESC,id',(person,))]
+ templates=[{'id':r['id'],'name':r['name'],'sections':json.loads(r['sections']),'phrases':json.loads(r['phrases'] or '[]'),'uses':r['uses'],'last_used':r['last_used'],'pinned':bool(r['pinned'])} for r in db.execute('SELECT * FROM journal_templates WHERE person=? ORDER BY pinned DESC,uses DESC,last_used DESC,updated DESC,id',(person,))]
  phrases=[{'id':r['id'],'text':r['text'],'uses':r['uses'],'last_used':r['last_used'],'pinned':bool(r['pinned'])} for r in db.execute('SELECT * FROM journal_phrases WHERE person=? ORDER BY pinned DESC,uses DESC,last_used DESC,updated DESC,id',(person,))]
  # Each title counts once per meaningful trade note, not once per Save click.
  chapters={}
@@ -108,6 +109,14 @@ def pin_phrase(db,person,data):
  if not isinstance(ident,str) or not db.execute('SELECT 1 FROM journal_phrases WHERE person=? AND id=?',(person,ident)).fetchone():raise JournalError('条目不存在',404)
  pinned=bool(data.get('pinned'))
  db.execute('UPDATE journal_phrases SET pinned=? WHERE person=? AND id=?',(1 if pinned else 0,person,ident))
+ return {'ok':True,'pinned':pinned}
+
+def pin_item(db,person,data):
+ ident=data.get('id');table='journal_templates' if 'template_id' in data or data.get('kind')=='template' else 'journal_phrases'
+ if 'template_id' in data:ident=data['template_id']
+ if not isinstance(ident,str) or not db.execute('SELECT 1 FROM '+table+' WHERE person=? AND id=?',(person,ident)).fetchone():raise JournalError('条目不存在',404)
+ pinned=bool(data.get('pinned'))
+ db.execute('UPDATE '+table+' SET pinned=? WHERE person=? AND id=?',(1 if pinned else 0,person,ident))
  return {'ok':True,'pinned':pinned}
 
 def library_item(db,person,data,remove=False):
