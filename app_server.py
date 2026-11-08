@@ -602,6 +602,7 @@ class Handler(BaseHTTPRequestHandler):
                     if path=='/api/journal':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
                         return self.reply({**(journal.notes(db,target) if can else {'categories':journal.DEFAULT_TAGS,'notes':{}}),'can_view':can,'editable':target==uid})
+                    if path=='/api/journal/library':return self.reply(journal.journal_templates.library(db,uid))
                     if path=='/api/trade-review':
                         target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
                         if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
@@ -966,6 +967,10 @@ class Handler(BaseHTTPRequestHandler):
                         db.execute("UPDATE invites SET revoked=1,code_plain='' WHERE id=?",(ident,))
                         return self.reply({'ok':True})
                     if path=='/api/journal':result=journal.save(db,uid,data)
+                    elif path=='/api/journal/templates':result=journal.journal_templates.save_template(db,uid,data)
+                    elif path=='/api/journal/phrases':result=journal.journal_templates.save_phrase(db,uid,data)
+                    elif path=='/api/journal/library/use':result=journal.journal_templates.library_item(db,uid,data)
+                    elif path=='/api/journal/library/remove':result=journal.journal_templates.library_item(db,uid,data,True)
                     elif path=='/api/chart/state':
                         ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
                         result=chart.clear_state(db,uid,ticket) if data.get('clear') is True else chart.save_state(db,uid,ticket,data.get('state'))

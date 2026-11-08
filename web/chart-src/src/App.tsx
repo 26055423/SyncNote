@@ -19,6 +19,7 @@ import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
 import { ChatDock } from './ChatDock';
 import { ReviewShareDialog } from './ReviewShareDialog';
+import { ReviewNotebook, type NoteSection } from './ReviewNotebook';
 import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { ToolbarIcon } from './ui/ToolbarIcon';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
@@ -48,7 +49,7 @@ interface Entry {
   read_only: boolean;
   share: { id: number; message: string; created: number; seen: boolean; anchor_ms?: number | null; timeframe?: string | null; layout?: string | null } | null;
   review: Review;
-  note: { body: string; tags: string[]; updated: number } | null;
+  note: { body: string; tags: string[]; sections?: NoteSection[]; updated: number } | null;
   chart: { document: unknown; updated: number; source?: string } | null;
   /** 券商服务器墙钟 − UTC 的秒数；标注对齐用。 */
   bar_offset?: number;
@@ -185,7 +186,9 @@ export default function App() {
     try { return Number(localStorage.getItem('sn-chat-read') || 0) || 0; } catch { return 0; }
   });
 
-  const [note, setNote] = useState({ body: '', tags: [] as string[] });
+  const [note, setNote] = useState({ body: '', tags: [] as string[], sections: [] as NoteSection[] });
+  const noteRef = useRef(note);
+  noteRef.current = note;
   const [categories, setCategories] = useState<string[]>([]);
   const [noteState, setNoteState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -397,7 +400,7 @@ export default function App() {
         const data = await api<Entry>(url);
         if (!alive) return;
         setEntry(data);
-        setNote(data.note ? { body: data.note.body, tags: [...data.note.tags] } : { body: '', tags: [] });
+        setNote(data.note ? { body: data.note.body, tags: [...data.note.tags], sections: data.note.sections ?? [] } : { body: '', tags: [], sections: [] });
         setError('');
         // 按消息打开时，target 由服务端返回的归属交易补上（用于标题、分享卡片和重挂载 key）。
         const ticket = String(data.review?.trade?.ticket ?? '');
@@ -791,8 +794,17 @@ export default function App() {
     entry
     && !entry.read_only
     && (note.body !== (entry.note?.body || '')
-      || JSON.stringify(note.tags) !== JSON.stringify(entry.note?.tags || [])),
+      || JSON.stringify(note.tags) !== JSON.stringify(entry.note?.tags || [])
+      || JSON.stringify(note.sections) !== JSON.stringify(entry.note?.sections || [])),
   );
+
+  const hasUnsavedNote = noteDirty();
+  useEffect(() => {
+    if (!hasUnsavedNote || localConnected) return;
+    const handler = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsavedNote, localConnected]);
 
   const confirmLeaveNote = () => !noteDirty() || window.confirm('这笔交易的笔记还没保存，确定要离开吗？');
 
@@ -852,7 +864,7 @@ export default function App() {
     // 打开复盘时右栏直接切到「复盘」，不要停在「下单」。
     setTab('review');
     setRailOpen(true);
-    setNote({ body: '', tags: [] });
+    setNote({ body: '', tags: [], sections: [] });
     setNoteState('idle');
     setSaveState('idle');
     setShareRequest(null);
@@ -873,7 +885,7 @@ export default function App() {
     setMode('review');
     setTab('review');
     setRailOpen(true);
-    setNote({ body: '', tags: [] });
+    setNote({ body: '', tags: [], sections: [] });
     setNoteState('idle');
     setSaveState('idle');
     setShareRequest(null);
@@ -882,13 +894,20 @@ export default function App() {
 
   const saveNote = async () => {
     if (!entry || entry.read_only || !target) return;
+    const person = target.person, ticket = target.ticket;
+    const snapshot = { body: note.body, tags: [...note.tags], sections: note.sections.map(section => ({ ...section })) };
     setNoteState('saving');
     try {
-      await api('/api/journal', { ticket: target.ticket, body: note.body, tags: note.tags });
-      setEntry((prev) => prev ? { ...prev, note: { body: note.body, tags: [...note.tags], updated: Date.now() / 1000 } } : prev);
-      setNoteState('saved');
-      window.setTimeout(() => setNoteState('idle'), 1600);
+      const result = await api<{ note: NonNullable<Entry['note']> }>('/api/journal', { ticket, ...snapshot });
+      if (ctxRef.current.person !== person || ctxRef.current.ticket !== ticket) return;
+      const saved = { body: result.note.body, tags: result.note.tags, sections: result.note.sections ?? [] };
+      setEntry(prev => prev ? { ...prev, note: result.note } : prev);
+      const unchanged = JSON.stringify(noteRef.current) === JSON.stringify(snapshot);
+      if (unchanged) setNote(saved);
+      setNoteState(unchanged ? 'saved' : 'idle');
+      window.setTimeout(() => setNoteState(state => state === 'saved' ? 'idle' : state), 1600);
     } catch (err) {
+      if (ctxRef.current.person !== person || ctxRef.current.ticket !== ticket) return;
       setNoteState('error');
       setError(err instanceof Error ? err.message : '笔记保存失败');
     }
@@ -1768,8 +1787,13 @@ export default function App() {
                         {money(trade.volume)} 手 · {money(trade.open)} → {money(trade.close)} · 盈亏 <b className={(trade.profit || 0) >= 0 ? 'up' : 'down'}>{money(trade.profit)}</b><br />
                         开仓 {stamp(entry.review.opened)} · 平仓 {stamp(trade.closed)}
                       </p>
-                      <label htmlFor="note-body">入场理由、管理问题与下次改进</label>
-                      <textarea id="note-body" value={note.body} readOnly={entry.read_only} maxLength={10000} onChange={(e) => setNote((prev) => ({ ...prev, body: e.target.value }))} />
+                      <ReviewNotebook
+                        key={`${entry.owner.id}:${trade.ticket}`}
+                        value={note}
+                        onChange={next => { setNote(next); setNoteState(state => state === 'saving' ? state : 'idle'); }}
+                        readOnly={entry.read_only}
+                        onError={setError}
+                      />
                       <div className="tags">
                         {categories.map((tag) => (
                           <button

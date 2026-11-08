@@ -178,12 +178,48 @@ def main():
    ensure(alice.request('/api/chart/state',{'ticket':'fixture-1','state':state})['ok'],'drawings saved')
    ensure(alice.request('/api/chart/entry?ticket=fixture-1')['chart']['document']['layout']=='4','drawings loaded back')
    alice.request('/api/journal',{'ticket':'fixture-1','body':'等回调确认再入场','tags':['入场时机']})
+   # 自由章节与个人素材库沿用当前登录用户，不能用 person 字段切换归属。
+   anon.request('/api/journal/library',status=401)
+   for path in ('/api/journal/templates','/api/journal/phrases','/api/journal/library/use','/api/journal/library/remove'):
+    anon.request(path,{},status=401)
+   sections=[{'id':'chapter-a','title':'先问自己是否着急','checked':True,'body':'扫了低点，等回踩确认'},
+             {'id':'chapter-b','title':'只改一件事','checked':False,'body':''}]
+   saved=alice.request('/api/journal',{'ticket':'fixture-1','body':'等回调确认再入场','tags':['入场时机'],'sections':sections})
+   ensure(saved['note']['sections']==sections,'structured note saves custom section order and content')
+   ensure(alice.request('/api/chart/entry?ticket=fixture-1')['note']['sections']==sections,'chart entry roundtrips structured note')
+   legacy=alice.request('/api/journal',{'ticket':'fixture-1','body':'等回调确认再入场','tags':['入场时机']})
+   ensure(legacy['note']['sections']==sections,'old journal client preserves structured sections when omitted')
+   alice.request('/api/journal',{'ticket':'fixture-1','body':'invalid overwrite','sections':[{'id':'bad','title':'','body':''}]},status=400)
+   ensure(alice.request('/api/chart/entry?ticket=fixture-1')['note']['body']=='等回调确认再入场','invalid section save leaves previous note intact')
+   chapter_library=alice.request('/api/journal/library')
+   ensure(len(chapter_library['chapters'])==1 and chapter_library['chapters'][0]['title']=='先问自己是否着急' and chapter_library['chapters'][0]['uses']==1,'chapter recommendation counts meaningful trade once across repeated saves')
+   template=alice.request('/api/journal/templates',{'name':'我的开单前五问','sections':sections,'person':b['id']})['template']
+   ensure(template['name']=='我的开单前五问' and [s['title'] for s in template['sections']]==[s['title'] for s in sections],'template keeps freely named ordered chapters')
+   ensure(all(not s['body'] and not s['checked'] for s in template['sections']),'template does not copy private trade observations or checked state')
+   phrase=alice.request('/api/journal/phrases',{'text':' 扫了低点 ','person':b['id']})['phrase']
+   ensure(alice.request('/api/journal/phrases',{'text':'扫了低点'})['phrase']['id']==phrase['id'],'personal phrase save is deduplicated')
+   ensure(bob.request('/api/journal/library?person='+a['id'])=={'templates':[],'phrases':[],'chapters':[]},'library query cannot reveal another user templates or phrases')
+   for key,ident in [('template_id',template['id']),('phrase_id',phrase['id'])]:
+    bob.request('/api/journal/library/use',{key:ident,'person':a['id']},status=404)
+    bob.request('/api/journal/library/remove',{key:ident,'person':a['id']},status=404)
+    ensure(alice.request('/api/journal/library/use',{key:ident})['ok'],'owner records actual library item use')
+   bob.request('/api/journal/templates',{'id':template['id'],'name':'foreign update','sections':sections},status=404)
+   used=alice.request('/api/journal/library')
+   ensure(used['templates'][0]['uses']==1 and used['templates'][0]['last_used']>0,'template use frequency persists over HTTP')
+   ensure(used['phrases'][0]['uses']==1 and used['phrases'][0]['text']=='扫了低点','phrase use frequency persists over HTTP')
+   alice.request('/api/journal/templates',{'name':'我的开单前五问','sections':sections},status=409)
+   for key,ident in [('template_id',template['id']),('phrase_id',phrase['id'])]:
+    ensure(alice.request('/api/journal/library/remove',{key:ident})['ok'],'owner can remove personal library item')
+   empty_library=alice.request('/api/journal/library')
+   ensure(empty_library['templates']==[] and empty_library['phrases']==[],'removed library entries stay removed')
+   ensure(alice.request('/api/chart/entry?ticket=fixture-1')['note']['sections']==sections,'removing template does not remove previously written note')
    ensure(alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'message':'看这段结构'})['sent']==1,'share sent')
    alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[a['id']]},status=400)
    box=bob.request('/api/reviews/inbox');ensure(box['unseen']==1 and box['items'][0]['owner']['id']==a['id'],'inbox shows assignment')
    shared=bob.request('/api/chart/entry?share='+str(box['items'][0]['id']))
    ensure(shared['mode']=='shared' and shared['read_only'],'shared chart is read only')
    ensure(shared['note']['body']=='等回调确认再入场','shared note visible')
+   ensure(shared['note']['sections']==sections,'authorized shared review includes structured note without exposing personal library')
    ensure(shared['chart']['document']['charts'][0]['drawings']['drawings'][0]['type']=='trendline','shared drawings visible')
    bob.request('/api/chart/state',{'ticket':'fixture-1','state':state},status=404)
    ensure(bob.request('/api/reviews/share/seen',{'id':box['items'][0]['id']})['ok'],'assignment marked seen')

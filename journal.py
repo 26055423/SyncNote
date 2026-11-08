@@ -1,13 +1,14 @@
 """Private trade notes and on-demand broker chart collection."""
 import json,math,time
+import journal_templates
 DEFAULT_TAGS=['止损管理','资金管理','方向判断','入场时机','出场管理','冲动交易','未按计划','执行良好']
-class JournalError(Exception):
- def __init__(self,text,code=400):self.text,self.code=text,code
+JournalError=journal_templates.JournalError
 
 def initialize(db):
  db.executescript('''CREATE TABLE IF NOT EXISTS trade_notes(person TEXT NOT NULL,ticket TEXT NOT NULL,body TEXT NOT NULL,tags TEXT NOT NULL,updated REAL NOT NULL,PRIMARY KEY(person,ticket),FOREIGN KEY(person,ticket) REFERENCES trades(person,ticket));
  CREATE TABLE IF NOT EXISTS trade_reviews(person TEXT NOT NULL,ticket TEXT NOT NULL,status TEXT NOT NULL,payload TEXT,updated REAL NOT NULL,PRIMARY KEY(person,ticket),FOREIGN KEY(person,ticket) REFERENCES trades(person,ticket));''')
  db.execute("UPDATE trade_reviews SET status='pending' WHERE status IN ('reference_pending','reference_error')")
+ journal_templates.initialize(db)
 
 def trade(db,person,ticket):
  r=db.execute('SELECT payload FROM trades WHERE person=? AND ticket=?',(person,str(ticket))).fetchone()
@@ -15,16 +16,22 @@ def trade(db,person,ticket):
  return json.loads(r[0])
 
 def notes(db,person):
- return {'categories':DEFAULT_TAGS,'notes':{r['ticket']:{'body':r['body'],'tags':json.loads(r['tags']),'updated':r['updated']} for r in db.execute('SELECT * FROM trade_notes WHERE person=?',(person,))}}
+ sections=journal_templates.note_sections(db,person)
+ return {'categories':DEFAULT_TAGS,'notes':{r['ticket']:{'body':r['body'],'tags':json.loads(r['tags']),'sections':sections.get(r['ticket'],[]),'updated':r['updated']} for r in db.execute('SELECT * FROM trade_notes WHERE person=?',(person,))}}
 
 def save(db,person,data):
  ticket=str(data.get('ticket',''));trade(db,person,ticket)
  body=data.get('body','');tags=data.get('tags',[])
  if not isinstance(body,str) or len(body)>10000:raise JournalError('笔记最多 10000 字')
  if not isinstance(tags,list) or len(tags)>12 or any(not isinstance(t,str) or not 1<=len(t.strip())<=40 for t in tags):raise JournalError('分类最多 12 个，每个不超过 40 字')
+ if 'sections' in data:sections=journal_templates.sections(data['sections'])
+ else:
+  old=db.execute('SELECT sections FROM trade_note_sections WHERE person=? AND ticket=?',(person,ticket)).fetchone()
+  sections=json.loads(old['sections']) if old else []
  tags=list(dict.fromkeys(t.strip() for t in tags));now=time.time()
  db.execute('INSERT INTO trade_notes VALUES(?,?,?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET body=excluded.body,tags=excluded.tags,updated=excluded.updated',(person,ticket,body.strip(),json.dumps(tags,ensure_ascii=False),now))
- return {'ok':True,'note':{'body':body.strip(),'tags':tags,'updated':now}}
+ if 'sections' in data:db.execute('INSERT INTO trade_note_sections VALUES(?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET sections=excluded.sections',(person,ticket,json.dumps(sections,ensure_ascii=False)))
+ return {'ok':True,'note':{'body':body.strip(),'tags':tags,'sections':sections,'updated':now}}
 
 def request(db,person,data):
  ticket=str(data.get('ticket',''));trade(db,person,ticket)
@@ -114,6 +121,8 @@ def _has_marks(document):
 def reviewed(db, person):
  """真正复盘过的成交：写过笔记，或在图上画过东西。"""
  done = set()
+ for ticket,sections in journal_templates.note_sections(db,person).items():
+  if any(section.get('checked') or section.get('body','').strip() for section in sections):done.add(str(ticket))
  for row in db.execute('SELECT ticket,body FROM trade_notes WHERE person=?', (person,)):
   if (row['body'] or '').strip():
    done.add(str(row['ticket']))
