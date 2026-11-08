@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 const compiled = ts.transpileModule(readFileSync(new URL('../src/notebookModel.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { appendTemplate, templateStructure, moveSection, appendPhrase, frequentFirst } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { appendTemplate, templateStructure, moveSection, appendPhrase, frequentFirst, checklistProgress, appendChecklist, DEFAULT_CHECKLIST } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const a = { id: 'a', title: '先看这里', checked: true, body: '这一笔的判断' };
 const b = { id: 'b', title: '持仓时', checked: false, body: '保留原文' };
 test('applying a template appends independent empty chapters and preserves the original note', () => {
@@ -41,4 +41,36 @@ test('phrases preserve existing prose and add a separator only when necessary', 
   assert.equal(appendPhrase('', '扫了低点'), '扫了低点');
   assert.equal(appendPhrase('回到计划位置', '扫了低点'), '回到计划位置，扫了低点');
   assert.equal(appendPhrase('回到计划位置。', '扫了低点'), '回到计划位置。扫了低点');
+});
+
+test('checklist progress counts only grouped items and drops not-applicable ones', () => {
+  const rows = [
+    { id: '1', title: '方向', checked: true, body: '', group: '方向' },
+    { id: '2', title: '位置', checked: false, body: '', group: '位置' },
+    { id: '3', title: '形状', checked: false, body: '', group: '形态', verdict: 'na' },
+    { id: '4', title: '自由', checked: true, body: '' },
+  ];
+  assert.deepEqual(checklistProgress(rows), { done: 1, total: 2 });
+  assert.deepEqual(checklistProgress([]), { done: 0, total: 0 });
+});
+
+test('the starter checklist is optional, capped by room and keeps its groups', () => {
+  const added = appendChecklist([]);
+  assert.equal(added.length, DEFAULT_CHECKLIST.reduce((sum, group) => sum + group.items.length, 0));
+  assert.ok(added.every(row => row.group && !row.checked && !row.body && !row.verdict));
+  const nearlyFull = Array.from({ length: 28 }, (_, index) => ({ id: `s${index}`, title: `t${index}`, checked: false, body: '' }));
+  assert.equal(appendChecklist(nearlyFull).length, 30);
+});
+
+test('templates keep the group but never the verdict or the trade text', () => {
+  const rows = [{ id: 'a', title: '方向', checked: true, body: '文字', group: '方向判断', verdict: 'yes' }];
+  const structure = templateStructure(rows);
+  assert.equal(structure[0].group, '方向判断');
+  assert.equal(structure[0].verdict, null);
+  assert.equal(structure[0].checked, false);
+  assert.equal(structure[0].body, '');
+  const applied = appendTemplate([], { sections: rows });
+  assert.equal(applied[0].group, '方向判断');
+  assert.equal(applied[0].verdict, null);
+  assert.equal(applied[0].body, '');
 });

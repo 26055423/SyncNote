@@ -86,6 +86,23 @@ class JournalTemplates(unittest.TestCase):
   with self.assertRaises(library.JournalError):self.note(sections=[self.section(id=str(i),body='x'*2000) for i in range(16)])
   with self.assertRaises(library.JournalError):journal.save(self.db,'alice',{'ticket':'missing','body':'not owned'})
 
+ def test_group_and_verdict_are_separate_from_checked(self):
+  saved=self.note(sections=[self.section('扫低后出现 Flip',group='结构',verdict='yes')])
+  section=saved['sections'][0]
+  self.assertEqual(section['group'],'结构');self.assertEqual(section['verdict'],'yes');self.assertTrue(section['checked']==False or section['checked'] is False)
+  self.note(sections=[self.section('不适用项',group='管理',verdict='na')])
+  self.assertEqual(self.note()['sections'][0]['verdict'],'na')
+  for broken in [self.section(verdict='maybe'),self.section(group='x'*41)]:
+   with self.assertRaises(library.JournalError):self.note(sections=[broken])
+
+ def test_template_keeps_group_and_order_but_drops_verdict(self):
+  created=library.save_template(self.db,'alice',{'name':'结构组合','sections':[
+   {'id':'g1','title':'方向','group':'方向判断','verdict':'yes','checked':True,'body':'内容'},
+   {'id':'g2','title':'位置','group':'位置','verdict':None,'checked':False,'body':''},
+   {'id':'g3','title':'自由章节','body':'','checked':False}]})['template']
+  self.assertEqual([row['group'] for row in created['sections']],['方向判断','位置',None])
+  self.assertTrue(all(row['verdict'] is None and not row['body'] and row['checked'] is False for row in created['sections']))
+
  def test_template_names_do_not_silently_overwrite_and_deletion_keeps_notes(self):
   data={'name':'自己的名字','sections':[self.section()]}
   template=library.save_template(self.db,'alice',data)['template']

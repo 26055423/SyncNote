@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import {
-  appendPhrase, appendTemplate, frequentFirst, moveSection, newSection, STARTER_CHAPTERS,
-  SYSTEM_PHRASES, templateStructure, type NotebookLibrary, type NotebookValue, type NoteSection,
+  appendChecklist, appendPhrase, appendTemplate, checklistProgress, frequentFirst, MAX_SECTIONS, moveSection,
+  newSection, STARTER_CHAPTERS, SYSTEM_PHRASES, templateStructure, VERDICTS,
+  type NotebookLibrary, type NotebookValue, type NoteSection, type Verdict,
 } from './notebookModel';
 export type { NotebookValue, NoteSection } from './notebookModel';
 
@@ -13,6 +14,25 @@ interface Props {
   onError?(message: string): void;
 }
 const EMPTY_LIBRARY: NotebookLibrary = { templates: [], phrases: [], chapters: [] };
+
+type Block =
+  | { kind: 'group'; name: string; members: Array<{ section: NoteSection; index: number }> }
+  | { kind: 'loose'; section: NoteSection; index: number };
+
+/** 按出现顺序把章节聚成「分组卡片」；没有分组的仍是自由章节。 */
+function blocks(sections: NoteSection[]): Block[] {
+  const out: Block[] = [];
+  sections.forEach((section, index) => {
+    const name = (section.group || '').trim();
+    if (!name) { out.push({ kind: 'loose', section, index }); return; }
+    const last = out[out.length - 1];
+    if (last && last.kind === 'group' && last.name === name) last.members.push({ section, index });
+    else out.push({ kind: 'group', name, members: [{ section, index }] });
+  });
+  return out;
+}
+
+const verdictLabel = (verdict?: Verdict | null) => VERDICTS.find(v => v.id === verdict)?.label ?? '';
 
 /** User-owned chapters and reusable structures; no trading-system taxonomy. */
 export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
@@ -28,6 +48,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [removed, setRemoved] = useState<{ section: NoteSection; index: number } | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -43,16 +64,21 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
   }, [readOnly]);
 
   const active = value.sections.find(section => section.id === selected) ?? value.sections[0];
-  const done = value.sections.filter(section => section.checked).length;
+  const progress = checklistProgress(value.sections);
   const updateSection = (id: string, patch: Partial<NoteSection>) => {
     onChange({ ...value, sections: value.sections.map(section => section.id === id ? { ...section, ...patch } : section) });
   };
-  const addChapter = (title = '') => {
-    if (value.sections.length >= 30) return;
-    const section = newSection(title);
+  const addChapter = (title = '', group: string | null = null) => {
+    if (value.sections.length >= MAX_SECTIONS) return;
+    const section = newSection(title, group);
     onChange({ ...value, sections: [...value.sections, section] });
     setSelected(section.id);
   };
+  const toggleGroup = (name: string) => setCollapsed(previous => {
+    const next = new Set(previous);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
   const run = async (action: () => Promise<void>) => {
     if (busy) return;
     setBusy(true); setError(''); setMessage('');
@@ -78,45 +104,89 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
   const chapterChoices = frequentFirst(library.chapters).map(row => row.title).concat(STARTER_CHAPTERS)
     .filter((title, index, all) => all.indexOf(title) === index && !value.sections.some(section => section.title.trim() === title)).slice(0, 4);
 
-  return <div className={`review-notebook${readOnly ? ' is-readonly' : ''}`}>
-    <div className="notebook-heading"><strong>我的复盘章节</strong><span>{value.sections.length ? `已检查 ${done}/${value.sections.length}` : '按自己的习惯记录'}</span></div>
-    {!readOnly && <>
-      <div className="notebook-toolbar">
-        <button type="button" onClick={() => addChapter()} disabled={value.sections.length >= 30}>＋ 添加章节</button>
-        <button type="button" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(!libraryOpen)}>我的模板与常用语</button>
+  const renderSection = (section: NoteSection, index: number) => {
+    const verdict = section.verdict ?? null;
+    return <section key={section.id} className={`notebook-section${section.checked ? ' is-checked' : ''}${active?.id === section.id ? ' is-selected' : ''}`}>
+      <div className="notebook-section-head">
+        <label className="notebook-check" title="已检查，表示这一项已经看过，不代表交易条件成立">
+          <input type="checkbox" checked={section.checked} disabled={readOnly} aria-label={`已检查：${section.title || `第 ${index + 1} 章`}`} onChange={event => updateSection(section.id, { checked: event.target.checked })}/>
+          <span className="sr-only">已检查</span>
+        </label>
+        {readOnly ? <h4>{section.title || `第 ${index + 1} 章`}</h4> : <input className="notebook-section-title" aria-label={`第 ${index + 1} 章标题`} maxLength={80} value={section.title} placeholder="给这一章起个名字" onFocus={() => setSelected(section.id)} onChange={event => updateSection(section.id, { title: event.target.value })}/>}
+        {!readOnly && <div className="notebook-section-actions">
+          <button type="button" disabled={index === 0} aria-label={`上移第 ${index + 1} 章`} title="上移" onClick={() => onChange({ ...value, sections: moveSection(value.sections, section.id, -1) })}>↑</button>
+          <button type="button" disabled={index === value.sections.length - 1} aria-label={`下移第 ${index + 1} 章`} title="下移" onClick={() => onChange({ ...value, sections: moveSection(value.sections, section.id, 1) })}>↓</button>
+          <button type="button" aria-label={`移除第 ${index + 1} 章`} title="移除章节，可撤销" onClick={() => {
+            setRemoved({ section, index }); onChange({ ...value, sections: value.sections.filter(row => row.id !== section.id) });
+          }}>×</button>
+        </div>}
       </div>
-      {!value.sections.length && <div className="notebook-empty"><p>标题、顺序和内容都由你决定。可以从空白开始，也可以选一个常用章节。</p></div>}
-      {!!chapterChoices.length && value.sections.length < 30 && <div className="notebook-chapter-suggestions" aria-label="推荐章节">
-        <span>快捷添加</span>{chapterChoices.map(title => <button type="button" key={title} onClick={() => addChapter(title)}>{title}</button>)}
-      </div>}
-    </>}
-
-    <div className="notebook-sections">
-      {value.sections.map((section, index) => <section key={section.id} className={`notebook-section${section.checked ? ' is-checked' : ''}${active?.id === section.id ? ' is-selected' : ''}`}>
-        <div className="notebook-section-head">
-          <label className="notebook-check" title="已检查，表示这一项已经看过，不代表交易条件成立">
-            <input type="checkbox" checked={section.checked} disabled={readOnly} aria-label={`已检查：${section.title || `第 ${index + 1} 章`}`} onChange={event => updateSection(section.id, { checked: event.target.checked })}/>
-            <span className="sr-only">已检查</span>
-          </label>
-          {readOnly ? <h4>{section.title || `第 ${index + 1} 章`}</h4> : <input className="notebook-section-title" aria-label={`第 ${index + 1} 章标题`} maxLength={80} value={section.title} placeholder="给这一章起个名字" onFocus={() => setSelected(section.id)} onChange={event => updateSection(section.id, { title: event.target.value })}/>}
-          {!readOnly && <div className="notebook-section-actions">
-            <button type="button" disabled={index === 0} aria-label={`上移第 ${index + 1} 章`} title="上移" onClick={() => onChange({ ...value, sections: moveSection(value.sections, section.id, -1) })}>↑</button>
-            <button type="button" disabled={index === value.sections.length - 1} aria-label={`下移第 ${index + 1} 章`} title="下移" onClick={() => onChange({ ...value, sections: moveSection(value.sections, section.id, 1) })}>↓</button>
-            <button type="button" aria-label={`移除第 ${index + 1} 章`} title="移除章节，可撤销" onClick={() => {
-              setRemoved({ section, index }); onChange({ ...value, sections: value.sections.filter(row => row.id !== section.id) });
-            }}>×</button>
-          </div>}
+      {readOnly
+        ? <div className="notebook-section-readonly">
+          {!!verdict && <span className={`notebook-verdict is-${verdict}`}>{verdictLabel(verdict)}</span>}
+          <p className="notebook-section-content">{section.body || '未填写内容'}</p>
         </div>
-        {readOnly ? <p className="notebook-section-content">{section.body || '未填写内容'}</p> : <>
+        : <>
+          <div className="notebook-verdicts" role="group" aria-label={`${section.title || `第 ${index + 1} 章`}的结论`}>
+            <span className="notebook-verdicts-label">结论</span>
+            {VERDICTS.map(choice => <button
+              key={choice.id}
+              type="button"
+              aria-pressed={verdict === choice.id}
+              className={`notebook-verdict-btn${verdict === choice.id ? ` is-${choice.id}` : ''}`}
+              onClick={() => updateSection(section.id, { verdict: verdict === choice.id ? null : choice.id, checked: true })}
+            >{choice.label}</button>)}
+          </div>
           <textarea aria-label={`${section.title || `第 ${index + 1} 章`}内容`} value={section.body} maxLength={3000} placeholder="写下判断、依据或事后发现……" onFocus={() => setSelected(section.id)} onChange={event => updateSection(section.id, { body: event.target.value })}/>
           <div className="notebook-section-foot"><button type="button" className="link" onClick={() => { setSelected(section.id); setLibraryOpen(true); }}>插入常用语</button>
             <button type="button" className="link" title="最多保存 500 字" disabled={!section.body.trim() || section.body.trim().length > 500 || busy} onClick={() => void run(async () => {
               await api('/api/journal/phrases', { text: section.body.trim() }); await refresh(); setMessage('已保存到我的常用语');
             })}>存为常用语</button></div>
         </>}
-      </section>)}
+    </section>;
+  };
+
+  return <div className={`review-notebook${readOnly ? ' is-readonly' : ''}`}>
+    <div className="notebook-heading">
+      <strong>我的复盘清单</strong>
+      <span>{progress.total ? `完成 ${progress.done}/${progress.total}` : value.sections.length ? `已检查 ${value.sections.filter(s => s.checked).length}/${value.sections.length}` : '按自己的习惯记录'}</span>
     </div>
-    {!readOnly && removed && <div className="notebook-undo"><span>已移除「{removed.section.title || '未命名章节'}」</span><button type="button" className="link" disabled={value.sections.length >= 30} onClick={() => {
+    {!readOnly && <>
+      <div className="notebook-toolbar">
+        <button type="button" onClick={() => addChapter()} disabled={value.sections.length >= MAX_SECTIONS}>＋ 添加章节</button>
+        {progress.total === 0 && <button type="button" title="加入一套可删改的通用检查项" disabled={value.sections.length >= MAX_SECTIONS} onClick={() => {
+          const next = appendChecklist(value.sections);
+          onChange({ ...value, sections: next });
+          setSelected(next[value.sections.length]?.id ?? null);
+          setMessage('已加入通用清单，可以改名、删项或拖动排序。');
+        }}>＋ 通用清单</button>}
+        <button type="button" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(!libraryOpen)}>我的模板与常用语</button>
+      </div>
+      {!value.sections.length && <div className="notebook-empty"><p>标题、顺序和内容都由你决定。可以从空白开始，也可以加一套通用清单再改。</p></div>}
+      {!!chapterChoices.length && value.sections.length < MAX_SECTIONS && <div className="notebook-chapter-suggestions" aria-label="推荐章节">
+        <span>快捷添加</span>{chapterChoices.map(title => <button type="button" key={title} onClick={() => addChapter(title)}>{title}</button>)}
+      </div>}
+    </>}
+
+    <div className="notebook-blocks">
+      {blocks(value.sections).map(block => {
+        if (block.kind === 'loose') return renderSection(block.section, block.index);
+        const isCollapsed = collapsed.has(block.name);
+        const checked = block.members.filter(({ section }) => section.checked).length;
+        return <div className="notebook-group" key={`${block.name}:${block.members[0]!.section.id}`}>
+          <div className="notebook-group-head">
+            <button type="button" className="notebook-group-toggle" aria-expanded={!isCollapsed} title={isCollapsed ? '展开' : '收起'} onClick={() => toggleGroup(block.name)}>
+              <span className="notebook-group-caret" aria-hidden="true">{isCollapsed ? '▸' : '▾'}</span>
+              <span className="notebook-group-name">{block.name}</span>
+            </button>
+            <span className="notebook-group-count">{checked}/{block.members.length}</span>
+            {!readOnly && <button type="button" className="notebook-group-add" title={`在「${block.name}」里加一项`} disabled={value.sections.length >= MAX_SECTIONS} onClick={() => addChapter('', block.name)}>＋</button>}
+          </div>
+          {!isCollapsed && <div className="notebook-group-items">{block.members.map(({ section, index }) => renderSection(section, index))}</div>}
+        </div>;
+      })}
+    </div>
+    {!readOnly && removed && <div className="notebook-undo"><span>已移除「{removed.section.title || '未命名章节'}」</span><button type="button" className="link" disabled={value.sections.length >= MAX_SECTIONS} onClick={() => {
       const sections = [...value.sections]; sections.splice(Math.min(removed.index, sections.length), 0, removed.section);
       onChange({ ...value, sections }); setRemoved(null);
     }}>撤销移除</button></div>}
@@ -127,7 +197,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
       {loading && <p className="notebook-library-hint">正在读取个人词库…</p>}
       <h5>章节组合</h5>
       {frequentFirst(library.templates).map(template => <div className="notebook-template" key={template.id}><div className="notebook-library-item">
-        <button type="button" title={`添加 ${template.sections.length} 个章节；保留已有内容`} disabled={!template.sections.length || value.sections.length + template.sections.length > 30 || busy} onClick={() => {
+        <button type="button" title={`添加 ${template.sections.length} 个章节；保留已有内容`} disabled={!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS || busy} onClick={() => {
           const sections = appendTemplate(value.sections, template);
           onChange({ ...value, sections }); setSelected(sections[value.sections.length]?.id ?? null);
           setMessage(`已添加「${template.name}」的章节，原有内容已保留。`);
@@ -154,7 +224,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
           await api('/api/journal/templates', { name: templateName.trim(), sections: templateStructure(value.sections) });
           await refresh(); setTemplateName(''); setMessage('章节结构已存为模板，不含本次交易文字与勾选。');
         })}>保存组合</button></div>
-      <p className="notebook-library-hint">只保存章节标题和顺序，复盘内容仍属于这笔交易。</p>
+      <p className="notebook-library-hint">只保存章节标题、分组和顺序，复盘内容仍属于这笔交易。</p>
 
       <h5>常用语</h5>
       <label className="notebook-target">插入到<select aria-label="常用语插入章节" value={active?.id ?? ''} disabled={!value.sections.length} onChange={event => setSelected(event.target.value)}>

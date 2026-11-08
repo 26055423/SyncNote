@@ -182,13 +182,17 @@ def main():
    anon.request('/api/journal/library',status=401)
    for path in ('/api/journal/templates','/api/journal/phrases','/api/journal/library/use','/api/journal/library/remove'):
     anon.request(path,{},status=401)
-   sections=[{'id':'chapter-a','title':'先问自己是否着急','checked':True,'body':'扫了低点，等回踩确认'},
+   sections=[{'id':'chapter-a','title':'先问自己是否着急','checked':True,'body':'扫了低点，等回踩确认','group':'确认','verdict':'yes'},
              {'id':'chapter-b','title':'只改一件事','checked':False,'body':''}]
    saved=alice.request('/api/journal',{'ticket':'fixture-1','body':'等回调确认再入场','tags':['入场时机'],'sections':sections})
-   ensure(saved['note']['sections']==sections,'structured note saves custom section order and content')
-   ensure(alice.request('/api/chart/entry?ticket=fixture-1')['note']['sections']==sections,'chart entry roundtrips structured note')
+   shape=lambda rows:[{k:row.get(k) for k in ('id','title','checked','body')} for row in rows]
+   ensure(shape(saved['note']['sections'])==shape(sections),'structured note saves custom section order and content')
+   ensure(saved['note']['sections'][0]['group']=='确认' and saved['note']['sections'][0]['verdict']=='yes','section keeps its group and verdict')
+   ensure(saved['note']['sections'][1]['group'] is None and saved['note']['sections'][1]['verdict'] is None,'missing group and verdict stay empty')
+   ensure(shape(alice.request('/api/chart/entry?ticket=fixture-1')['note']['sections'])==shape(sections),'chart entry roundtrips structured note')
    legacy=alice.request('/api/journal',{'ticket':'fixture-1','body':'等回调确认再入场','tags':['入场时机']})
-   ensure(legacy['note']['sections']==sections,'old journal client preserves structured sections when omitted')
+   ensure(shape(legacy['note']['sections'])==shape(sections),'old journal client preserves structured sections when omitted')
+   ensure(legacy['note']['sections'][0]['verdict']=='yes','old journal client keeps the stored verdict')
    alice.request('/api/journal',{'ticket':'fixture-1','body':'invalid overwrite','sections':[{'id':'bad','title':'','body':''}]},status=400)
    ensure(alice.request('/api/chart/entry?ticket=fixture-1')['note']['body']=='等回调确认再入场','invalid section save leaves previous note intact')
    chapter_library=alice.request('/api/journal/library')
@@ -212,14 +216,14 @@ def main():
     ensure(alice.request('/api/journal/library/remove',{key:ident})['ok'],'owner can remove personal library item')
    empty_library=alice.request('/api/journal/library')
    ensure(empty_library['templates']==[] and empty_library['phrases']==[],'removed library entries stay removed')
-   ensure(alice.request('/api/chart/entry?ticket=fixture-1')['note']['sections']==sections,'removing template does not remove previously written note')
+   ensure(shape(alice.request('/api/chart/entry?ticket=fixture-1')['note']['sections'])==shape(sections),'removing template does not remove previously written note')
    ensure(alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[b['id']],'message':'看这段结构'})['sent']==1,'share sent')
    alice.request('/api/reviews/share',{'ticket':'fixture-1','recipients':[a['id']]},status=400)
    box=bob.request('/api/reviews/inbox');ensure(box['unseen']==1 and box['items'][0]['owner']['id']==a['id'],'inbox shows assignment')
    shared=bob.request('/api/chart/entry?share='+str(box['items'][0]['id']))
    ensure(shared['mode']=='shared' and shared['read_only'],'shared chart is read only')
    ensure(shared['note']['body']=='等回调确认再入场','shared note visible')
-   ensure(shared['note']['sections']==sections,'authorized shared review includes structured note without exposing personal library')
+   ensure(shape(shared['note']['sections'])==shape(sections),'authorized shared review includes structured note without exposing personal library')
    ensure(shared['chart']['document']['charts'][0]['drawings']['drawings'][0]['type']=='trendline','shared drawings visible')
    bob.request('/api/chart/state',{'ticket':'fixture-1','state':state},status=404)
    ensure(bob.request('/api/reviews/share/seen',{'id':box['items'][0]['id']})['ok'],'assignment marked seen')

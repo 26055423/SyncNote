@@ -11,6 +11,8 @@ def initialize(db):
  CREATE TABLE IF NOT EXISTS journal_phrases(id TEXT PRIMARY KEY,person TEXT NOT NULL,text TEXT NOT NULL,uses INTEGER NOT NULL DEFAULT 0,last_used REAL NOT NULL DEFAULT 0,updated REAL NOT NULL,UNIQUE(person,text));
  CREATE INDEX IF NOT EXISTS journal_phrases_owner ON journal_phrases(person);''')
 
+VERDICTS=('yes','no','unclear','na')
+
 def sections(value,template=False):
  if not isinstance(value,list) or len(value)>30:raise JournalError('章节最多 30 个')
  out=[];seen=set();total=0
@@ -18,14 +20,20 @@ def sections(value,template=False):
   if not isinstance(item,dict):raise JournalError('章节格式不正确')
   ident=item.get('id',uuid.uuid4().hex)
   title=item.get('title','');body=item.get('body','');checked=item.get('checked',False)
+  group=item.get('group');verdict=item.get('verdict')
   if not isinstance(ident,str) or not 1<=len(ident)<=80 or ident in seen:raise JournalError('章节编号不正确或重复')
   if not isinstance(title,str) or not 1<=len(title.strip())<=80:raise JournalError('章节标题需为 1 至 80 字')
   if not isinstance(body,str) or len(body)>3000:raise JournalError('每个章节内容最多 3000 字')
   if not isinstance(checked,bool):raise JournalError('章节检查状态不正确')
+  if group is not None:
+   if not isinstance(group,str) or len(group.strip())>40:raise JournalError('分组名称最多 40 字')
+   group=group.strip() or None
+  # 结论和「已检查」是两件事：勾选只表示看过，符合与否单独记。
+  if verdict is not None and verdict not in VERDICTS:raise JournalError('章节结论不正确')
   total+=len(title)+len(body)
   if total>30000:raise JournalError('章节内容合计最多 30000 字')
   seen.add(ident)
-  out.append({'id':ident,'title':title.strip(),'body':'' if template else body.strip(),'checked':False if template else checked})
+  out.append({'id':ident,'title':title.strip(),'group':group,'body':'' if template else body.strip(),'checked':False if template else checked,'verdict':None if template else verdict})
  return out
 
 def note_sections(db,person):
