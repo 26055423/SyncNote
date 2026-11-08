@@ -3,7 +3,7 @@
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading requires local pairing consent and durable journals; account-type and quota gates are disabled.
 #property copyright "SyncTrade"
-#property version "1.108"
+#property version "1.109"
 #property strict
 #property description "Windows localhost EA. Local pairing consent required; no account-type or quota gates."
 
@@ -38,7 +38,7 @@ input int InpTickPushMs=100;                           // Tick push interval (50
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.108"
+#define LOCAL_VERSION "1.109"
 // Only account-type and volume/exposure/daily quotas are removed. Other protections remain.
 #define LOCAL_NO_QUOTAS true
 #define JOURNAL_MAX 10000
@@ -550,9 +550,9 @@ void BeginBars(const int peer,const string js)
       (to-from)/PeriodSeconds(LocalTf(tf))+1>2000))
    {LocalError(peer,"BARS_RANGE","Range must contain at most 2000 period slots in broker-server seconds",request_id);return;}
    if(g_bars_job.active || g_history_job.active) {LocalError(peer,"BARS_BUSY","Wait for current bars/history response",request_id);return;}
-   // Only read synchronized series; a missing series is an explicit gap, not a
-   // reason to synchronously download a large archive on the trading EA thread.
-   if(!SymbolSelect(symbol,true) || !SeriesInfoInteger(symbol,LocalTf(tf),SERIES_SYNCHRONIZED))
+   // Explicit bounded ranges may initiate MT5 history loading in PumpBars.
+   // Keep the fast live/bootstrap path restricted to synchronized series.
+   if(!SymbolSelect(symbol,true) || (!ranged && !SeriesInfoInteger(symbol,LocalTf(tf),SERIES_SYNCHRONIZED)))
    {LocalError(peer,"HISTORY_UNAVAILABLE","Open this symbol/timeframe in MT5 to load history first",request_id);return;}
    g_bars_job.peer=peer;g_bars_job.request_id=request_id;g_bars_job.tf=tf;g_bars_job.symbol=symbol;
    g_bars_job.digits=(int)SymbolInfoInteger(symbol,SYMBOL_DIGITS);g_bars_job.range_mode=ranged;
@@ -624,18 +624,13 @@ void PumpBars()
    {
       long interval=PeriodSeconds(LocalTf(g_bars_job.tf));
       long aligned_from=g_bars_job.from_server-g_bars_job.from_server%interval;
-      // MT5 里这个周期最早能拿到的时间。回填窗口可能比这更早(最早交易在 5 年前,而
-      // 终端只加载了最近几个月):夹到可得起点,不要因为"左边界拿不到"就整段失败。
-      long first=(long)SeriesInfoInteger(g_bars_job.symbol,LocalTf(g_bars_job.tf),SERIES_FIRSTDATE);
-      if(g_bars_job.range_mode && first>0 && aligned_from<first) aligned_from=first-first%interval;
+      // The terminal cache start is not the broker's history boundary. Request
+      // the original bounded range so CopyRates can load older missing history.
       int count=g_bars_job.range_mode ? CopyRates(g_bars_job.symbol,LocalTf(g_bars_job.tf),(datetime)aligned_from,(datetime)g_bars_job.to_server,g_bars_job.rates) :
          CopyRates(g_bars_job.symbol,LocalTf(g_bars_job.tf),0,g_bars_job.limit,g_bars_job.rates);
       string error="";
-      if(count<1) error="MT5 history is not ready for this range";
+      if(count<0 || (!g_bars_job.range_mode && count<1)) error="MT5 history is not ready for this range";
       else if(g_bars_job.range_mode && (count>2000 || count>g_bars_job.limit)) error="Requested range exceeds limit; split it into smaller windows";
-      // 只有"整个请求窗口都早于可得历史"才算到底;右边界不足(周末/休市/最新一根还没走完)
-      // 返回已有数据即可,交给调用方按返回的最后一根推进。
-      else if(g_bars_job.range_mode && first>0 && first>=(long)g_bars_job.to_server) error="MT5 history starts later than the requested range";
       if(error!="") {LocalError(g_bars_job.peer,"HISTORY_UNAVAILABLE",error,g_bars_job.request_id);g_bars_job.active=false;return;}
       g_bars_job.limit=count;g_bars_job.loaded=true;return;
    }

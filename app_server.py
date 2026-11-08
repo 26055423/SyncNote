@@ -500,7 +500,7 @@ class Handler(BaseHTTPRequestHandler):
                         source=str(q.get('source',[''])[0]) or (feed['source'] if feed else '')
                         if not source:source=bars.public_source(db) or ''
                         return self.reply({'source':source,**market_symbols.read(db,uid,source),'public':not feed or source!=feed['source']})
-                    if path=='/api/market/sync-jobs':return self.reply(bar_sync_jobs.status(db,uid,str(q.get('symbol',[''])[0]) or None,str(q.get('transport',['syncnote'])[0])))
+                    if path=='/api/market/sync-jobs':return self.reply(bar_sync_jobs.status(db,uid,str(q.get('symbol',[''])[0]) or None,str(q.get('transport',['syncnote'])[0]),str(q.get('account_key',[''])[0]) or None))
                     if path=='/api/market/bars':
                         # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
                         # `limit=N&before=UTC秒`：同轨道向前按根数分页，不按日历窗口切。

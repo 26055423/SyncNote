@@ -70,6 +70,16 @@ function fixture(secure = true) {
   return { client, connect, Socket, timers, access: exports.localTradeAccess };
 }
 
+test('EA clock samples retain raw UTC milliseconds and offset and clear on disconnect', () => {
+  const { client, connect } = fixture();
+  const socket = connect();
+  socket.emit({ type: 'snapshot', server_time_ms: 1800000000000, server_offset_sec: 7200 });
+  assert.equal(client.getSnapshot().clock_sample.server_time_ms, 1800000000000);
+  assert.equal(client.getSnapshot().clock_sample.server_offset_sec, 7200);
+  client.disconnect();
+  assert.equal(client.getSnapshot().clock_sample, undefined);
+});
+
 test('broker catalog pages preserve exact codes and authenticated request scope', async () => {
   const { client, connect } = fixture();
   const socket = connect('1001', { features: ['symbols', 'select_symbol'] });

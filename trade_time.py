@@ -1,5 +1,5 @@
 """Keep broker wall timestamps separate from verified UTC instants."""
-import json, os
+import json, os, math
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -85,3 +85,13 @@ def record_clock(db,person,broker,snapshot,now):
                 offset=measured;end=now
     db.execute('INSERT INTO broker_clocks VALUES(?,?,?,?,?) ON CONFLICT(person) DO UPDATE SET broker=excluded.broker,offset=excluded.offset,observed_from=excluded.observed_from,observed_to=excluded.observed_to',(person,broker,offset,start,end))
     return db.execute('SELECT * FROM broker_clocks WHERE person=?',(person,)).fetchone()
+
+def record_ea_clock_sample(db,person,broker,sample,now):
+ """Validate an actual EA UTC/offset sample before mapping requested ranges."""
+ if not isinstance(sample,dict):raise ValueError('请等待 EA 返回券商时钟后重新同步')
+ ms,offset=sample.get('server_time_ms'),sample.get('server_offset_sec')
+ if any(isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) for x in (ms,offset)):
+  raise ValueError('EA 券商时钟格式不正确')
+ if abs(ms/1000-now)>120 or not -43200<=offset<=50400 or offset%900:
+  raise ValueError('EA 券商时钟尚未校准，请等待最新账户快照后重试')
+ return record_clock(db,person,broker,{'clock':{'utc':ms/1000,'server':ms/1000+offset}},now)

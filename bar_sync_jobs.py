@@ -41,11 +41,21 @@ def bind_local_request(db,uid,data,now):
  account,server,key=sync_history.identity(data)
  linked=db.execute('SELECT account_key FROM mt5_links WHERE user_id=?',(uid,)).fetchone()
  if linked and linked['account_key'] and linked['account_key']!=key:raise JobError('当前网站账号已绑定其他 MT5 账户，请先解除绑定',409)
+ feed=bars.feed_of(db,uid)
+ source=bars.source_for(server)
+ known_offset=trade_time.offset_for(db,source)
+ sample=data.get('clock_sample')
+ if sample is not None:
+  try:trade_time.record_ea_clock_sample(db,uid,server,sample,now)
+  except ValueError as error:raise JobError(str(error),409)
+ elif not feed and not isinstance(trade_time.RULES.get(server,{}).get('offset_seconds'),int) and not db.execute('SELECT 1 FROM source_clock WHERE source=?',(source,)).fetchone():
+  raise JobError('请等待 EA 返回券商时钟后重新同步',409)
  # Clicking explicit range sync grants metadata/data upload only; never mint a bearer.
  if not linked:db.execute('INSERT INTO mt5_links(user_id,token_hash,account_key,updated) VALUES(?,NULL,NULL,?)',(uid,now))
- if not bars.feed_of(db,uid):
+ if not feed or sample is not None:
   try:bars.bind_feed(db,uid,account,server,now)
   except bars.BarsError as error:raise JobError(error.text,error.code)
+  if sample is None:bars.set_source_offset(db,source,known_offset,now)
  return link_of(db,uid,'synctrade')
 
 def public(row):
@@ -60,9 +70,11 @@ def current(db,uid,symbol=None,transport='syncnote'):
   sql+=' AND symbol=?';params.append(symbol)
  return db.execute(sql+' ORDER BY created DESC,rowid DESC LIMIT 1',params).fetchone()
 
-def status(db,uid,symbol=None,transport='syncnote'):
+def status(db,uid,symbol=None,transport='syncnote',expected_account=None):
  transport=channel(transport)
- try:return {'job':public(current(db,uid,symbol,transport))}
+ try:
+  if transport=='synctrade' and expected_account and link_of(db,uid,transport)[1]['account_key']!=expected_account:return {'job':None}
+  return {'job':public(current(db,uid,symbol,transport))}
  except JobError:return {'job':None}
 
 def create(db,uid,data,now=None):

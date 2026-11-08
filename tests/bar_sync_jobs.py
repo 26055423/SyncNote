@@ -11,7 +11,7 @@ class RangeJobs(unittest.TestCase):
   self.db=sqlite3.connect(':memory:');self.db.row_factory=sqlite3.Row;self.addCleanup(self.db.close)
   self.db.execute('CREATE TABLE mt5_links(user_id TEXT PRIMARY KEY,token_hash TEXT,account_key TEXT,updated REAL)')
   bars.initialize(self.db);market_symbols.initialize(self.db);jobs.initialize(self.db)
-  self.db.execute('CREATE TABLE broker_clocks(person TEXT PRIMARY KEY,offset INTEGER)')
+  self.db.execute('CREATE TABLE broker_clocks(person TEXT PRIMARY KEY,broker TEXT,offset INTEGER,observed_from REAL,observed_to REAL)')
   self.key=sync_history.account_key('Broker-A','1234')
   self.db.execute('INSERT INTO mt5_links VALUES(?,?,?,?)',('owner','token-A',self.key,1))
   self.link=self.db.execute('SELECT * FROM mt5_links WHERE user_id=?',('owner',)).fetchone()
@@ -91,8 +91,24 @@ class RangeJobs(unittest.TestCase):
   segment=self.poll()
   self.assertEqual(segment['from_server'],NOW-86400+10800)
   self.assertEqual(segment['to_server'],NOW+10800-60)
- def local_create(self,symbol='USTEC'):
-  return jobs.create(self.db,'owner',self.identity|{'website_user_id':'owner','transport':'synctrade','symbol':symbol,'from':NOW-3600,'to':NOW},NOW)['job']
+ def local_create(self,symbol='USTEC',sample=None):
+  sample={'server_time_ms':NOW*1000,'server_offset_sec':0} if sample is None else sample
+  return jobs.create(self.db,'owner',self.identity|{'website_user_id':'owner','transport':'synctrade','symbol':symbol,'from':NOW-3600,'to':NOW,'clock_sample':sample},NOW)['job']
+ def test_browser_clock_sample_maps_unknown_broker_ranges_before_first_binding(self):
+  self.db.execute('DELETE FROM mt5_links');self.db.execute('DELETE FROM feeds')
+  self.local_create(sample={'server_time_ms':NOW*1000,'server_offset_sec':7200})
+  segment=self.local_poll()
+  self.assertEqual(segment['from_server'],NOW-3600+7200)
+  self.assertEqual(segment['to_server'],NOW+7200-60)
+ def test_stale_browser_clock_is_rejected_before_binding(self):
+  self.db.execute('DELETE FROM mt5_links');self.db.execute('DELETE FROM feeds')
+  with self.assertRaises(jobs.JobError):self.local_create(sample={'server_time_ms':(NOW-1000)*1000,'server_offset_sec':7200})
+  self.assertEqual(self.db.execute('SELECT count(*) FROM mt5_links').fetchone()[0],0)
+  with self.assertRaises(jobs.JobError):self.local_create(sample={'server_time_ms':NOW*1000,'server_offset_sec':999999})
+  self.assertEqual(self.db.execute('SELECT count(*) FROM mt5_links').fetchone()[0],0)
+ def test_local_status_does_not_show_an_old_bound_accounts_job(self):
+  self.local_create()
+  self.assertIsNone(jobs.status(self.db,'owner','USTEC','synctrade','another-account')['job'])
  def local_poll(self):return jobs.local_poll(self.db,'owner',self.identity|{'website_user_id':'owner'},NOW)['job']
  def local_body(self,segment,rows=None):return self.body(segment,rows)|{'website_user_id':'owner'}
  def test_first_browser_range_sync_binds_account_without_note_or_history_upload(self):

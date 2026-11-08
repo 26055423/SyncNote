@@ -165,7 +165,7 @@ export function MarketRangeSync({ symbol, transport = 'syncnote', getLocalContex
         } catch (err) { if (scopeRef.current === requestedScope) setError(err instanceof Error ? err.message : '取消失败，请重试。'); }
         finally { if (scopeRef.current === requestedScope) setBusy(false); }
       }}>取消同步</button> : null}
-    </div> : <p className="market-range-note">{local ? '通过本网页代传，只同步行情数据。请保持网页、MT5 与 SyncTrade 本机连接，关闭网页会暂停。' : '需要 SyncNote 1.016 或更新版本。提交后可关闭网页，MT5 与 EA 需保持运行。'}</p>}
+    </div> : <p className="market-range-note">{local ? '使用 SyncTrade 1.109 或更新版本，通过本网页代传行情。请保持网页、MT5 与本机连接，关闭网页会暂停。' : '需要 SyncNote 1.016 或更新版本。提交后可关闭网页，MT5 与 EA 需保持运行。'}</p>}
     {error || pollError ? <p className="local-error" role="alert">{error || pollError}</p> : null}
   </section>;
 }
