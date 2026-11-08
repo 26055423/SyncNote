@@ -1,5 +1,15 @@
 export type Verdict = 'yes' | 'no' | 'unclear' | 'na';
 
+/** 挂在章节下的图表证据：图形编号 + 说明 + 关联时的快照。 */
+export interface NoteEvidence {
+  id: string;
+  caption: string;
+  drawing_id: string;
+  timeframe: string;
+  anchor_ms: number | null;
+  snapshot?: Record<string, unknown> | null;
+}
+
 export interface NoteSection {
   id: string;
   title: string;
@@ -9,6 +19,8 @@ export interface NoteSection {
   group?: string | null;
   /** 结论：勾选只表示看过，成立与否单独记。 */
   verdict?: Verdict | null;
+  /** 图表证据卡。模板不保存证据。 */
+  evidence?: NoteEvidence[];
 }
 export interface NotebookValue { body: string; tags: string[]; sections: NoteSection[] }
 export interface NotebookTemplate { id: string | number; name: string; sections: NoteSection[]; phrases?: string[]; uses: number; last_used: number; pinned?: boolean }
@@ -86,7 +98,7 @@ export function appendTemplate(current: NoteSection[], template: Pick<NotebookTe
 export function templateStructure(sections: NoteSection[]): NoteSection[] {
   return sections
     .filter(section => section.title.trim())
-    .map(section => ({ ...section, title: section.title.trim(), checked: false, body: '', verdict: null }));
+    .map(section => ({ ...section, title: section.title.trim(), checked: false, body: '', verdict: null, evidence: [] }));
 }
 
 export function moveSection(sections: NoteSection[], id: string, direction: -1 | 1): NoteSection[] {

@@ -7,11 +7,19 @@ import {
 } from './notebookModel';
 export type { NotebookValue, NoteSection } from './notebookModel';
 
+interface DrawingCandidate { id: string; type: string; text: string; timeframe: string; anchorMs: number | null; snapshot: unknown }
+interface EvidenceApi {
+  list(): DrawingCandidate[];
+  select(ids: string[] | null): void;
+  goTo(timeframe: string, anchorMs: number | null): void;
+}
+
 interface Props {
   value: NotebookValue;
   onChange(value: NotebookValue): void;
   readOnly: boolean;
   onError?(message: string): void;
+  evidence?: EvidenceApi;
 }
 const EMPTY_LIBRARY: NotebookLibrary = { templates: [], phrases: [], chapters: [] };
 
@@ -35,7 +43,7 @@ function blocks(sections: NoteSection[]): Block[] {
 const verdictLabel = (verdict?: Verdict | null) => VERDICTS.find(v => v.id === verdict)?.label ?? '';
 
 /** User-owned chapters and reusable structures; no trading-system taxonomy. */
-export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
+export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }: Props) {
   const [library, setLibrary] = useState<NotebookLibrary>(EMPTY_LIBRARY);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(value.sections[0]?.id ?? null);
@@ -57,6 +65,8 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
   const [publicItems, setPublicItems] = useState<PublicTemplate[]>([]);
   const [publicQuery, setPublicQuery] = useState('');
   const [publicLoading, setPublicLoading] = useState(false);
+  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<DrawingCandidate[]>([]);
   const areas = useRef(new Map<string, HTMLTextAreaElement>());
   const carets = useRef(new Map<string, { start: number; end: number }>());
   const lastFocused = useRef<string | null>(null);
@@ -181,6 +191,25 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
       if (mounted.current) setPublicLoading(false);
     }
   };
+  const circles = '①②③④⑤⑥⑦⑧⑨⑩';
+  const openEvidencePicker = (id: string) => {
+    setPickerFor(id);
+    setCandidates(evidence?.list() ?? []);
+  };
+  const addEvidence = (section: NoteSection, candidate: DrawingCandidate) => {
+    const snapshot = candidate.snapshot && typeof candidate.snapshot === 'object' ? candidate.snapshot as Record<string, unknown> : null;
+    const item = {
+      id: crypto.randomUUID(),
+      caption: (candidate.text || candidate.type || '图形证据').slice(0, 200),
+      drawing_id: candidate.id,
+      timeframe: candidate.timeframe,
+      anchor_ms: candidate.anchorMs,
+      snapshot,
+    };
+    updateSection(section.id, { evidence: [...(section.evidence ?? []), item].slice(0, 10) });
+    setPickerFor(null);
+    setMessage('已关联图表证据，悬停可高亮原图。');
+  };
   const structureKey = (rows: NoteSection[]) => rows.map(row => `${row.group || ''}/${row.title}`).join('|');
   const applyTemplate = (template: { id: string | number; name: string; sections: NoteSection[]; phrases?: string[] }) => {
     if (!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS) return;
@@ -219,6 +248,11 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
         ? <div className="notebook-section-readonly">
           {!!verdict && <span className={`notebook-verdict is-${verdict}`}>{verdictLabel(verdict)}</span>}
           <p className="notebook-section-content">{section.body || '未填写内容'}</p>
+          {!!section.evidence?.length && <div className="notebook-evidence-row">
+            {section.evidence.map((item, order) => <span className="notebook-evidence" key={item.id}>
+              <button type="button" title={item.caption} onMouseEnter={() => evidence?.select([item.drawing_id])} onMouseLeave={() => evidence?.select(null)} onClick={() => evidence?.goTo(item.timeframe, item.anchor_ms)}>{circles[order] ?? String(order + 1)}{item.caption}</button>
+            </span>)}
+          </div>}
         </div>
         : <>
           <div className="notebook-verdicts" role="group" aria-label={`${section.title || `第 ${index + 1} 章`}的结论`}>
@@ -243,6 +277,29 @@ export function ReviewNotebook({ value, onChange, readOnly, onError }: Props) {
             onMouseUp={event => rememberCaret(section, event.currentTarget)}
             onChange={event => updateSection(section.id, { body: event.target.value })}
           />
+          {(section.evidence?.length || !readOnly) ? <div className="notebook-evidence-row">
+            {(section.evidence ?? []).map((item, order) => <span className="notebook-evidence" key={item.id}>
+              <button
+                type="button"
+                title={`${item.caption}（${item.timeframe || '当前周期'}）`}
+                onMouseEnter={() => evidence?.select([item.drawing_id])}
+                onMouseLeave={() => evidence?.select(null)}
+                onFocus={() => evidence?.select([item.drawing_id])}
+                onBlur={() => evidence?.select(null)}
+                onClick={() => evidence?.goTo(item.timeframe, item.anchor_ms)}
+              >{circles[order] ?? String(order + 1)}{item.caption}</button>
+              {!readOnly && <button type="button" className="notebook-evidence-remove" aria-label={`移除证据 ${item.caption}`} onClick={() => updateSection(section.id, { evidence: (section.evidence ?? []).filter(row => row.id !== item.id) })}>×</button>}
+            </span>)}
+            {!readOnly && <button type="button" className="link notebook-evidence-add" disabled={!evidence} title={evidence ? '从当前图的画线里挑一个' : '图表还没准备好'} onClick={() => openEvidencePicker(section.id)}>＋ 图表证据</button>}
+          </div> : null}
+          {!readOnly && pickerFor === section.id && <div className="notebook-evidence-picker">
+            <div className="notebook-evidence-picker-head"><span>当前图的画线</span><button type="button" className="link" onClick={() => setPickerFor(null)}>取消</button></div>
+            {candidates.length ? candidates.map(candidate => <button type="button" key={candidate.id} className="notebook-evidence-candidate" onClick={() => addEvidence(section, candidate)}>
+              <span>{candidate.text || candidate.type || '图形'}</span>
+              <small>{candidate.type}{candidate.timeframe ? ` · ${candidate.timeframe}` : ''}</small>
+            </button>) : <p className="notebook-library-hint">当前图还没有带说明的画线。先在图上画一个图形并写上注释。</p>}
+          </div>}
+
           <div className="notebook-section-foot">
             <button type="button" className="link" onClick={() => { setSelected(section.id); setLibraryOpen(true); }}>插入常用语</button>
             <div className="notebook-foot-right">

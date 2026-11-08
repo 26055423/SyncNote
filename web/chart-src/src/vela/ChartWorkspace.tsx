@@ -84,6 +84,9 @@ export interface ChartHandle {
   /** 图表样式（candles/bars/line/area/baseline/heikinashi）。 */
   getPriceStyle(): string;
   setPriceStyle(style: string): void;
+  /** 当前图的画线（笔记证据挑选用）。 */
+  drawingCandidates(): Array<{ id: string; type: string; text: string; timeframe: string; anchorMs: number | null; snapshot: unknown }>;
+  selectDrawings(ids: string[] | null): void;
   replayStatus(): ReplayUiState;
   replaySelect(): void;
   replayStartFromView(): Promise<void>;
@@ -402,6 +405,32 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         void ws.active?.chart?.setMarket?.({ timeframe: tf, ...(!props.provider ? { data: [] } : {}) });
       }
       onTimeframe?.(tf);
+    },
+    /** 当前图上的画线，供笔记挑选成证据（只读快照，不改图形）。 */
+    drawingCandidates() {
+      const chart = wsRef.current?.active?.chart as any;
+      const api = chart?.drawings;
+      let doc: any = null;
+      try { doc = api?.toJSON?.(); } catch { return []; }
+      const rows = Array.isArray(doc?.drawings) ? doc.drawings : [];
+      const marks = markIdsByCellRef.current.get(wsRef.current?.active?.id ?? '') ?? markIdsRef.current;
+      const timeframe = String(chart?.market?.timeframe ?? '');
+      return rows.filter((row: any) => row && row.visible !== false && !marks.has(row.id)).map((row: any) => {
+        const anchorPoint = Array.isArray(row.anchors) && row.anchors.length ? row.anchors[0] : null;
+        const time = anchorPoint && typeof anchorPoint.time === 'number' ? anchorPoint.time : null;
+        return {
+          id: String(row.id ?? ''),
+          type: String(row.type ?? ''),
+          text: String(row.text?.value ?? ''),
+          timeframe,
+          anchorMs: time,
+          snapshot: { type: row.type, anchors: row.anchors, text: row.text },
+        };
+      }).filter((row: any) => row.id);
+    },
+    /** 高亮一组图形（传 null 清除）：只影响选中态，不写回画线存档。 */
+    selectDrawings(ids: string[] | null) {
+      try { (wsRef.current?.active?.chart as any)?.drawings?.select?.(ids && ids.length ? ids : null); } catch { /* 忽略 */ }
     },
     getTimeframe() {
       return wsRef.current?.active?.chart?.market?.timeframe ?? '15';

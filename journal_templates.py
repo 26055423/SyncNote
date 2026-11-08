@@ -20,6 +20,25 @@ def initialize(db):
   if column not in [row[1] for row in db.execute('PRAGMA table_info(%s)'%table)]:
    db.execute('ALTER TABLE %s ADD COLUMN %s %s'%(table,column,definition))
 
+def evidence_list(value,template=False):
+ """章节下的图表证据：只保留标识、说明与当时的快照，模板里一律清空。"""
+ if value is None or template:return []
+ if not isinstance(value,list) or len(value)>10:raise JournalError('每个章节最多 10 条证据')
+ out=[]
+ for item in value:
+  if not isinstance(item,dict):raise JournalError('证据格式不正确')
+  ident=item.get('id');caption=item.get('caption','');drawing=item.get('drawing_id','');timeframe=item.get('timeframe','')
+  anchor=item.get('anchor_ms')
+  if not isinstance(ident,str) or not 1<=len(ident)<=64:raise JournalError('证据编号不正确')
+  if not isinstance(caption,str) or len(caption)>200:raise JournalError('证据说明最多 200 字')
+  if not isinstance(drawing,str) or len(drawing)>120:raise JournalError('证据图形编号不正确')
+  if not isinstance(timeframe,str) or len(timeframe)>16:raise JournalError('证据周期不正确')
+  if anchor is not None and (isinstance(anchor,bool) or not isinstance(anchor,(int,float))):raise JournalError('证据时间不正确')
+  snapshot=item.get('snapshot')
+  if snapshot is not None and not isinstance(snapshot,dict):raise JournalError('证据快照不正确')
+  out.append({'id':ident,'caption':caption.strip(),'drawing_id':drawing,'timeframe':timeframe,'anchor_ms':int(anchor) if isinstance(anchor,(int,float)) and not isinstance(anchor,bool) else None,'snapshot':snapshot})
+ return out
+
 VERDICTS=('yes','no','unclear','na')
 
 def sections(value,template=False):
@@ -39,10 +58,11 @@ def sections(value,template=False):
    group=group.strip() or None
   # 结论和「已检查」是两件事：勾选只表示看过，符合与否单独记。
   if verdict is not None and verdict not in VERDICTS:raise JournalError('章节结论不正确')
+  evidence=evidence_list(item.get('evidence'),template)
   total+=len(title)+len(body)
   if total>30000:raise JournalError('章节内容合计最多 30000 字')
   seen.add(ident)
-  out.append({'id':ident,'title':title.strip(),'group':group,'body':'' if template else body.strip(),'checked':False if template else checked,'verdict':None if template else verdict})
+  out.append({'id':ident,'title':title.strip(),'group':group,'body':'' if template else body.strip(),'checked':False if template else checked,'verdict':None if template else verdict,'evidence':evidence})
  return out
 
 MAX_TEMPLATE_PHRASES=20

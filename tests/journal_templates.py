@@ -122,6 +122,18 @@ class JournalTemplates(unittest.TestCase):
   with self.assertRaises(library.JournalError) as error:library.pin_phrase(self.db,'bob',{'id':a['id'],'pinned':True})
   self.assertEqual(error.exception.code,404)
 
+ def test_section_evidence_roundtrips_but_templates_drop_it(self):
+  evidence=[{'id':'ev-1','caption':'15m 需求区：首次回踩','drawing_id':'d-1','timeframe':'15','anchor_ms':1761998400000,'snapshot':{'type':'trendline'}}]
+  saved=self.note(sections=[self.section('结构',group='确认',evidence=evidence)])['sections'][0]
+  self.assertEqual(saved['evidence'][0]['caption'],'15m 需求区：首次回踩')
+  self.assertEqual(saved['evidence'][0]['anchor_ms'],1761998400000)
+  template=library.save_template(self.db,'alice',{'name':'带证据','sections':[self.section('结构',group='确认',evidence=evidence)]})['template']
+  self.assertEqual(template['sections'][0]['evidence'],[])
+  for broken in ([{'id':'x','caption':'c','drawing_id':'d','timeframe':'15','anchor_ms':'now'}],
+                 [{'id':'','caption':'c','drawing_id':'d','timeframe':'15'}],
+                 [{'id':'x','caption':'c'*201,'drawing_id':'d','timeframe':'15'}]):
+   with self.assertRaises(library.JournalError):self.note(sections=[self.section('坏证据',evidence=broken)])
+
  def test_public_library_publishes_structure_only_and_rejects_abuse(self):
   self.db.executescript("CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,nickname TEXT); INSERT OR IGNORE INTO users VALUES('alice','A'),('bob','B');")
   self.db.execute("INSERT OR IGNORE INTO users VALUES('alice','A')")

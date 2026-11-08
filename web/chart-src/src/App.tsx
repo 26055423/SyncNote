@@ -1793,6 +1793,14 @@ export default function App() {
                         onChange={next => { setNote(next); setNoteState(state => state === 'saving' ? state : 'idle'); }}
                         readOnly={entry.read_only}
                         onError={setError}
+                        evidence={{
+                          list: () => chartRef.current?.drawingCandidates?.() ?? [],
+                          select: (ids) => chartRef.current?.selectDrawings?.(ids),
+                          goTo: (tf, anchorMs) => {
+                            if (tf) chartRef.current?.setTimeframe(tf);
+                            if (anchorMs) chartRef.current?.focus(anchorMs);
+                          },
+                        }}
                       />
                       <div className="tags">
                         {categories.map((tag) => (
