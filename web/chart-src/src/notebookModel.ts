@@ -31,20 +31,11 @@ export interface NotebookLibrary {
   chapters: Array<{ title: string; uses: number; last_used: number }>;
 }
 
-export interface PublicTemplate {
-  id: string;
-  name: string;
-  summary: string;
-  symbol: string;
-  timeframe: string;
-  version: number;
+export interface PublicChapter {
+  title: string;
+  users: number;
   uses: number;
-  favorites: number;
-  owner: string;
-  mine: boolean;
-  favorite: boolean;
-  chapters: number;
-  phrases: number;
+  group: string | null;
 }
 
 export const SYSTEM_PHRASES = ['扫了低点', '扫了高点', '拿了 IDM', 'FVG 被缓解', '触及 POI', '出现 Flip', '突破后回踩', '等待确认'];

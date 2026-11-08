@@ -10,10 +10,7 @@ def initialize(db):
  CREATE INDEX IF NOT EXISTS journal_templates_owner ON journal_templates(person);
  CREATE TABLE IF NOT EXISTS journal_phrases(id TEXT PRIMARY KEY,person TEXT NOT NULL,text TEXT NOT NULL,uses INTEGER NOT NULL DEFAULT 0,last_used REAL NOT NULL DEFAULT 0,updated REAL NOT NULL,UNIQUE(person,text));
  CREATE INDEX IF NOT EXISTS journal_phrases_owner ON journal_phrases(person);
- CREATE TABLE IF NOT EXISTS journal_public(id TEXT PRIMARY KEY,owner TEXT NOT NULL,name TEXT NOT NULL,sections TEXT NOT NULL,phrases TEXT NOT NULL DEFAULT '[]',summary TEXT NOT NULL DEFAULT '',symbol TEXT NOT NULL DEFAULT '',timeframe TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1,uses INTEGER NOT NULL DEFAULT 0,favorites INTEGER NOT NULL DEFAULT 0,hidden INTEGER NOT NULL DEFAULT 0,published REAL NOT NULL,updated REAL NOT NULL);
- CREATE INDEX IF NOT EXISTS journal_public_owner ON journal_public(owner);
- CREATE TABLE IF NOT EXISTS journal_public_refs(id TEXT PRIMARY KEY,public_id TEXT NOT NULL,person TEXT NOT NULL,created REAL NOT NULL,UNIQUE(public_id,person));
- CREATE TABLE IF NOT EXISTS journal_public_favs(public_id TEXT NOT NULL,person TEXT NOT NULL,created REAL NOT NULL,PRIMARY KEY(public_id,person));''')
+''')
  for table,column,definition in (('journal_templates','phrases',"TEXT NOT NULL DEFAULT '[]'"),
                                  ('journal_templates','pinned','INTEGER NOT NULL DEFAULT 0'),
                                  ('journal_phrases','pinned','INTEGER NOT NULL DEFAULT 0')):
@@ -143,6 +140,33 @@ def pin_item(db,person,data):
  db.execute('UPDATE '+table+' SET pinned=? WHERE person=? AND id=?',(1 if pinned else 0,person,ident))
  return {'ok':True,'pinned':pinned}
 
+def public_chapters(db,limit=60,min_users=1):
+ """全服章节词云：只回标题、分组、人数与使用笔数，不带任何用户或交易信息。"""
+ rows=db.execute('SELECT s.person,s.ticket,s.sections FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket').fetchall()
+ used=set();titles={}
+ for row in rows:
+  try:sections=json.loads(row['sections'])
+  except (TypeError,ValueError):continue
+  person=row['person'];ticket=row['ticket']
+  for section in sections:
+   title=str(section.get('title','')).strip()
+   if not title:continue
+   if not (section.get('checked') or str(section.get('body','')).strip()):continue
+   entry=titles.setdefault(title,{'title':title,'users':set(),'uses':0,'groups':{}})
+   entry['users'].add(person)
+   if (person,ticket,title) not in used:
+    used.add((person,ticket,title));entry['uses']+=1
+   group=str(section.get('group') or '').strip()
+   if group:entry['groups'][group]=entry['groups'].get(group,0)+1
+ out=[]
+ for entry in titles.values():
+  users=len(entry['users'])
+  if users<min_users:continue
+  group=max(entry['groups'],key=entry['groups'].get) if entry['groups'] else None
+  out.append({'title':entry['title'],'users':users,'uses':entry['uses'],'group':group})
+ out.sort(key=lambda item:(-item['users'],-item['uses'],item['title']))
+ return {'chapters':out[:max(1,min(int(limit or 60),100))],'total':len(out)}
+
 def stats(db,person):
  """个人复盘统计：完成率、结论分布、最常跳过的检查项。只算真正保存过的复盘。"""
  rows=db.execute('SELECT s.sections FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket WHERE s.person=?',(person,)).fetchall()
@@ -167,83 +191,6 @@ def stats(db,person):
  for item in titles+skipped:
   item['rate']=round(item['checked']/item['total'],3) if item['total'] else 0
  return {'notes':notes,'titles':titles,'skipped':skipped,'verdicts':verdicts}
-
-def public_list(db,person,query='',limit=50):
- rows=db.execute("SELECT p.*,u.nickname FROM journal_public p JOIN users u ON u.id=p.owner WHERE p.hidden=0 ORDER BY p.favorites DESC,p.uses DESC,p.published DESC LIMIT ?",(max(1,min(int(limit or 50),100)),)).fetchall()
- text=(query or '').strip().lower()
- out=[]
- favs={r[0] for r in db.execute('SELECT public_id FROM journal_public_favs WHERE person=?',(person,))}
- for r in rows:
-  sections=json.loads(r['sections'])
-  hay=' '.join([r['name'],r['summary'],r['symbol'],r['timeframe']]+[s.get('title','') for s in sections]).lower()
-  if text and text not in hay:continue
-  out.append({'id':r['id'],'name':r['name'],'summary':r['summary'],'symbol':r['symbol'],'timeframe':r['timeframe'],'version':r['version'],'uses':r['uses'],'favorites':r['favorites'],'owner':r['nickname'] or '', 'mine':r['owner']==person,'favorite':r['id'] in favs,'chapters':len(sections),'phrases':len(json.loads(r['phrases'] or '[]'))})
- return out
-
-def publish(db,person,data):
- template_id=data.get('template_id');ident=data.get('id')
- name=data.get('name','')
- rows=None;phrases=[]
- if template_id:
-  row=db.execute('SELECT * FROM journal_templates WHERE person=? AND id=?',(person,template_id)).fetchone()
-  if not row:raise JournalError('模板不存在',404)
-  rows=json.loads(row['sections']);phrases=json.loads(row['phrases'] or '[]');name=name or row['name']
- if ident:
-  row=db.execute('SELECT * FROM journal_public WHERE id=?',(ident,)).fetchone()
-  if not row or row['owner']!=person:raise JournalError('公开模板不存在',404)
-  if rows is None:rows=json.loads(row['sections']);phrases=json.loads(row['phrases'] or '[]')
-  name=name or row['name']
- if rows is None:raise JournalError('请选择要发布的模板')
- content=sections(rows,True);phrase_texts=phrase_list(phrases)
- if not content:raise JournalError('公开模板至少需要一个章节')
- if not isinstance(name,str) or not 1<=len(name.strip())<=80:raise JournalError('模板名称需为 1 至 80 字')
- name=name.strip();summary=str(data.get('summary','') or '').strip()
- if len(summary)>200:raise JournalError('简介最多 200 字')
- symbol=str(data.get('symbol','') or '').strip()
- if len(symbol)>32:raise JournalError('品种最多 32 字')
- timeframe=str(data.get('timeframe','') or '').strip()
- if len(timeframe)>16:raise JournalError('周期最多 16 字')
- now=time.time()
- if ident:
-  db.execute('UPDATE journal_public SET name=?,sections=?,phrases=?,summary=?,symbol=?,timeframe=?,version=version+1,updated=? WHERE id=?',(name,json.dumps(content,ensure_ascii=False),json.dumps(phrase_texts,ensure_ascii=False),summary,symbol,timeframe,now,ident))
-  version=db.execute('SELECT version FROM journal_public WHERE id=?',(ident,)).fetchone()[0]
- else:
-  if db.execute('SELECT count(*) FROM journal_public WHERE owner=? AND hidden=0',(person,)).fetchone()[0]>=20:raise JournalError('最多发布 20 个模板')
-  ident=uuid.uuid4().hex;version=1
-  db.execute('INSERT INTO journal_public(id,owner,name,sections,phrases,summary,symbol,timeframe,published,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',(ident,person,name,json.dumps(content,ensure_ascii=False),json.dumps(phrase_texts,ensure_ascii=False),summary,symbol,timeframe,now,now))
- return {'ok':True,'id':ident,'version':version}
-
-def unpublish(db,person,data):
- ident=data.get('id')
- row=db.execute('SELECT owner FROM journal_public WHERE id=?',(ident,)).fetchone() if isinstance(ident,str) else None
- if not row or row['owner']!=person:raise JournalError('公开模板不存在',404)
- db.execute('UPDATE journal_public SET hidden=1,updated=? WHERE id=?',(time.time(),ident))
- return {'ok':True}
-
-def import_public(db,person,data):
- ident=data.get('id')
- row=db.execute('SELECT * FROM journal_public WHERE id=? AND hidden=0',(ident,)).fetchone() if isinstance(ident,str) else None
- if not row:raise JournalError('公开模板不存在',404)
- if row['owner']==person:raise JournalError('这是你自己的模板')
- base=row['name'];name=base;index=2
- while db.execute('SELECT 1 FROM journal_templates WHERE person=? AND name=?',(person,name)).fetchone():
-  name='%s %d'%(base,index);index+=1
-  if index>50:raise JournalError('同名模板太多，请先整理自己的模板')
- template=save_template(db,person,{'name':name,'sections':json.loads(row['sections']),'phrases':json.loads(row['phrases'] or '[]')})['template']
- db.execute('INSERT OR IGNORE INTO journal_public_refs(id,public_id,person,created) VALUES(?,?,?,?)',(uuid.uuid4().hex,ident,person,time.time()))
- db.execute('UPDATE journal_public SET uses=uses+1 WHERE id=?',(ident,))
- return {'ok':True,'template':template}
-
-def favorite_public(db,person,data):
- ident=data.get('id')
- row=db.execute('SELECT 1 FROM journal_public WHERE id=? AND hidden=0',(ident,)).fetchone() if isinstance(ident,str) else None
- if not row:raise JournalError('公开模板不存在',404)
- on=bool(data.get('on',True))
- if on:db.execute('INSERT OR IGNORE INTO journal_public_favs(public_id,person,created) VALUES(?,?,?)',(ident,person,time.time()))
- else:db.execute('DELETE FROM journal_public_favs WHERE public_id=? AND person=?',(ident,person))
- count=db.execute('SELECT count(*) FROM journal_public_favs WHERE public_id=?',(ident,)).fetchone()[0]
- db.execute('UPDATE journal_public SET favorites=? WHERE id=?',(count,ident))
- return {'ok':True,'favorite':on,'favorites':count}
 
 def library_item(db,person,data,remove=False):
  choices=[(key,table) for key,table in [('template_id','journal_templates'),('phrase_id','journal_phrases')] if key in data]

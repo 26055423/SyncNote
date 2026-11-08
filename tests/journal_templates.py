@@ -147,28 +147,19 @@ class JournalTemplates(unittest.TestCase):
                  [{'id':'x','caption':'c'*201,'drawing_id':'d','timeframe':'15'}]):
    with self.assertRaises(library.JournalError):self.note(sections=[self.section('坏证据',evidence=broken)])
 
- def test_public_library_publishes_structure_only_and_rejects_abuse(self):
+ def test_public_chapter_cloud_counts_people_not_clicks_and_needs_meaningful_content(self):
   self.db.executescript("CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,nickname TEXT); INSERT OR IGNORE INTO users VALUES('alice','A'),('bob','B');")
-  self.db.execute("INSERT OR IGNORE INTO users VALUES('alice','A')")
-  sections=[{'id':'s1','title':'方向','group':'方向判断','checked':True,'body':'私人判断','verdict':'yes'}]
-  template=library.save_template(self.db,'alice',{'name':'五问','sections':sections,'phrases':['扫了低点']})['template']
-  published=library.publish(self.db,'alice',{'template_id':template['id'],'summary':'开盘前用','symbol':'XAUUSD','timeframe':'M15'})
-  listing=library.public_list(self.db,'bob')
-  self.assertEqual(len(listing),1)
-  self.assertEqual(listing[0]['chapters'],1);self.assertEqual(listing[0]['phrases'],1)
-  self.assertEqual(listing[0]['owner'],'A')
-  imported=library.import_public(self.db,'bob',{'id':published['id']})['template']
-  self.assertEqual(imported['sections'][0]['body'],'')
-  self.assertIsNone(imported['sections'][0]['verdict'])
-  self.assertEqual(library.public_list(self.db,'bob')[0]['uses'],1)
-  with self.assertRaises(library.JournalError):library.import_public(self.db,'alice',{'id':published['id']})
-  with self.assertRaises(library.JournalError) as error:library.unpublish(self.db,'bob',{'id':published['id']})
-  self.assertEqual(error.exception.code,404)
-  library.favorite_public(self.db,'bob',{'id':published['id'],'on':True})
-  library.favorite_public(self.db,'bob',{'id':published['id'],'on':True})
-  self.assertEqual(library.public_list(self.db,'alice')[0]['favorites'],1)
-  library.unpublish(self.db,'alice',{'id':published['id']})
-  self.assertEqual(library.public_list(self.db,'bob'),[])
+  for ticket,person in (('1','alice'),('2','alice'),('1','bob')):
+   self.db.execute('INSERT OR IGNORE INTO trades(person,ticket,payload) VALUES(?,?,?)',(person,ticket,'{}'))
+  library_stats=self.note('1',sections=[{'id':'a1','title':'扫低后 Flip','group':'结构','checked':True,'body':'x'}])
+  self.note('2',sections=[{'id':'a2','title':'扫低后 Flip','group':'结构','checked':True,'body':'y'},{'id':'a3','title':'空章节','body':'','checked':False}])
+  journal.save(self.db,'bob',{'ticket':'1','body':'','tags':[],'sections':[{'id':'b1','title':'扫低后 Flip','group':'结构','checked':True,'body':'z'}]})
+  cloud=library.public_chapters(self.db)
+  titles={row['title']:row for row in cloud['chapters']}
+  self.assertEqual(titles['扫低后 Flip']['users'],2)
+  self.assertEqual(titles['扫低后 Flip']['uses'],3)
+  self.assertEqual(titles['扫低后 Flip']['group'],'结构')
+  self.assertNotIn('空章节',titles)
 
  def test_template_pin_sorts_first_and_rejects_other_owners(self):
   first=library.save_template(self.db,'alice',{'name':'常用','sections':[self.section()]})['template']

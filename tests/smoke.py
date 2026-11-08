@@ -180,7 +180,7 @@ def main():
    alice.request('/api/journal',{'ticket':'fixture-1','body':'等回调确认再入场','tags':['入场时机']})
    # 自由章节与个人素材库沿用当前登录用户，不能用 person 字段切换归属。
    anon.request('/api/journal/library',status=401)
-   for path in ('/api/journal/templates','/api/journal/phrases','/api/journal/library/use','/api/journal/library/remove','/api/journal/public/publish','/api/journal/public/import','/api/journal/public/unpublish'):
+   for path in ('/api/journal/templates','/api/journal/phrases','/api/journal/library/use','/api/journal/library/remove','/api/journal/phrases/pin','/api/journal/templates/pin'):
     anon.request(path,{},status=401)
    sections=[{'id':'chapter-a','title':'先问自己是否着急','checked':True,'body':'扫了低点，等回踩确认','group':'确认','verdict':'yes'},
              {'id':'chapter-b','title':'只改一件事','checked':False,'body':''}]
@@ -200,13 +200,14 @@ def main():
    template=alice.request('/api/journal/templates',{'name':'我的开单前五问','sections':sections,'person':b['id']})['template']
    ensure(template['name']=='我的开单前五问' and [s['title'] for s in template['sections']]==[s['title'] for s in sections],'template keeps freely named ordered chapters')
    ensure(all(not s['body'] and not s['checked'] for s in template['sections']),'template does not copy private trade observations or checked state')
-   published=alice.request('/api/journal/public/publish',{'template_id':template['id'],'summary':'开盘前用','symbol':'XAUUSD','timeframe':'M15'})
-   listing=bob.request('/api/journal/public?limit=10')['items']
-   ensure(len(listing)==1 and listing[0]['chapters']==len(sections) and listing[0]['summary']=='开盘前用','public template listing keeps structure only')
-   imported=bob.request('/api/journal/public/import',{'id':published['id']})['template']
-   ensure(all(not s['body'] and s['verdict'] is None for s in imported['sections']),'imported public template copies structure without trade content')
-   alice.request('/api/journal/public/unpublish',{'id':published['id']})
-   ensure(alice.request('/api/journal/public?limit=10')['items']==[],'unpublished template leaves the public list')
+   with sqlite3.connect(db) as conn:
+    conn.execute('INSERT INTO trades VALUES(?,?,?)',(b['id'],'fixture-b',json.dumps({'ticket':'fixture-b','symbol':'XAUUSD','side':'sell','volume':0.1,'open':2650.0,'close':2640.0,'profit':10.0,'closed':1700000000,'closed_server':1700000000,'opened_server':1699990000,'time_basis':'utc'})))
+    conn.commit()
+   bob.request('/api/journal',{'ticket':'fixture-b','body':'','tags':[],'sections':[{'id':'bob-a','title':'先问自己是否着急','checked':True,'body':'同意'}]})
+   cloud=alice.request('/api/journal/chapters')
+   ensure(any(row['title']=='先问自己是否着急' and row['users']>=2 for row in cloud['chapters']),'public chapter cloud counts people who used a title')
+   ensure(all(row['users']>=1 for row in cloud['chapters']),'public chapter cloud only returns aggregated counts')
+   alice.request('/api/journal/phrases',{'text':'   '},status=400)
    phrase=alice.request('/api/journal/phrases',{'text':' 扫了低点 ','person':b['id']})['phrase']
    ensure(alice.request('/api/journal/phrases',{'text':'扫了低点'})['phrase']['id']==phrase['id'],'personal phrase save is deduplicated')
    bob_library=bob.request('/api/journal/library?person='+a['id'])

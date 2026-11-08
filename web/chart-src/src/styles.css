@@ -1929,3 +1929,10 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-summary-head .link { margin-left: auto; padding: 2px 4px; font-size: 11px; }
 .notebook-summary-text { margin: 8px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; font-family: inherit; font-size: 11px; line-height: 1.75; color: var(--text); }
 .notebook-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); color: var(--dim); font-size: 10px; }
+
+/* 全服章节词云 */
+.notebook-cloud { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px 10px; margin: 8px 0 4px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.notebook-cloud-item { display: inline-flex; align-items: baseline; gap: 3px; border: 0; background: transparent; color: var(--text); padding: 1px 2px; line-height: 1.25; }
+.notebook-cloud-item > small { color: var(--dim); font-size: 9px; }
+.notebook-cloud-item:hover:not(:disabled) { color: var(--accent-ink); }
+.notebook-cloud-item.is-used { color: var(--dim); text-decoration: line-through; opacity: .6; }

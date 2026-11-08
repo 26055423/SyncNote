@@ -3,7 +3,7 @@ import { api } from './api';
 import {
   appendChecklist, appendPhrase, appendTemplate, checklistProgress, frequentFirst, MAX_SECTIONS, moveSection,
   newSection, STARTER_CHAPTERS, summarizeNote, SYSTEM_PHRASES, templateStructure, VERDICTS,
-  type NotebookLibrary, type NotebookValue, type NoteSection, type PublicTemplate, type Verdict,
+  type NotebookLibrary, type NotebookValue, type NoteSection, type PublicChapter, type Verdict,
 } from './notebookModel';
 export type { NotebookValue, NoteSection } from './notebookModel';
 
@@ -69,9 +69,9 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   const [activeTemplate, setActiveTemplate] = useState<{ name: string; phrases: string[] } | null>(null);
   const [selection, setSelection] = useState<{ id: string; text: string } | null>(null);
   const [templateHintOff, setTemplateHintOff] = useState(false);
-  const [publicItems, setPublicItems] = useState<PublicTemplate[]>([]);
-  const [publicQuery, setPublicQuery] = useState('');
-  const [publicLoading, setPublicLoading] = useState(false);
+  const [cloud, setCloud] = useState<PublicChapter[]>([]);
+  const [cloudQuery, setCloudQuery] = useState('');
+  const [cloudLoading, setCloudLoading] = useState(false);
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<DrawingCandidate[]>([]);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -85,7 +85,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     mounted.current = true;
     if (!readOnly) {
       setLoading(true);
-      void loadPublic('');
+      void loadCloud();
       void api<NotebookLibrary>('/api/journal/library').then(result => {
         if (mounted.current) setLibrary({ ...EMPTY_LIBRARY, ...result });
       }).catch(failure => {
@@ -190,15 +190,15 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     await api('/api/journal/phrases/pin', { id: phrase.id, pinned: !phrase.pinned });
     await refresh();
   });
-  const loadPublic = async (query = publicQuery) => {
-    setPublicLoading(true);
+  const loadCloud = async () => {
+    setCloudLoading(true);
     try {
-      const result = await api<{ items: PublicTemplate[] }>(`/api/journal/public?limit=30&q=${encodeURIComponent(query)}`);
-      if (mounted.current) setPublicItems(result.items ?? []);
+      const result = await api<{ chapters: PublicChapter[] }>('/api/journal/chapters?limit=60');
+      if (mounted.current) setCloud(result.chapters ?? []);
     } catch {
-      if (mounted.current) setPublicItems([]);
+      if (mounted.current) setCloud([]);
     } finally {
-      if (mounted.current) setPublicLoading(false);
+      if (mounted.current) setCloudLoading(false);
     }
   };
   const openSummary = () => {
@@ -399,10 +399,6 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
           await api('/api/journal/templates/pin', { template_id: template.id, pinned: !template.pinned }); await refresh();
         })}>{template.pinned ? '★' : '☆'}</button>
         <button type="button" className="notebook-library-remove" aria-label={`编辑模板 ${template.name}`} disabled={busy} onClick={() => { setEditingTemplate(editingTemplate === template.id ? null : template.id); setEditingName(template.name); setTemplatePhrases([...(template.phrases ?? [])]); }}>编辑</button>
-        <button type="button" className="notebook-library-remove" title="发布到模板库，只带结构不带交易内容" aria-label={`发布模板 ${template.name}`} disabled={busy} onClick={() => void run(async () => {
-          await api('/api/journal/public/publish', { template_id: template.id });
-          await loadPublic(); setMessage('已发布到模板库，只含章节结构与提示语，不含交易内容。');
-        })}>发布</button>
         <button type="button" className="notebook-library-remove" title="删除我的模板" aria-label={`删除模板 ${template.name}`} disabled={busy} onClick={() => void run(async () => {
           await api('/api/journal/library/remove', { template_id: template.id }); await refresh(); setMessage('模板已删除，当前笔记保留。');
         })}>×</button>
@@ -423,35 +419,33 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         })}>用当前章节更新此模板</button>
       </div>}</div>)}
       {!library.templates.length && <p className="notebook-library-hint">保存自己的章节组合，下次可以一键添加。</p>}
-      <h5>公开模板库</h5>
-      <p className="notebook-library-hint">别人发布的章节结构，引用后是你自己的副本；不包含任何交易内容。</p>
+      <h5>全服常用章节</h5>
+      <p className="notebook-library-hint">按使用人数排的真实章节名，点一下加进自己的清单；只统计标题与人数，不含任何人的笔记内容。</p>
       <div className="notebook-library-form">
-        <input aria-label="搜索公开模板" maxLength={40} placeholder="搜名字、章节、品种" value={publicQuery} onChange={event => setPublicQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void loadPublic(); }}/>
-        <button type="button" disabled={publicLoading} onClick={() => void loadPublic()}>{publicLoading ? '搜索中…' : '搜索'}</button>
+        <input aria-label="筛选章节" maxLength={40} placeholder="筛选章节名" value={cloudQuery} onChange={event => setCloudQuery(event.target.value)}/>
+        <button type="button" disabled={cloudLoading} onClick={() => void loadCloud()}>{cloudLoading ? '读取中…' : '刷新'}</button>
       </div>
-      {publicItems.map(item => <div className="notebook-public" key={item.id}>
-        <div className="notebook-public-head">
-          <strong>{item.name}</strong>
-          <span className="notebook-public-meta">{item.owner || '匿名'}{item.mine ? '（我）' : ''} · {item.chapters} 章{item.phrases ? ` · ${item.phrases} 用语` : ''}{item.symbol ? ` · ${item.symbol}` : ''}{item.timeframe ? ` ${item.timeframe}` : ''} · 引用 {item.uses}</span>
-        </div>
-        {item.summary && <p className="notebook-public-summary">{item.summary}</p>}
-        <div className="notebook-public-actions">
-          <button type="button" className="link" aria-pressed={item.favorite} onClick={() => void run(async () => {
-            await api('/api/journal/public/favorite', { id: item.id, on: !item.favorite }); await loadPublic();
-          })}>{item.favorite ? '★ 已收藏' : '☆ 收藏'}</button>
-          {item.mine
-            ? <button type="button" className="link" onClick={() => void run(async () => {
-              await api('/api/journal/public/unpublish', { id: item.id }); await loadPublic(); setMessage('已从模板库撤回。');
-            })}>撤回</button>
-            : <button type="button" className="link" disabled={busy || value.sections.length + item.chapters > MAX_SECTIONS} onClick={() => void run(async () => {
-              const result = await api<{ template: { id: string; name: string; sections: NoteSection[]; phrases?: string[] } }>('/api/journal/public/import', { id: item.id });
-              await refresh(); await loadPublic();
-              applyTemplate(result.template);
-              setMessage(`已引用「${item.name}」为你的模板，可以从「章节组合」套用。`);
-            })}>引用</button>}
-        </div>
-      </div>)}
-      {!publicItems.length && !publicLoading && <p className="notebook-library-hint">还没有公开模板。你可以把自认为好用的结构发布上来。</p>}
+      {(() => {
+        const keyword = cloudQuery.trim();
+        const rows = keyword ? cloud.filter(item => item.title.includes(keyword)) : cloud;
+        if (!rows.length) return <p className="notebook-library-hint">{cloudLoading ? '正在读取…' : keyword ? '没有匹配的章节。' : '还没有足够的复盘数据。'}</p>;
+        const max = rows[0]?.users || 1;
+        return <div className="notebook-cloud" aria-label="全服常用章节">
+          {rows.map(item => {
+            const scale = 0.85 + 0.75 * Math.min(1, item.users / max);
+            const exists = value.sections.some(section => section.title.trim() === item.title);
+            return <button
+              type="button"
+              key={item.title}
+              className={`notebook-cloud-item${exists ? ' is-used' : ''}`}
+              style={{ fontSize: `${(11 + scale * 6).toFixed(1)}px` }}
+              title={`${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
+              disabled={exists || value.sections.length >= MAX_SECTIONS}
+              onClick={() => addChapter(item.title, item.group)}
+            >{item.title}<small>{item.users}</small></button>;
+          })}
+        </div>;
+      })()}
 
       <div className="notebook-library-form"><input aria-label="模板名称" maxLength={80} placeholder="给这套章节起个名字" value={templateName} onChange={event => setTemplateName(event.target.value)}/>
         <button type="button" disabled={busy || !templateName.trim() || !templateStructure(value.sections).length} onClick={() => void run(async () => {
