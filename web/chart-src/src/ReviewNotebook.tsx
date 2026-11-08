@@ -216,6 +216,45 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     if (!readOnly) void api<Stats>('/api/journal/stats').then(setStats).catch(() => setStats(null));
   };
   const summaryText = summarizeNote(value);
+  const CLOUD_INKS = ['var(--text)', 'var(--accent-ink)', 'var(--good-ink)', 'var(--warn-ink)', 'var(--bad-ink)'];
+  const inkOf = (title: string) => {
+    let sum = 0;
+    for (const char of title) sum += char.codePointAt(0) ?? 0;
+    return CLOUD_INKS[sum % CLOUD_INKS.length];
+  };
+  const cloudRows = () => {
+    const keyword = cloudQuery.trim();
+    return keyword ? cloud.filter(item => item.title.includes(keyword)) : cloud;
+  };
+  /** 字号：真实条目按人数开方放大，预置术语按人工权重，保证有层次。 */
+  const renderCloud = (rows: PublicChapter[], big: boolean) => {
+    const real = rows.filter(item => !item.system);
+    const maxUsers = Math.max(1, ...real.map(item => item.users));
+    return <div className={`notebook-cloud${big ? ' notebook-cloud-lg' : ''}`}>
+      {rows.map(item => {
+        const exists = value.sections.some(section => section.title.trim() === item.title);
+        const size = item.system
+          ? (big ? 10 + (item.weight ?? 3) * 6.8 : 11 + (item.weight ?? 3) * 3.2)
+          : (big ? 16 + 30 * Math.sqrt(item.users / maxUsers) : 14 + 18 * Math.sqrt(item.users / maxUsers));
+        const weight = size >= 34 ? 700 : size >= 24 ? 600 : 500;
+        let wobble = 0;
+        if (big) {
+          let sum = 0;
+          for (const char of item.title) sum += char.codePointAt(0) ?? 0;
+          wobble = ((sum % 7) - 3) * 1.6;
+        }
+        return <button
+          type="button"
+          key={item.title}
+          className={`notebook-cloud-item${exists ? ' is-used' : ''}`}
+          style={{ fontSize: `${size.toFixed(1)}px`, color: inkOf(item.title), fontWeight: weight, transform: wobble ? `translateY(${wobble.toFixed(1)}px)` : undefined }}
+          title={item.system ? `系统推荐条目${item.group ? ` · 常归在「${item.group}」` : ''}` : `${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
+          disabled={exists || value.sections.length >= MAX_SECTIONS}
+          onClick={() => addChapter(item.title, item.group)}
+        >{item.title}{item.system ? null : <small>{item.users}</small>}</button>;
+      })}
+    </div>;
+  };
   const circles = '①②③④⑤⑥⑦⑧⑨⑩';
   const openEvidencePicker = (id: string) => {
     setPickerFor(id);
@@ -436,25 +475,9 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         <button type="button" disabled={cloudLoading} onClick={() => void loadCloud()}>{cloudLoading ? '读取中…' : '刷新'}</button>
       </div>
       {(() => {
-        const keyword = cloudQuery.trim();
-        const rows = keyword ? cloud.filter(item => item.title.includes(keyword)) : cloud;
-        if (!rows.length) return <p className="notebook-library-hint">{cloudLoading ? '正在读取…' : keyword ? '没有匹配的条目。' : '还没有足够的复盘数据。'}</p>;
-        const max = rows[0]?.users || 1;
-        return <div className="notebook-cloud" aria-label="全服常用条目">
-          {rows.map(item => {
-            const scale = 0.85 + 0.75 * Math.min(1, item.users / max);
-            const exists = value.sections.some(section => section.title.trim() === item.title);
-            return <button
-              type="button"
-              key={item.title}
-              className={`notebook-cloud-item${exists ? ' is-used' : ''}`}
-              style={{ fontSize: `${(11 + scale * 6).toFixed(1)}px` }}
-              title={item.system ? `系统推荐条目${item.group ? ` · 常归在「${item.group}」` : ''}` : `${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
-              disabled={exists || value.sections.length >= MAX_SECTIONS}
-              onClick={() => addChapter(item.title, item.group)}
-            >{item.title}<small>{item.system ? '推荐' : item.users}</small></button>;
-          })}
-        </div>;
+        const rows = cloudRows();
+        if (!rows.length) return <p className="notebook-library-hint">{cloudLoading ? '正在读取…' : cloudQuery.trim() ? '没有匹配的条目。' : '还没有足够的复盘数据。'}</p>;
+        return renderCloud(rows, false);
       })()}
 
       <div className="notebook-library-form"><input aria-label="模板名称" maxLength={80} placeholder="给这套条目起个名字" value={templateName} onChange={event => setTemplateName(event.target.value)}/>
@@ -515,25 +538,9 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
           <button type="button" disabled={cloudLoading} onClick={() => void loadCloud()}>{cloudLoading ? '读取中…' : '刷新'}</button>
         </div>
         {(() => {
-          const keyword = cloudQuery.trim();
-          const rows = keyword ? cloud.filter(item => item.title.includes(keyword)) : cloud;
-          if (!rows.length) return <p className="notebook-library-hint">{cloudLoading ? '正在读取…' : keyword ? '没有匹配的条目。' : '还没有足够的复盘数据。等大家写过条目，这里会长出来。'}</p>;
-          const max = rows[0]?.users || 1;
-          return <div className="notebook-cloud notebook-cloud-lg">
-            {rows.map(item => {
-              const scale = 0.85 + 0.9 * Math.min(1, item.users / max);
-              const exists = value.sections.some(section => section.title.trim() === item.title);
-              return <button
-                type="button"
-                key={item.title}
-                className={`notebook-cloud-item${exists ? ' is-used' : ''}`}
-                style={{ fontSize: `${(13 + scale * 9).toFixed(1)}px` }}
-                title={item.system ? `系统推荐条目${item.group ? ` · 常归在「${item.group}」` : ''}` : `${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
-                disabled={exists || value.sections.length >= MAX_SECTIONS}
-                onClick={() => addChapter(item.title, item.group)}
-              >{item.title}<small>{item.system ? '推荐' : item.users}</small></button>;
-            })}
-          </div>;
+          const rows = cloudRows();
+          if (!rows.length) return <p className="notebook-library-hint">{cloudLoading ? '正在读取…' : cloudQuery.trim() ? '没有匹配的条目。' : '还没有足够的复盘数据。等大家写过条目，这里会长出来。'}</p>;
+          return renderCloud(rows, true);
         })()}
         <p className="notebook-library-hint">点条目会直接追加到这笔复盘，可再改名字或写内容。</p>
       </div>

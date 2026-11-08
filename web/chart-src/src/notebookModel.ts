@@ -38,6 +38,8 @@ export interface PublicChapter {
   group: string | null;
   /** 系统预置术语（还没有人用过）。 */
   system?: boolean;
+  /** 预置术语的人工权重（1~5），用来在没有真实数据时也有字号层次。 */
+  weight?: number;
 }
 
 export const SYSTEM_PHRASES = ['扫了低点', '扫了高点', '拿了 IDM', 'FVG 被缓解', '触及 POI', '出现 Flip', '突破后回踩', '等待确认'];

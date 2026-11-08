@@ -141,22 +141,22 @@ def pin_item(db,person,data):
  return {'ok':True,'pinned':pinned}
 
 SYSTEM_CHAPTERS=[
- {'title':'大周期方向','group':'方向判断'},
- {'title':'扫流动性（扫低/扫高）','group':'结构'},
- {'title':'结构突破（BOS）','group':'结构'},
- {'title':'性质转变（CHoCH）','group':'结构'},
- {'title':'订单块（OB）','group':'位置'},
- {'title':'公允价值缺口（FVG）','group':'位置'},
- {'title':'溢价/折价区','group':'位置'},
- {'title':'前高/前低','group':'位置'},
- {'title':'回踩确认','group':'确认'},
- {'title':'入场模型成立','group':'执行'},
- {'title':'止损位置有依据','group':'执行'},
- {'title':'仓位符合计划','group':'管理'},
- {'title':'移动止损/保本','group':'管理'},
- {'title':'盈亏比与预期','group':'管理'},
- {'title':'情绪与状态','group':'复盘'},
- {'title':'下次只改一件事','group':'复盘'},
+ {'title':'大周期方向','group':'方向判断','weight':5},
+ {'title':'扫流动性（扫低/扫高）','group':'结构','weight':5},
+ {'title':'结构突破（BOS）','group':'结构','weight':4},
+ {'title':'性质转变（CHoCH）','group':'结构','weight':3},
+ {'title':'订单块（OB）','group':'位置','weight':5},
+ {'title':'公允价值缺口（FVG）','group':'位置','weight':4},
+ {'title':'溢价/折价区','group':'位置','weight':3},
+ {'title':'前高/前低','group':'位置','weight':2},
+ {'title':'回踩确认','group':'确认','weight':4},
+ {'title':'入场模型成立','group':'执行','weight':4},
+ {'title':'止损位置有依据','group':'执行','weight':3},
+ {'title':'仓位符合计划','group':'管理','weight':3},
+ {'title':'移动止损/保本','group':'管理','weight':2},
+ {'title':'盈亏比与预期','group':'管理','weight':2},
+ {'title':'情绪与状态','group':'复盘','weight':2},
+ {'title':'下次只改一件事','group':'复盘','weight':3},
 ]
 
 def public_chapters(db,limit=60,min_users=1):
@@ -187,7 +187,7 @@ def public_chapters(db,limit=60,min_users=1):
  have={item['title'] for item in out}
  for term in SYSTEM_CHAPTERS:
   if term['title'] in have:continue
-  out.append({'title':term['title'],'users':0,'uses':0,'group':term['group'],'system':True})
+  out.append({'title':term['title'],'users':0,'uses':0,'group':term['group'],'system':True,'weight':term.get('weight',3)})
  return {'chapters':out[:max(1,min(int(limit or 60),100))],'total':len(out)}
 
 def stats(db,person):

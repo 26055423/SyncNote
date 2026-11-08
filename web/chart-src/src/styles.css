@@ -1939,7 +1939,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 
 /* 灵感：全服条目词云浮层 */
 .notebook-cloud-backdrop { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 24px; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); }
-.notebook-cloud-modal { display: flex; flex-direction: column; gap: 10px; width: min(760px, 94vw); max-height: min(78dvh, 720px); overflow: auto; padding: 16px 18px 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
+.notebook-cloud-modal { display: flex; flex-direction: column; gap: 10px; width: min(900px, 94vw); max-height: min(78dvh, 720px); overflow: auto; padding: 16px 18px 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
 .notebook-cloud-modal-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
 .notebook-cloud-modal-head strong { font-size: 14px; }
 .notebook-cloud-modal-head span { color: var(--dim); font-size: 11px; line-height: 1.6; }
@@ -1949,3 +1949,12 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-cloud-tools > button { flex: 0 0 auto; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); font: inherit; font-size: 12px; }
 .notebook-cloud-lg { min-height: 120px; padding: 14px; }
 .notebook-cloud-lg .notebook-cloud-item { padding: 2px 4px; }
+
+/* 词云：居中、无边框、字号与颜色都有层次 */
+.notebook-cloud { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 14px; padding: 12px 6px; border: 0; background: transparent; line-height: 1.15; }
+.notebook-cloud-item { border: 0; background: transparent; padding: 1px 3px; line-height: 1.1; letter-spacing: .01em; }
+.notebook-cloud-item > small { margin-left: 4px; color: var(--dim); font-size: 9px; font-weight: 400; }
+.notebook-cloud-item:hover:not(:disabled) { opacity: .78; }
+.notebook-cloud-item.is-used { color: var(--dim) !important; text-decoration: line-through; opacity: .45; }
+.notebook-cloud-lg { gap: 10px 22px; padding: 22px 12px; min-height: 220px; }
+.notebook-cloud-lg .notebook-cloud-item { padding: 3px 6px; }
