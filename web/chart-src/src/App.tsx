@@ -1359,6 +1359,7 @@ export default function App() {
           />
           <span className="toolbar-separator" aria-hidden="true" />
           <span className="mode-switch" role="group" aria-label="图表视图">
+            {mode === 'review' && !replayActive ? <button type="button" className="tool-btn review-view-chip" title="当前是复盘图表，显示的是这笔交易的历史切片，不会实时更新；点这里回到实时行情。" onClick={() => switchMode('live')}>复盘 · 非实时</button> : null}
             <button type="button" className={`tool-btn ${mode === 'live' && !replayActive ? 'is-active' : ''}`.trim()} aria-pressed={mode === 'live' && !replayActive} disabled={replayActive} onClick={() => switchMode('live')}><ToolbarIcon name="live" />行情</button>
             <button
               type="button"

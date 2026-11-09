@@ -1966,3 +1966,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .account-summary b { font-size: 12px; font-variant-numeric: tabular-nums; }
 .account-summary b.up { color: var(--good-ink); }
 .account-summary b.down { color: var(--bad-ink); }
+
+/* 复盘视图提示：明确告诉用户当前图表是非实时的历史切片 */
+.review-view-chip { border: 1px dashed var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 11px; padding: 4px 8px; }
+.review-view-chip:hover { border-style: solid; }
