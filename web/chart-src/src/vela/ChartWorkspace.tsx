@@ -4,7 +4,7 @@ import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type
 import { registerBigwolf } from './bigwolfNative';
 import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
-import { centerChartOnTime, panChartByTime, restoreChartLeft } from './viewportPan';
+import { centerChartOnTime, restoreChartLeft } from './viewportPan';
 import { fitSavedWorkspaceTracks } from './trackSizing';
 
 /**
@@ -127,7 +127,6 @@ export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'date
 const TIME_SYNC_KEY = 'sn-time-sync';
 /** 「十字线」联动开关也存在本机，默认开。 */
 const CROSSHAIR_SYNC_KEY = 'sn-crosshair-sync';
-const DATE_RANGE_SYNC_KEY = 'sn-date-range-sync';
 
 interface Props {
   /** Mount the native style/indicators/undo controls in the shared page header. */
@@ -290,14 +289,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const crosshairSyncRef = useRef<boolean>((() => {
     try { return localStorage.getItem(CROSSHAIR_SYNC_KEY) !== '0'; } catch { return true; }
   })());
-  const dateRangeSyncRef = useRef<boolean>((() => {
-    try { return localStorage.getItem(DATE_RANGE_SYNC_KEY) === '1'; } catch { return false; }
-  })());
   const stateWithTimeSync = (ws: any): Partial<Record<SyncKind, boolean>> => ({
     ...((ws?.sync?.state?.() ?? {}) as Partial<Record<SyncKind, boolean>>),
     viewport: timeSyncRef.current,
     crosshair: crosshairSyncRef.current,
-    dateRange: dateRangeSyncRef.current,
   });
   /** 把除 exceptId 之外的格子平移到 at 附近，保持实际蜡烛宽度。 */
   const jumpAllTo = (at: number | null, exceptId?: string) => {
@@ -324,27 +319,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // 我们自己 panBy 触发的回声要忽略，但只忽略被推的那几格：
   // 按时间窗口一刀切会把源格子自己的连续拖动事件一起吞掉，表现为"拖了半天只跟一下"。
   const programmaticUntilRef = useRef<Map<string, number>>(new Map());
-  const gestureUntilRef = useRef<Map<string, number>>(new Map());
-  /** 平移时按时间增量推其他窗口：各自保留自己的缩放（滚轮缩放不同步）。 */
-  const panOthers = (exceptId: string, delta: number) => {
-    if (!delta) return;
-    const until = Date.now() + 250;
-    for (const other of wsRef.current?.cells?.() ?? []) {
-      if (other.id === exceptId) continue;
-      const range = other.chart?.getVisibleRange?.();
-      if (!range || !(range.to > range.from)) continue;
-      programmaticUntilRef.current.set(other.id, until);
-      try { panChartByTime(other.chart, delta); } catch { /* ignore */ }
-    }
-  };
-  const alignDateRanges = (exceptId: string, range: { from: number; to: number }) => {
-    if (!Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return;
-    for (const other of wsRef.current?.cells?.() ?? []) {
-      if (other.id === exceptId) continue;
-      programmaticUntilRef.current.set(other.id, Date.now() + 250);
-      other.chart?.setVisibleRange?.(range);
-    }
-  };
   const [ready, setReady] = useState(false);
   const { theme, timezone, chartLocale, gridVisible } = usePrefs();
   // 标注是在事件回调里画的，回调闭包拿不到最新的 props，用 ref 兜住当前主题。
@@ -520,23 +494,13 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     toggleSync(kind) {
       const ws = wsRef.current;
       if (!ws) return;
-      if (kind === 'dateRange') {
-        const next = !dateRangeSyncRef.current;
-        dateRangeSyncRef.current = next;
-        try { localStorage.setItem(DATE_RANGE_SYNC_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-        const cell = ws.active;
-        const range = cell?.chart?.getVisibleRange?.();
-        if (next && range) alignDateRanges(cell.id, range);
-        onSyncs?.(stateWithTimeSync(ws));
-        return;
-      }
       // 「时间轴」不再是 Vela 的缩放同步：本站只做"点击跳转到同一时刻"，
       // 不同窗口的缩放/平移始终互不影响。开关状态自己记，存在本机。
       if (kind === 'viewport') {
         const next = !timeSyncRef.current;
         timeSyncRef.current = next;
         try { localStorage.setItem(TIME_SYNC_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-        if (next && !dateRangeSyncRef.current) jumpAllTo(activeCenter());
+        if (next) jumpAllTo(activeCenter());
         onSyncs?.(stateWithTimeSync(ws));
         return;
       }
@@ -898,41 +862,16 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           cell.__tpBound = true;
           interactionDisposers.push(configurePriceScale(cell.chart));
           // A quote or a resize may move the active viewport too; only a real gesture leads.
-          cell.host?.addEventListener('pointerdown', () => {
-            gestureUntilRef.current.set(cell.id, Infinity);
-            programmaticUntilRef.current.delete(cell.id);
-          });
-          cell.host?.addEventListener('pointerup', () => gestureUntilRef.current.set(cell.id, Date.now() + 400));
-          cell.host?.addEventListener('pointercancel', () => gestureUntilRef.current.delete(cell.id));
-          cell.host?.addEventListener('wheel', () => gestureUntilRef.current.set(cell.id, Date.now() + 400), { passive: true });
           // 拖动/缩放时把可见范围报上去，由上层决定补哪段、删哪段。
           let lastViewport = 0;
           try {
             // cell.chart 上没有 onViewportChange（那是渲染器接口），
             // 公开事件是 on('viewport:changed')；之前用错 API，联动一直是死代码。
             cell.chart?.on?.('viewport:changed', (range: { from: number; to: number }) => {
-              // 拖动联动：先看这一格是「平移」还是「缩放」。
-              // 跨度没变 = 平移，把时间增量同步给其他格；跨度变了 = 缩放，不动别人。
-              const previous = lastRangeRef.current.get(cell.id);
-              const span = range.to - range.from;
+              // 拖动/缩放不再联动其他窗口：只有点击才对齐时间点（见 handleClick）。
               lastRangeRef.current.set(cell.id, { from: range.from, to: range.to });
               if (replaying()) return;
-              // Reload/prepend events are data maintenance, not gestures in the active chart.
               if (Date.now() < (seriesUpdateUntilRef.current.get(cell.id) ?? 0)) return;
-              const programmaticUntil = programmaticUntilRef.current.get(cell.id) ?? 0;
-              const gesturing = Date.now() < (gestureUntilRef.current.get(cell.id) ?? 0);
-              // 任何一格在动都要联动（不要求它是 active 格）。
-              // 平移：按时间增量推其他窗口，各自保留自己的缩放。
-              // 滚轮缩放：只影响当前窗口，不同步（用户明确要的行为）。
-              if (gesturing && Date.now() > programmaticUntil && previous && span > 0) {
-                const zoomed = Math.abs((previous.to - previous.from) - span) > 1;
-                if (!zoomed && timeSyncRef.current) {
-                  const delta = range.from - previous.from;
-                  if (Math.abs(delta) > 500) panOthers(cell.id, delta);
-                }
-                // 「日期范围同步」是显式强对齐：开了以后连缩放一起统一。
-                if (dateRangeSyncRef.current) alignDateRanges(cell.id, range);
-              }
               const tick = Date.now();
               if (tick - lastViewport < 320) return;
               lastViewport = tick;
@@ -948,7 +887,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             if (replayArmedRef.current && typeof at === 'number') {
               void startReplay(at, cell.id).catch(error => onError?.(error instanceof Error ? error.message : String(error))); return;
             }
-            if (replaying() || !timeSyncRef.current || dateRangeSyncRef.current) return;
+            if (replaying() || !timeSyncRef.current) return;
             if (typeof at !== 'number') return;
             jumpAllTo(at, cell.id);
           };
