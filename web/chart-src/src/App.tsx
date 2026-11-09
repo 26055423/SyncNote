@@ -231,6 +231,8 @@ export default function App() {
 
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
   const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
+  /** 复盘时同时读一份当前券商轨道的行情，和复盘切片合并显示。 */
+  const [reviewTrack, setReviewTrack] = useState<ReviewCharts | null>(null);
   const [marketInfo, setMarketInfo] = useState<{ source: string; server: string; last: number | null; tfs?: TrackCatalog['sources'][number]['tfs'] } | null>(null);
   const trackSourceRef = useRef<string | null>(null);
   const storedTipsRef = useRef<Partial<Record<BaseTimeframe, number>>>({});
@@ -597,6 +599,32 @@ export default function App() {
     const timer = window.setInterval(() => setMarketRetry((revision) => revision + 1), 15000);
     return () => window.clearInterval(timer);
   }, [mode, localConnected, marketInfo?.source]);
+
+  // 复盘也读一份当前券商的行情轨道：和复盘切片按时间合并，避免"两套数据各看各的"。
+  useEffect(() => {
+    const symbol = entry?.review.trade?.symbol;
+    if (mode !== 'review' || !board?.user.id || !symbol) { setReviewTrack(null); return; }
+    let alive = true;
+    void (async () => {
+      try {
+        const catalog = await api<TrackCatalog>('/api/data/sources');
+        if (!alive) return;
+        const source = selectTrackSource(catalog, symbol, localConnected ? local.server : undefined)
+          ?? catalog.sources.find((track) => track.symbol === symbol)?.id;
+        if (!source) return;
+        const pages = await Promise.all(REVIEW_BASE_TFS.map((base) => readTrackPage((path) => api<TrackPage>(path), {
+          source, symbol, base, limit: MARKET_LIMIT[base],
+        })));
+        if (!alive) return;
+        const out: ReviewCharts = {};
+        for (const page of pages) if (page.bars.length) out[page.tf as BaseTimeframe] = page.bars;
+        setReviewTrack(Object.keys(out).length ? out : null);
+      } catch {
+        if (alive) setReviewTrack(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [mode, board?.user.id, entry?.review.trade?.symbol, localConnected, local.server]);
 
   // 补采入库后刷新轨道尾部。通常每周期只取两根，发现落后一段才拉近期窗口补齐。
   const refreshTrackRef = useRef<((forceRecent?: boolean) => void) | null>(null);
@@ -982,9 +1010,35 @@ export default function App() {
     return last ? last[0] * 1000 : Date.now();
   })();
   const [series, setSeries] = useState<ReviewCharts | null>(null);
+  // 复盘时把复盘切片和行情数据合并：同一时间段有多少显示多少，不再"两套数据互相看不见"。
+  // 只在最后一段 K 线的时间/数量变化时重算，避免 tick 插值时反复重算整条序列。
+  const liveMergeKey = Object.keys(liveSeries ?? {}).map((key) => {
+    const rows = (liveSeries as ReviewCharts)[key as BaseTimeframe];
+    return `${key}:${rows?.length ?? 0}:${rows?.length ? rows[rows.length - 1][0] : 0}`;
+  }).join('|');
+  const reviewCharts = useMemo<ReviewCharts | null>(() => {
+    if (!series) return null;
+    const live = liveSeries && liveSymbol && (!entry?.review.trade?.symbol || entry.review.trade.symbol === liveSymbol) ? liveSeries : null;
+    const extras = [reviewTrack, live].filter(Boolean) as ReviewCharts[];
+    if (!extras.length) return series;
+    const out: ReviewCharts = { ...series };
+    for (const extra of extras) {
+      for (const key of Object.keys(extra) as BaseTimeframe[]) {
+        const rows = extra[key];
+        const base = out[key];
+        if (!rows?.length) continue;
+        if (!base?.length) { out[key] = rows; continue; }
+        const map = new Map<number, number[]>();
+        for (const row of base) map.set(row[0], row);
+        for (const row of rows) map.set(row[0], row);
+        out[key] = [...map.values()].sort((a, b) => a[0] - b[0]);
+      }
+    }
+    return out;
+  }, [series, reviewTrack, liveMergeKey, liveSymbol, entry?.review.trade?.symbol]);
   const availableTfs = useMemo(() => {
     if (mode === 'live') return TIMEFRAME_OPTIONS;
-    const charts = series ?? entry?.review.charts ?? {};
+    const charts = reviewCharts ?? series ?? entry?.review.charts ?? {};
     return TIMEFRAME_OPTIONS.filter((option) => {
       const base = charts[TIMEFRAMES[option.id].base];
       if (!base || base.length < 2) return false;
@@ -992,7 +1046,7 @@ export default function App() {
       if (option.id === '1D') return base.length >= 24;
       return true;
     });
-  }, [entry, mode, series]);
+  }, [entry, mode, series, reviewCharts]);
 
   const ready = Boolean(
     entry && entry.review.status === 'ready' && Object.values(entry.review.charts || {}).some((bars) => (bars?.length ?? 0) > 1),
@@ -1559,7 +1613,7 @@ export default function App() {
                 ref={chartRef}
                 toolbarHost={nativeToolbarHost}
                 forceLayout={narrow ? '1' : undefined}
-                charts={series ?? entry!.review.charts}
+                charts={reviewCharts ?? series ?? entry!.review.charts}
                 loadIndicatorMinutes={loadIndicatorMinutes}
                 symbol={trade.symbol || 'XAUUSD'}
                 anchorMs={anchorMs}
