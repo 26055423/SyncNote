@@ -130,12 +130,6 @@ function toChartBars(bars: Record<string, number[][]> | undefined): ReviewCharts
   return out;
 }
 
-function latestTradeOf(snapshot: { data: any } | undefined) {
-  const rows = snapshot?.data?.history ?? [];
-  return rows.length ? rows[0] : null;
-}
-
-
 /* ------------------------------------------------------------------ 页面 */
 
 export default function App() {
@@ -203,6 +197,9 @@ export default function App() {
     }
   };
   const [mode, setMode] = useState<'review' | 'live'>(() => initialReview ? 'review' : 'live');
+  const [marketReviewVisit, setMarketReviewVisit] = useState(0);
+  const tradeReview = mode === 'review' && (target !== null || shareId !== null);
+  const marketView = !tradeReview;
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
   const [forming, setForming] = useState<{ source: string; symbol: string; bars: ReviewCharts } | null>(null);
   /** 图上画的是哪套数据：server = bars 表（券商墙钟），utc = 交易快照（journal.review 已转 UTC）。 */
@@ -356,16 +353,7 @@ export default function App() {
       setMode('review');
       setTab('review');
     };
-    if (ticketParam) {
-      open(personParam, ticketParam, tParam);
-      return;
-    }
-    if (route.get('view') !== 'review') return;
-    const mine = latestTradeOf(board.snapshots[board.user.id]);
-    if (mine) {
-      open(board.user.id, String(mine.ticket), undefined);
-      history.replaceState(null, '', `/chart?view=review&person=${encodeURIComponent(board.user.id)}&ticket=${encodeURIComponent(String(mine.ticket))}`);
-    }
+    if (ticketParam) open(personParam, ticketParam, tParam);
   }, [board, target, shareId]);
 
   /* --------------------------------------------------------- 复盘数据加载 */
@@ -414,7 +402,7 @@ export default function App() {
 
   useEffect(() => {
     if (!connectedTrack || (marketInfo?.source && marketInfo.source !== connectedTrack)) return;
-    const cloud = mode === 'live' && forming?.source === connectedTrack && forming.symbol === liveSymbol ? forming.bars : null;
+    const cloud = marketView && forming?.source === connectedTrack && forming.symbol === liveSymbol ? forming.bars : null;
     if (!localConnected && !cloud) return;
     // 蜡烛直接使用 MT5 的 OHLC；买卖报价由独立的 tick 消息更新。
     const incoming = localConnected ? toChartBars(local.bars) : { ...cloud };
@@ -430,7 +418,7 @@ export default function App() {
     }
     if (!Object.values(incoming).some(rows => rows?.length)) return;
     // 只有追加新蜡烛才需要保存可见范围，盘中价格变化直接更新图表。
-    const keepRanges = mode === 'live' && Object.keys(previousTips).length ? chartRef.current?.captureRanges() : undefined;
+    const keepRanges = marketView && Object.keys(previousTips).length ? chartRef.current?.captureRanges() : undefined;
     mergeLiveHistory(liveRef.current, incoming);
     setLiveBars(liveRef.current);
     for (const listener of liveListeners.current) listener();
@@ -443,7 +431,7 @@ export default function App() {
       if (previous !== undefined && range.to < (previous - 8 * tfSec) * 1000) frozen[id] = { from: range.from, to: range.to };
     }
     if (Object.keys(frozen).length) requestAnimationFrame(() => chartRef.current?.restoreRanges(frozen));
-  }, [mode, localConnected, connectedTrack, marketInfo?.source, liveSymbol, forming, local.bars, local.history_ready]);
+  }, [marketView, localConnected, connectedTrack, marketInfo?.source, liveSymbol, forming, local.bars, local.history_ready]);
 
   useEffect(() => () => localTerminal.disconnect(), []);
 
@@ -485,7 +473,10 @@ export default function App() {
         return;
       }
       setTarget(null);
-      setMode(next.get('view') === 'review' ? 'review' : 'live');
+      setEntry(null);
+      const review = next.get('view') === 'review';
+      setMode(review ? 'review' : 'live');
+      if (review) setTab('review');
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -527,7 +518,7 @@ export default function App() {
 
   useEffect(() => {
     // 历史首屏始终读当前数据轨道，不受 EA 是否在线或首批缓存深度限制。
-    if (mode !== 'live' || !board?.user.id) return;
+    if (!marketView || !board?.user.id) return;
     let alive = true;
     void (async () => {
       try {
@@ -582,18 +573,18 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [mode, localConnected, local.server, local.epoch, liveSymbol, board?.user.id, connectedTrack, catalogSource, marketRetry]);
+  }, [marketView, localConnected, local.server, local.epoch, liveSymbol, board?.user.id, connectedTrack, catalogSource, marketRetry]);
   useEffect(() => {
-    if (mode !== 'live' || !board?.user.id || marketInfo?.source) return;
+    if (!marketView || !board?.user.id || marketInfo?.source) return;
     const timer = window.setInterval(() => setMarketRetry((revision) => revision + 1), 15000);
     return () => window.clearInterval(timer);
-  }, [mode, board?.user.id, marketInfo?.source]);
+  }, [marketView, board?.user.id, marketInfo?.source]);
 
   // 补采入库后刷新轨道尾部。通常每周期只取两根，发现落后一段才拉近期窗口补齐。
   const refreshTrackRef = useRef<((forceRecent?: boolean) => void) | null>(null);
   useEffect(() => {
     const source = marketInfo?.source;
-    if (mode !== 'live' || !source) return;
+    if (!marketView || !source) return;
     let alive = true;
     let refreshing = false, pendingRecent = false;
     let catalogAt = 0;
@@ -643,7 +634,7 @@ export default function App() {
     const initial = window.setTimeout(() => void refresh(), 700);
     const timer = window.setInterval(() => void refresh(), MARKET_HEAD_POLL_MS);
     return () => { alive = false; refreshTrackRef.current = null; window.clearTimeout(initial); window.clearInterval(timer); };
-  }, [mode, marketInfo?.source, liveSymbol]);
+  }, [marketView, marketInfo?.source, liveSymbol]);
   const previousBackfillPhase = useRef(backfill.phase);
   const previousRepairUpdated = useRef(backfill.repairUpdated);
   const forceTrackRefreshRef = useRef(false);
@@ -804,49 +795,25 @@ export default function App() {
 
   const confirmLeaveNote = () => !noteDirty() || window.confirm('这笔交易的笔记还没保存，确定要离开吗？');
 
-  const writeUrl = (nextMode: 'review' | 'live', nextTarget = target, nextShare = shareId) => {
-    const qs = new URLSearchParams(location.search);
-    qs.set('view', nextMode);
-    if (nextMode === 'live') {
-      qs.delete('share');
-      qs.delete('person');
-      qs.delete('ticket');
-      qs.delete('t');
-    } else if (nextShare != null) {
-      qs.delete('person');
-      qs.delete('ticket');
-      qs.delete('t');
-      qs.set('share', String(nextShare));
-    } else if (nextTarget) {
-      qs.delete('share');
-      qs.set('person', nextTarget.person);
-      qs.set('ticket', nextTarget.ticket);
-      if (nextTarget.t) qs.set('t', String(nextTarget.t));
-      else qs.delete('t');
-    } else {
-      qs.delete('share');
-      qs.delete('person');
-      qs.delete('ticket');
-      qs.delete('t');
-    }
-    history.replaceState(null, '', '/chart?' + qs.toString());
-  };
-
   const switchMode = (next: 'review' | 'live') => {
-    if (next === 'review' && !target && shareId == null) {
-      const mine = board ? latestTradeOf(board.snapshots[board.user.id]) : null;
-      if (board && mine) {
-        openTicket(board.user.id, String(mine.ticket));
-        return;
-      }
+    if (next === 'review') {
+      if (!confirmLeaveNote()) return;
+      if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+      chartRef.current?.flush();
+      setTarget(null);
+      setShareId(null);
+      setEntry(null);
+      setShareRequest(null);
+      setMarketReviewVisit(visit => visit + 1);
       setTab('review');
       setRailOpen(true);
-      return;
+      refreshTrackRef.current?.();
     }
-    if (next === 'review' && !confirmLeaveNote()) return;
     setMode(next);
-    if (next === 'review') setTab('review');
-    writeUrl(next);
+    const qs = new URLSearchParams(location.search);
+    for (const key of ['share', 'person', 'ticket', 't']) qs.delete(key);
+    qs.set('view', next);
+    history.replaceState(null, '', '/chart?' + qs.toString());
   };
 
   const openTicket = (person: string, ticket: string, t?: number) => {
@@ -955,7 +922,7 @@ export default function App() {
   const myPositions: any[] = localConnected ? local.positions : mySnap?.data?.positions ?? [];
   const floating = myPositions.reduce((n: number, p: any) => n + (p.profit || 0), 0);
   const mt5Online = localConnected || Boolean(mySnap && board && board.now - (mySnap.updated || 0) <= 45 && mySnap.data.online !== false);
-  const reviewingOther = mode === 'review' && Boolean(target?.person && target.person !== me?.id);
+  const reviewingOther = tradeReview && Boolean(target?.person && target.person !== me?.id);
   /** 历史来自当前数据轨道；本机/云端推送只合并实时增量。 */
   // 服务端 K 线是券商墙钟、交易/复盘时间戳是 UTC：标注按这个差对齐，否则开平仓点会偏。
   const serverOffsetSec = typeof entry?.bar_offset === 'number'
@@ -969,14 +936,14 @@ export default function App() {
   const liveSeries = loadedCacheScope === cacheScope ? liveBars ?? marketSeries : null;
   const liveTrack = connectedTrack || marketInfo?.source || '';
   const latestChartBar = liveSeries?.[TIMEFRAMES[tf]?.base ?? 'M15']?.at(-1)?.[0];
-  const staleMarket = mode === 'live' && !localConnected && latestChartBar != null &&
+  const staleMarket = marketView && !localConnected && latestChartBar != null &&
     Date.now() - latestChartBar * 1000 > 72 * 3600_000;
   const [series, setSeries] = useState<ReviewCharts | null>(null);
   const [reviewAvailability, setReviewAvailability] = useState(0);
   const reviewSymbol = entry?.review.trade?.symbol as string | undefined;
   const reviewSource = entry?.review.market_source;
-  const formingSource = mode === 'review' ? reviewSource : connectedTrack;
-  const formingSymbol = mode === 'review' ? reviewSymbol : liveSymbol;
+  const formingSource = tradeReview ? reviewSource : connectedTrack;
+  const formingSymbol = tradeReview ? reviewSymbol : liveSymbol;
   useEffect(() => {
     setForming(null);
     if (localConnected || !formingSource || !formingSymbol || board?.market_source !== formingSource) return;
@@ -1011,13 +978,13 @@ export default function App() {
   const reviewKey = entryMatchesTarget && entry && reviewSymbol
     ? JSON.stringify([board?.user.id, entry.owner.id, entry.review.trade.ticket, shareId, reviewSource, reviewSymbol])
     : '';
-  activeReviewKey.current = mode === 'review' ? reviewKey : '';
+  activeReviewKey.current = tradeReview ? reviewKey : '';
   const reviewProvider = useMemo(() => series && reviewSymbol ? new LiveProvider(series, reviewSymbol, listener => {
     reviewListeners.current.add(listener);
     return () => { reviewListeners.current.delete(listener); };
   }) : undefined, [series, reviewSymbol]);
   const availableTfs = useMemo(() => {
-    if (mode === 'live') return TIMEFRAME_OPTIONS;
+    if (marketView) return TIMEFRAME_OPTIONS;
     const charts = series ?? entry?.review.charts ?? {};
     return TIMEFRAME_OPTIONS.filter(option => {
       const rows = charts[TIMEFRAMES[option.id].base];
@@ -1026,7 +993,7 @@ export default function App() {
       if (option.id === '1D') return rows.length >= 24;
       return true;
     });
-  }, [entry, mode, series, reviewAvailability]);
+  }, [entry, marketView, series, reviewAvailability]);
   const ready = Boolean(reviewKey && reviewCacheKey.current === reviewKey && series && Object.values(series).some(rows => rows?.length));
   const anchorSeconds = entry?.share?.anchor_ms
     ? Math.round(entry.share.anchor_ms / 1000)
@@ -1036,8 +1003,8 @@ export default function App() {
     shareId,
     person: target?.person,
     ticket: target?.ticket,
-    source: mode === 'review' ? reviewSource : undefined,
-    symbol: mode === 'live' ? liveSymbol : (reviewSymbol || 'XAUUSD'),
+    source: tradeReview ? reviewSource : undefined,
+    symbol: tradeReview ? (reviewSymbol || 'XAUUSD') : liveSymbol,
   };
 
   const updateReviewSeries = useCallback(async (base: BaseTimeframe, rows: number[][], streaming = false, followTail = false) => {
@@ -1125,7 +1092,7 @@ export default function App() {
     reviewTips.current = {};
     fetchingRef.current.clear();
     edgeBlockRef.current = {};
-    if (mode !== 'review' || !reviewKey) return;
+    if (!tradeReview || !reviewKey) return;
     if (reviewSource && trackSourceRef.current === reviewSource && liveSymbol === reviewSymbol && loadedCacheScope === cacheScope) {
       for (const base of REVIEW_BASE_TFS) {
         const tip = storedTipsRef.current[base];
@@ -1167,11 +1134,11 @@ export default function App() {
       window.clearInterval(timer);
       window.clearInterval(historyTimer);
     };
-  }, [mode, reviewKey, loadWindow, updateReviewSeries]);
+  }, [tradeReview, reviewKey, loadWindow, updateReviewSeries]);
 
   const reviewSnapshot = entry?.review.status === 'ready' ? entry.review.charts : undefined;
   useEffect(() => {
-    if (mode !== 'review' || !reviewKey || !reviewSnapshot) return;
+    if (!tradeReview || !reviewKey || !reviewSnapshot) return;
     for (const base of REVIEW_BASE_TFS) {
       const seed = reviewSnapshot[base];
       if (!seed?.length) continue;
@@ -1179,10 +1146,10 @@ export default function App() {
       const merged = mergeReviewBars(seed, current);
       void updateReviewSeries(base, merged).catch(error => console.warn('[review] 快照合并失败', error));
     }
-  }, [mode, reviewKey, reviewSnapshot, updateReviewSeries]);
+  }, [tradeReview, reviewKey, reviewSnapshot, updateReviewSeries]);
 
   useEffect(() => {
-    if (mode !== 'review' || !reviewKey || !reviewSource || !reviewSymbol) return;
+    if (!tradeReview || !reviewKey || !reviewSource || !reviewSymbol) return;
     const cloud = forming?.source === reviewSource && forming.symbol === reviewSymbol ? forming.bars : null;
     if (localConnected ? reviewSource !== connectedTrack || reviewSymbol !== local.symbol : !cloud) return;
     const incoming = localConnected ? toChartBars(local.bars) : { ...cloud };
@@ -1208,10 +1175,10 @@ export default function App() {
     if (Object.keys(frozen).length) requestAnimationFrame(() => {
       if (chartRef.current === chart) chart?.restoreRanges(frozen);
     });
-  }, [mode, reviewKey, reviewSource, reviewSymbol, localConnected, connectedTrack, local.symbol, local.bars, forming, updateReviewSeries]);
+  }, [tradeReview, reviewKey, reviewSource, reviewSymbol, localConnected, connectedTrack, local.symbol, local.bars, forming, updateReviewSeries]);
 
   const loadIndicatorMinutes = async (endMs: number, count: number): Promise<number[][]> => {
-    if (mode === 'review') return readIndicatorMinutes(api, { review: { ...ctxRef.current } }, endMs, count);
+    if (tradeReview) return readIndicatorMinutes(api, { review: { ...ctxRef.current } }, endMs, count);
     if (!marketInfo?.source) return [];
     return readIndicatorMinutes(api, { source: marketInfo.source, symbol: liveSymbol }, endMs, count);
   };
@@ -1220,11 +1187,11 @@ export default function App() {
   const livePagingRef = useRef<Set<string>>(new Set());
   const liveFloorRef = useRef<Record<string, number>>({});
   const liveScopeRef = useRef('');
-  liveScopeRef.current = `${mode}:${marketInfo?.source ?? ''}:${liveSymbol}`;
+  liveScopeRef.current = `${marketView}:${marketInfo?.source ?? ''}:${liveSymbol}`;
   const liveOlder = useCallback(async (base: BaseTimeframe, manual = false) => {
     const replay = chartRef.current?.replayStatus(); if (replay?.active || replay?.armed || replay?.busy) return;
     const source = trackSourceRef.current;
-    if (mode !== 'live' || !source || livePagingRef.current.has(base)) return;
+    if (!marketView || !source || livePagingRef.current.has(base)) return;
     const rows = liveRef.current[base];
     if (!rows?.length) return;
     if (!manual && (liveFloorRef.current[base] ?? 0) > Date.now()) return;
@@ -1265,12 +1232,12 @@ export default function App() {
     } finally {
       livePagingRef.current.delete(base);
     }
-  }, [mode, liveSymbol]);
+  }, [marketView, liveSymbol]);
 
   /** 轨道首屏就绪后，每个周期预取一页；离线也能继续向左翻。 */
   const prefetchedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (mode !== 'live' || !marketInfo?.source || !liveBars || prefetchedRef.current === marketInfo.source) return;
+    if (!marketView || !marketInfo?.source || !liveBars || prefetchedRef.current === marketInfo.source) return;
     prefetchedRef.current = marketInfo.source;
     const bases: BaseTimeframe[] = ['M1', 'M5', 'M15', 'H1'];
     void (async () => {
@@ -1279,7 +1246,7 @@ export default function App() {
         await liveOlder(base).catch(() => undefined);
       }
     })();
-  }, [mode, marketInfo?.source, liveBars, liveOlder]);
+  }, [marketView, marketInfo?.source, liveBars, liveOlder]);
   useEffect(() => {
     // 切换轨道后重新允许预取
     liveFloorRef.current = {};
@@ -1287,7 +1254,7 @@ export default function App() {
 
   // 历史通道可能正在回填。可见左边缘仍缺数据时自动重试，不要求用户再拖一下。
   useEffect(() => {
-    if (mode !== 'live' || !marketInfo?.source) return;
+    if (!marketView || !marketInfo?.source) return;
     const timer = window.setInterval(() => {
       for (const range of Object.values(chartRef.current?.captureRanges() ?? {})) {
         const first = liveRef.current[range.base]?.[0]?.[0];
@@ -1297,7 +1264,7 @@ export default function App() {
       }
     }, 4000);
     return () => window.clearInterval(timer);
-  }, [mode, marketInfo?.source, liveOlder]);
+  }, [marketView, marketInfo?.source, liveOlder]);
 
   /** 窄屏没有横向空间放 2×2：首次进入手机宽度时切成单格，回到宽屏不强行改回。 */
   useEffect(() => {
@@ -1359,7 +1326,7 @@ export default function App() {
     const base = recipe.base;
     const spanMs = Math.max(60_000, info.to - info.from);
     // 实时模式：翻到最左边就把更早的一段补进来（每次 ~1990 根）。
-    if (mode === 'live') {
+    if (marketView) {
       const liveRows = liveRef.current[base];
       if (liveRows?.length) {
         const firstMs = liveRows[0][0] * 1000;
@@ -1383,7 +1350,7 @@ export default function App() {
       if (gap) void loadWindow(base, 'gap', gap);
     }
 
-  }, [loadWindow, mode, liveOlder]);
+  }, [loadWindow, marketView, liveOlder]);
 
   const myChats = useMemo(
     () => (board?.messages ?? []).filter((row) => row.person !== me?.id),
@@ -1443,7 +1410,7 @@ export default function App() {
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
         <div className="status-row" title={reviewingOther ? '正在复盘的是别人的交易；账户数字已隐藏，避免和对方混淆' : '我的账户'}>
-          <SymbolPicker symbol={mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'} symbols={symbolOptions} loading={symbolsLoading} disabled={local.symbol_switching} error={symbolsError} contextNote={mode === 'review' ? '选择品种后打开行情，当前复盘记录保留。' : !localConnected && !catalogAvailable ? '当前仅列出已有行情；更新并运行 SyncNote 1.015 后可同步券商品种目录。' : undefined} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} />
+          <SymbolPicker symbol={tradeReview ? trade.symbol || 'XAUUSD' : liveSymbol} symbols={symbolOptions} loading={symbolsLoading} disabled={local.symbol_switching} error={symbolsError} contextNote={tradeReview ? '选择品种后打开行情，当前复盘记录保留。' : !localConnected && !catalogAvailable ? '当前仅列出已有行情；更新并运行 SyncNote 1.015 后可同步券商品种目录。' : undefined} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} />
         </div>
         <div
           className="chart-toolbar unified-chart-tools"
@@ -1470,7 +1437,7 @@ export default function App() {
           />
           <span className="toolbar-separator" aria-hidden="true" />
           <span className="mode-switch" role="group" aria-label="图表视图">
-            {mode === 'review' && !replayActive ? <button type="button" className="tool-btn review-view-chip" title="复盘与行情共用原交易的券商数据轨道。点击切换到行情视图。" onClick={() => switchMode('live')}>复盘</button> : null}
+            <button type="button" className={`tool-btn ${mode === 'review' && !replayActive ? (tradeReview ? 'review-view-chip' : 'is-active') : ''}`.trim()} aria-pressed={mode === 'review' && !replayActive} disabled={replayActive} title="从最新可读 K 线开始复盘" onClick={() => switchMode('review')}>复盘</button>
             <button type="button" className={`tool-btn ${mode === 'live' && !replayActive ? 'is-active' : ''}`.trim()} aria-pressed={mode === 'live' && !replayActive} disabled={replayActive} onClick={() => switchMode('live')}><ToolbarIcon name="live" />行情</button>
             <button
               type="button"
@@ -1501,7 +1468,7 @@ export default function App() {
                 .map((info) => ({ from: info.from, to: info.to, weight: Math.max(1, info.bars) }));
               if (!windows.length) {
                 // 目录还没建（新库/刚接入）：退回到当前已加载的序列里随机，别让用户卡在弹错上。
-                const rows = (mode === 'live' ? liveRef.current[base!] : seriesRef.current[base!]) ?? [];
+                const rows = (marketView ? liveRef.current[base!] : seriesRef.current[base!]) ?? [];
                 if (rows.length < 10) throw new Error('还没有可回放的 K 线');
                 const pick = rows[Math.floor(Math.random() * rows.length)][0];
                 chartRef.current?.focus(pick * 1000);
@@ -1530,7 +1497,7 @@ export default function App() {
             onEarliest={async () => {
               // 「最早可用日期」：先把视口挪到当前数据最早一根，再从视图开始。
               const base = TIMEFRAMES[tf]?.base;
-              const rows = (mode === 'live' ? liveRef.current[base] : seriesRef.current[base]) ?? [];
+              const rows = (marketView ? liveRef.current[base] : seriesRef.current[base]) ?? [];
               const first = rows[0]?.[0];
               if (!first) throw new Error('当前周期还没有可回放的历史');
               chartRef.current?.focus(first * 1000);
@@ -1556,7 +1523,7 @@ export default function App() {
       {/* ---------------------------------------------------------- 主体 */}
       <div className={`main ${railOpen ? '' : 'rail-closed'}`}>
         <section className="chart-pane">
-          {mode === 'review' && entry?.read_only ? (
+          {tradeReview && entry?.read_only ? (
             <div className="context-banner" role="status">
               <b>只读回放</b>
               <span>{entry.owner.name} 的复盘 · 画线与笔记不可修改</span>
@@ -1597,9 +1564,9 @@ export default function App() {
             {replayArmed && ghostX != null ? (
               <div className="replay-ghost" style={{ left: ghostX }} aria-hidden="true" />
             ) : null}
-            {mode === 'live' && liveSeries ? (
+            {marketView && liveSeries ? (
               <ChartWorkspace
-                key={`live:${cacheScope}:${liveTrack}`}
+                key={`${mode}:${mode === 'review' ? marketReviewVisit : 0}:${cacheScope}:${liveTrack}`}
                 ref={chartRef}
                 toolbarHost={nativeToolbarHost}
                 loadIndicatorMinutes={loadIndicatorMinutes}
@@ -1612,7 +1579,7 @@ export default function App() {
                 savedState={null}
                 readOnly={false}
                 timeframes={TIMEFRAME_OPTIONS.map((o) => o.id)}
-                positionLevels={myPositions.filter((position: any) => !liveSymbol || position.symbol === liveSymbol).map((position: any) => ({
+                positionLevels={(mode === 'live' ? myPositions : []).filter((position: any) => !liveSymbol || position.symbol === liveSymbol).map((position: any) => ({
                   ticket: String(position.ticket),
                   side: position.side,
                   entry: Number(position.price_open ?? position.open ?? 0),
@@ -1669,7 +1636,7 @@ export default function App() {
                 onError={setError}
                 onViewport={handleViewport}
               />
-            ) : mode === 'review' && ready && series ? (
+            ) : tradeReview && ready && series ? (
               <ChartWorkspace
                 key={reviewKey}
                 ref={chartRef}
@@ -1708,28 +1675,19 @@ export default function App() {
             ) : (
               <div className="chart-empty">
                 <p>
-                  {mode === 'live'
+                  {marketView
                     ? (syncProgress.scope === syncScope && (syncProgress.job?.status === 'waiting' || syncProgress.job?.status === 'running') ? `${liveSymbol} 正在同步 K 线，收到首批数据后自动显示` : syncProgress.scope === syncScope && syncProgress.job?.status === 'partial' ? `${liveSymbol} 部分行情尚未获取` : symbolOptions.find((item) => item.symbol === liveSymbol)?.has_bars === false ? `${liveSymbol} 尚未同步 K 线` : '正在检查行情同步状态…')
-                    : target
-                      ? (ready ? '正在读取服务器复盘历史…' : entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…')
-                      : '还没有可复盘的交易'}
+                    : (ready ? '正在读取服务器复盘历史…' : entry?.review.status === 'pending' ? '等待 MT5 上传这笔交易的 K 线…' : entry?.review.error || '参考行情准备中…')}
                 </p>
                 <p className="dim">
-                  {mode === 'live'
+                  {marketView
                     ? (localConnected ? '选择区间，通过本机 SyncTrade 读取并上传该品种 K 线，保持网页打开。' : '选择同步区间，由已授权的 SyncNote 获取该品种 K 线，无需更换 MT5 图表。')
-                    : target
-                      ? (ready ? '无需连接 EA，读取完成后图表会自动出现。' : '同步完成后图表会自动出现。')
-                      : '在 MT5 同步一笔成交，或从底部「历史」打开已有交易。'}
+                    : (ready ? '无需连接 EA，读取完成后图表会自动出现。' : '同步完成后图表会自动出现。')}
                 </p>
-                {mode === 'live' && marketLoadError ? <p role="status">{marketLoadError}</p> : null}
-                {mode === 'live' ? <MarketRangeSync key={syncScope} symbol={liveSymbol} transport={localConnected ? 'synctrade' : 'syncnote'} getLocalContext={getLocalSyncContext} onStartLocal={() => localRangeSync.start()} onStopLocal={() => localRangeSync.stop('区间任务已取消。')} localStatus={rangeSync} onJobChange={receiveSyncJob} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
+                {marketView && marketLoadError ? <p role="status">{marketLoadError}</p> : null}
+                {marketView ? <MarketRangeSync key={syncScope} symbol={liveSymbol} transport={localConnected ? 'synctrade' : 'syncnote'} getLocalContext={getLocalSyncContext} onStartLocal={() => localRangeSync.start()} onStopLocal={() => localRangeSync.stop('区间任务已取消。')} localStatus={rangeSync} onJobChange={receiveSyncJob} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                 <div className="empty-actions">
-                  {mode === 'review' && !target && myHistory[0] ? (
-                    <button type="button" className="primary" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>
-                      打开最近一笔 #{String(myHistory[0].ticket)}
-                    </button>
-                  ) : null}
-                  {!localConnected && !(mode === 'review' && ready) ? (
+                  {!localConnected && !(tradeReview && ready) ? (
                     <button type="button" className="tool-btn" onClick={() => { setTab('trade'); setRailOpen(true); setMT5ConnectionOpen(true); }}>连接 MT5</button>
                   ) : null}
                   <a className="tool-btn" href="/local-ea" target="_blank" rel="noopener noreferrer">安装与同步说明 ↗</a>
@@ -1760,7 +1718,7 @@ export default function App() {
                     onClick={() => {
                       const same = tab === key && railOpen;
                       if (same) { setRailOpen(false); return; }
-                      if (key === 'review') { switchMode('review'); setRailOpen(true); return; }
+                      if (key === 'review' && mode !== 'review') { switchMode('review'); return; }
                       setTab(key);
                       setRailOpen(true);
                     }}
@@ -1995,9 +1953,9 @@ export default function App() {
 
                       {!entry.read_only ? <button type="button" className="tool-btn review-share-trigger" onClick={() => openReviewShare()}>分享复盘给好友或群聊</button> : null}
                     </>
-                  ) : target ? <p className="dim">正在加载这笔复盘…</p> : (
+                  ) : tradeReview ? <p className="dim">正在加载这笔复盘…</p> : (
                     <div className="rail-empty">
-                      <p className="dim">还没有打开复盘。可以从底部「历史」选一笔成交，或直接打开最近一笔。</p>
+                      <p className="dim">从底部「历史」选一笔成交，即可定位到交易时间并填写笔记。</p>
                       {myHistory[0] ? (
                         <button type="button" className="primary" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>
                           打开最近一笔 #{String(myHistory[0].ticket)}
@@ -2022,7 +1980,7 @@ export default function App() {
         history={myHistory}
         reviewed={board?.reviewed}
         onReview={(ticket) => openTicket(me!.id, ticket)}
-        tracksSlot={mode === 'review' && (target || shareId != null) ? (
+        tracksSlot={tradeReview ? (
           <TrackStrip
             person={target?.person}
             ticket={target?.ticket}
