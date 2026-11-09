@@ -10,6 +10,7 @@ export async function api<T = any>(path: string, data?: unknown, init?: { keepal
         cache: 'no-store',
         credentials: 'same-origin',
         keepalive: init?.keepalive,
+        signal: init?.signal,
         headers: { Accept: 'application/json', ...(writing ? { 'Content-Type': 'application/json' } : {}) },
         ...(writing ? { method: 'POST', body: JSON.stringify(data) } : {}),
       });

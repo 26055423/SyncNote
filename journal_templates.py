@@ -1,5 +1,6 @@
 """User-owned notebook sections, templates and phrases; no public publication."""
 import json,time,uuid
+from pathlib import Path
 
 class JournalError(Exception):
  def __init__(self,text,code=400):self.text,self.code=text,code
@@ -159,45 +160,7 @@ def pin_item(db,person,data):
  db.execute('UPDATE '+table+' SET pinned=? WHERE person=? AND id=?',(1 if pinned else 0,person,ident))
  return {'ok':True,'pinned':pinned}
 
-SYSTEM_CHAPTERS=[
- {'title':'交易前的判断','group':None,'weight':3},
- {'title':'入场依据','group':None,'weight':3},
- {'title':'持仓过程','group':None,'weight':3},
- {'title':'结果与改进','group':None,'weight':3},
- {'title':'大积累大爆发','group':None,'weight':5},
- {'title':'顺大逆小','group':None,'weight':5},
- {'title':'一致性','group':None,'weight':5},
- {'title':'OB 被缓解了','group':None,'weight':3},
- {'title':'不带 FVG','group':None,'weight':3},
- {'title':'带 FVG','group':None,'weight':3},
- {'title':'矩形','group':None,'weight':5},
- {'title':'三角形','group':None,'weight':3},
- {'title':'牛旗','group':None,'weight':3},
- {'title':'熊旗','group':None,'weight':3},
- {'title':'趋势线被迫','group':None,'weight':3},
- {'title':'均线双突破','group':None,'weight':3},
- {'title':'大级别','group':None,'weight':3},
- {'title':'流动性清扫','group':None,'weight':3},
- {'title':'回去拿钱','group':None,'weight':3},
- {'title':'高点被突破','group':None,'weight':3},
- {'title':'IDM被拿了','group':None,'weight':3},
- {'title':'大周期方向','group':'方向判断','weight':5},
- {'title':'扫流动性（扫低/扫高）','group':'结构','weight':5},
- {'title':'结构突破（BOS）','group':'结构','weight':4},
- {'title':'性质转变（CHoCH）','group':'结构','weight':3},
- {'title':'订单块（OB）','group':'位置','weight':5},
- {'title':'公允价值缺口（FVG）','group':'位置','weight':4},
- {'title':'溢价/折价区','group':'位置','weight':3},
- {'title':'前高/前低','group':'位置','weight':2},
- {'title':'回踩确认','group':'确认','weight':4},
- {'title':'入场模型成立','group':'执行','weight':4},
- {'title':'止损位置有依据','group':'执行','weight':3},
- {'title':'仓位符合计划','group':'管理','weight':3},
- {'title':'移动止损/保本','group':'管理','weight':2},
- {'title':'盈亏比与预期','group':'管理','weight':2},
- {'title':'情绪与状态','group':'复盘','weight':2},
- {'title':'下次只改一件事','group':'复盘','weight':3},
-]
+SYSTEM_CHAPTERS=json.loads((Path(__file__).resolve().parent/'web/chart-src/src/publicChapterPresets.json').read_text(encoding='utf-8'))
 
 def public_chapters(db,limit=60,min_users=1):
  """全服条目词云：只回标题、分组、人数与使用笔数，不带任何用户或交易信息。"""

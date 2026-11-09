@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import chapterPresets from './publicChapterPresets.json';
 import {
   appendChecklist, appendPhrase, appendTemplate, checklistProgress, frequentFirst, MAX_SECTIONS, moveSection,
   newSection, summarizeNote, SYSTEM_PHRASES, templateStructure, VERDICTS,
@@ -22,6 +23,7 @@ interface Props {
   evidence?: EvidenceApi;
 }
 const EMPTY_LIBRARY: NotebookLibrary = { templates: [], phrases: [], chapters: [] };
+const PUBLIC_PRESETS: PublicChapter[] = chapterPresets.map(item => ({ ...item, users: 0, uses: 0, system: true }));
 
 interface Stats {
   notes: number;
@@ -72,7 +74,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeTemplate, setActiveTemplate] = useState<{ name: string; phrases: string[] } | null>(null);
   const [selection, setSelection] = useState<{ id: string; text: string } | null>(null);
-  const [cloud, setCloud] = useState<PublicChapter[]>([]);
+  const [cloud, setCloud] = useState<PublicChapter[] | null>(null);
   const [cloudQuery, setCloudQuery] = useState('');
   const [cloudLoading, setCloudLoading] = useState(false);
   const [cloudError, setCloudError] = useState('');
@@ -203,8 +205,11 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     setCloudLoading(true);
     setCloudError('');
     try {
-      const result = await api<{ chapters: PublicChapter[] }>('/api/journal/chapters?limit=60');
-      if (mounted.current) setCloud(result.chapters ?? []);
+      const result = await api<{ chapters: PublicChapter[] }>('/api/journal/chapters?limit=60', undefined, { signal: AbortSignal.timeout(8000) });
+      if (mounted.current) {
+        const titles = new Set(result.chapters.map(item => item.title));
+        setCloud([...result.chapters, ...PUBLIC_PRESETS.filter(item => !titles.has(item.title))]);
+      }
     } catch {
       if (mounted.current) setCloudError('暂时无法读取灵感，点击重试。');
     } finally {
@@ -215,6 +220,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     if (quickOpen && !quickDialog.current?.open) quickDialog.current?.showModal();
   }, [quickOpen]);
   const openQuickAdd = () => {
+    if (cloud === null && !cloudLoading) void loadCloud();
     setLibraryExpanded(false);
     setInspirationOpen(false);
     setPickedChapter(null);
@@ -242,7 +248,8 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     return CLOUD_INKS[sum % CLOUD_INKS.length];
   };
   const keyword = cloudQuery.trim().toLocaleLowerCase();
-  const cloudRows = cloud.filter(item => item.title.toLocaleLowerCase().includes(keyword));
+  const availableCloud = cloud ?? PUBLIC_PRESETS;
+  const cloudRows = availableCloud.filter(item => item.title.toLocaleLowerCase().includes(keyword));
   const chapterExists = (title: string) => value.sections.some(section => section.title.trim() === title);
   const full = value.sections.length >= MAX_SECTIONS;
   const renderCloud = (rows: Array<{ title: string; uses: number; group?: string | null; users?: number; weight?: number; favorite?: boolean }>, publicCloud: boolean) => {
@@ -261,7 +268,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
           disabled={!publicCloud && (full || chapterExists(item.title))}
           onClick={() => {
             if (!publicCloud) { addFromCloud(item.title, item.group); return; }
-            setPickedChapter(cloud.find(chapter => chapter.title === item.title) ?? null);
+            setPickedChapter(availableCloud.find(chapter => chapter.title === item.title) ?? null);
           }}
         >{item.favorite && <small aria-hidden="true">★</small>}{item.title}</button>;
       })}
@@ -448,7 +455,6 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         <input autoFocus={!libraryExpanded} aria-label="条目名称" maxLength={80} placeholder="输入条目名称" value={chapterDraft} onChange={event => setChapterDraft(event.target.value)}/>
         <button type="submit" disabled={full || !chapterDraft.trim() || chapterExists(chapterDraft.trim())}>添加</button>
         <button type="button" aria-expanded={inspirationOpen} aria-controls="sn-public-cloud" onClick={() => {
-          if (!inspirationOpen && (!cloud.length || cloudError) && !cloudLoading) void loadCloud();
           setInspirationOpen(!inspirationOpen);
         }}>灵感</button>
       </form>
@@ -460,7 +466,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
           {cloudError && <button type="button" disabled={cloudLoading} onClick={() => void loadCloud()}>重试</button>}
         </div>
         {cloudRows.length ? renderCloud(cloudRows, true) : <p className="notebook-library-hint">
-          {cloudLoading ? '正在读取灵感…' : cloudError || (keyword ? '没有匹配的条目。' : '暂无公共条目。')}
+          {cloudLoading ? '正在查找其他公共条目…' : '没有匹配的条目。'}
         </p>}
         {pickedChapter && <div className="notebook-picked-chapter">
           <strong>{pickedChapter.title}</strong>
