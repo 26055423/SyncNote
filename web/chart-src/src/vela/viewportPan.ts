@@ -27,15 +27,17 @@ function panFraction(chart: PanChart, fraction: number): void {
 }
 
 export function centerChartOnTime(chart: PanChart, at: number): boolean {
-  // 一次 panBy 在远距离跳转时容易被数据边界钳住，迭代几次收敛到目标附近。
-  for (let i = 0; i < 8; i += 1) {
+  // 一次 panBy 跨太大距离会被渲染器钳住；分步走，每次最多 0.8 屏，最多 60 步。
+  for (let i = 0; i < 60; i += 1) {
     const range = chart.getVisibleRange();
     if (!range || !(range.to > range.from)) return false;
     const span = range.to - range.from;
     const delta = at - (range.from + range.to) / 2;
     if (Math.abs(delta) <= span * 0.02) return true;
-    if (!panChartByTime(chart, delta)) return false;
+    const step = Math.max(-0.8, Math.min(0.8, delta / span));
+    if (!panChartByTime(chart, step * span)) return false;
     const next = chart.getVisibleRange();
+    // 已经完全动不了（顶到数据边界）：停在这里。
     if (!next || Math.abs(next.from - range.from) < 1) return true;
   }
   return true;

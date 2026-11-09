@@ -177,6 +177,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const { charts, symbol, anchorMs, savedState, readOnly, timeframes, onStateChange, onTimeframe, onLayout, onSyncs, onError, onFavorites, onTool } = props;
   // 拖动补段用：数据副本 + 可见范围回调（回调放 ref，避免闭包拿到旧的 props）。
   const dataRef = useRef<ReviewCharts>({ ...(props.charts ?? {}) });
+  // 只读的最新数据副本：判断某格有没有某段时间时用它（dataRef 会被拖动补段修改）。
+  const chartsRef = useRef(props.charts);
+  chartsRef.current = props.charts;
   const viewportRef = useRef(props.onViewport);
   viewportRef.current = props.onViewport;
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -294,13 +297,27 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     viewport: timeSyncRef.current,
     crosshair: crosshairSyncRef.current,
   });
-  /** 点击同步：只有「当前视野里看不到这个时间」的格子才跳过去；已经能看到的不动。 */
+  /** 某一格自己有多少数据（UTC 秒 → 毫秒）；用来判断"这一格根本没有这段时间"。 */
+  const dataBoundsOf = (cell: any): { from: number; to: number } | null => {
+    const timeframe = String(cell?.chart?.market?.timeframe ?? '');
+    const recipe = TIMEFRAMES[timeframe];
+    if (!recipe) return null;
+    const rows = chartsRef.current?.[recipe.base];
+    if (!Array.isArray(rows) || !rows.length) return null;
+    const first = Number(rows[0]?.[0]);
+    const last = Number(rows[rows.length - 1]?.[0]);
+    if (!Number.isFinite(first) || !Number.isFinite(last)) return null;
+    return { from: first * 1000, to: (last + recipe.seconds) * 1000 };
+  };
+  /** 点击同步：视野里已经看得到的不动；数据里根本没有这段时间的也不动。 */
   const jumpAllTo = (at: number | null, exceptId?: string) => {
     if (at == null) return;
     for (const cell of wsRef.current?.cells?.() ?? []) {
       if (exceptId && cell.id === exceptId) continue;
       const range = cell.chart?.getVisibleRange?.();
       if (range && Number.isFinite(range.from) && Number.isFinite(range.to) && at >= range.from && at <= range.to) continue;
+      const bounds = dataBoundsOf(cell);
+      if (bounds && (at < bounds.from || at > bounds.to)) continue;
       programmaticUntilRef.current.set(cell.id, Date.now() + 250);
       try { centerChartOnTime(cell.chart, at); } catch { /* ignore */ }
     }
