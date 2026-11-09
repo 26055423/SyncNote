@@ -301,8 +301,21 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       if (exceptId && cell.id === exceptId) continue;
       const range = cell.chart?.getVisibleRange?.();
       if (range && Number.isFinite(range.from) && Number.isFinite(range.to) && at >= range.from && at <= range.to) continue;
-      programmaticUntilRef.current.set(cell.id, Date.now() + 250);
-      try { centerChartOnTime(cell.chart, at); } catch { /* ignore */ }
+      // 目标可能还没加载：先跳一次，没到就上报目标窗口触发补数据，再重试几次。
+      let attempts = 8;
+      const step = () => {
+        const current = cell.chart?.getVisibleRange?.();
+        if (current && at >= current.from && at <= current.to) return;
+        programmaticUntilRef.current.set(cell.id, Date.now() + 250);
+        try { centerChartOnTime(cell.chart, at); } catch { /* ignore */ }
+        const after = cell.chart?.getVisibleRange?.();
+        if (after && at >= after.from && at <= after.to) return;
+        if (attempts-- <= 0) return;
+        const span = after && after.to > after.from ? after.to - after.from : 60_000;
+        viewportRef.current?.({ cellId: cell.id, timeframe: cell.chart?.market?.timeframe ?? '15', from: at - span, to: at + span });
+        window.setTimeout(step, 450);
+      };
+      step();
     }
   };
   const activeCenter = (): number | null => {
