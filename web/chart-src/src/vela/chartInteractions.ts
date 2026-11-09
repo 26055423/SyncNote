@@ -4,6 +4,23 @@ import type { ChartCell } from '@luxalgo/vela/workspace';
 const PRICE_ONLY_KEY = 'sn-price-only-scale';
 const RESET_VISIBLE_BARS = 120;
 
+export function prepareWorkspaceState(document: unknown, provider: string, symbol: string): unknown {
+  if (!document || typeof document !== 'object') return document;
+  // Clone before stripping preferences that belong to the current workspace.
+  const copy = JSON.parse(JSON.stringify(document));
+  delete copy.sync;
+  if (Array.isArray(copy.charts)) {
+    for (const chart of copy.charts) {
+      if (!chart || typeof chart !== 'object') continue;
+      delete chart.rendererConfig;
+      // Vela prefixes a bare symbol with the saved provider when it restores a cell.
+      chart.symbol = symbol;
+      chart.provider = provider;
+    }
+  }
+  return copy;
+}
+
 /** Keep the last visible candle fixed while returning to a readable zoom. */
 export function configureViewReset(
   cell: Pick<ChartCell, 'chart' | 'resetView'>,

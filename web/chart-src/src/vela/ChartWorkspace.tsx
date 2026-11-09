@@ -47,35 +47,6 @@ function markColors(theme: string): { line: string; buy: string; sell: string; l
     : { line: '#e2bd77', buy: '#22d3ee', sell: '#ff5ea8', labelEntry: '#22d3ee', labelExit: '#ff5ea8' };
 }
 
-/**
- * 存档里的 `rendererConfig` 记的是**生成存档时那台机器**的主题配色
- * （背景、网格、边框、文字、涨跌色）。回放它会让「面板已换成浅色、K 线还是黑的」，
- * 所以套用前先剥掉：配色只认本站「设置 → 主题」。
- */
-function stripTheme(document: unknown, provider?: string, symbol?: string): unknown {
-  if (!document || typeof document !== 'object') return document;
-  let copy: any;
-  try {
-    copy = JSON.parse(JSON.stringify(document));
-  } catch {
-    return document;
-  }
-  // sync（十字线/周期/绘图联动）是工作台偏好，不属于某笔复盘的存档：
-  // 旧文档里可能是 crosshair=false，恢复后会出现"十字线不同步"的怪现象。
-  delete copy.sync;
-  if (Array.isArray(copy.charts)) {
-    for (const chart of copy.charts) {
-      if (chart && typeof chart === 'object') {
-        delete chart.rendererConfig;
-        // 存档只存画线/布局，不存“当时的数据源”。provider 改名或换源时，
-        // 旧 symbol 会让 Vela 找不到 provider，整张图会空白。
-        if (provider && symbol) chart.symbol = symbol;
-      }
-    }
-  }
-  return copy;
-}
-
 export interface ReplayUiState {
   available: boolean; active: boolean; playing: boolean; armed: boolean; busy: boolean;
   cursorTime: number | null; clockTime: number | null; remaining: number; intervalMs: number;
@@ -623,7 +594,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         await import('./indicators/smc');
         await import('./indicators/hiddenOb');
         await import('./layouts');
-        const { configurePriceScale, configureViewReset } = await import('./chartInteractions');
+        const { configurePriceScale, configureViewReset, prepareWorkspaceState } = await import('./chartInteractions');
         const { attachIndicatorPicker } = await import('./enhancedIndicatorPicker');
         const [{ registerLocale }, zhHans] = await Promise.all([
           import('@luxalgo/vela'),
@@ -694,7 +665,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             // 直接套用会让"面板已经换成浅色、K 线还是黑的"。主题由本站设置统一决定，
             // 所以回放前把渲染器配置剥掉。
             ws.applyState(fitSavedWorkspaceTracks(
-              stripTheme(savedState, providerName, symbol),
+              prepareWorkspaceState(savedState, providerName, symbol),
               Math.max(0, host.clientWidth - (readOnly ? 0 : 44)),
             ));
           } catch {

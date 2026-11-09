@@ -7,7 +7,20 @@ import { NativeRenderer, RendererControl } from '@luxalgo/vela';
 const compiled = ts.transpileModule(readFileSync(new URL('../src/vela/chartInteractions.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText
   .replace("'@luxalgo/vela'", JSON.stringify(import.meta.resolve('@luxalgo/vela')));
-const { configurePriceScale, configureViewReset } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { configurePriceScale, configureViewReset, prepareWorkspaceState } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+
+test('a saved review resolves every cell against the currently registered provider', () => {
+  const drawings = { drawings: [{ id: 'saved-line' }] };
+  const saved = { layout: '3', charts: [
+    { id: 'c1', provider: 'review', symbol: 'XAUUSD', timeframe: '1', drawings },
+    { id: 'c2', provider: 'retired', symbol: 'retired:XAUUSD', timeframe: '5' },
+  ] };
+  const restored = prepareWorkspaceState(saved, 'sntrack7', 'XAUUSD');
+  assert.deepEqual(restored.charts.map(cell => [cell.provider, cell.symbol, cell.timeframe]),
+    [['sntrack7', 'XAUUSD', '1'], ['sntrack7', 'XAUUSD', '5']]);
+  assert.deepEqual(restored.charts[0].drawings, drawings);
+  assert.equal(saved.charts[0].provider, 'review');
+});
 function fixture() {
   const native = new NativeRenderer();
   native.scheduler = { invalidate() {}, destroy() {} };
