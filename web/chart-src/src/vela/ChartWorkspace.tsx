@@ -148,6 +148,10 @@ interface Props {
   forceLayout?: string;
   /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
+  /** 当前持仓：画开仓线与止损/止盈线，止损止盈可以拖动改价。 */
+  positionLevels?: Array<{ ticket: string; side: 'buy' | 'sell' | string; entry: number; sl?: number | null; tp?: number | null; volume?: number }>;
+  /** 拖动止损/止盈线后回调（松手时触发）。 */
+  onLevelDrag?: (ticket: string, field: 'sl' | 'tp', price: number) => void;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
   provider?: unknown;
   loadIndicatorMinutes?: (endMs: number, count: number) => Promise<number[][]>;
@@ -229,6 +233,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
 
   const favoritesRef = useRef<string[]>(props.favorites ?? []);
   const markIdsRef = useRef<Set<string>>(new Set());
+  const positionLevelsRef = useRef(props.positionLevels);
+  positionLevelsRef.current = props.positionLevels;
+  const levelDragRef = useRef(props.onLevelDrag);
+  levelDragRef.current = props.onLevelDrag;
+  const positionSyncRef = useRef<(() => void) | null>(null);
+  const levelMetaRef = useRef(new Map<string, { ticket: string; field: 'entry' | 'sl' | 'tp' }>());
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   // 分享时要把开平仓标注剔掉，`stripMarks` 定义在初始化闭包里，用 ref 传出来。
   const stripRef = useRef<((document: unknown) => unknown) | null>(null);
@@ -798,6 +808,79 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           if (ids.size) markIdsByCellRef.current.set(cell.id, ids);
         };
 
+        /** 当前持仓的开仓/止损/止盈线；止损止盈不锁，可以直接拖动改价。 */
+        const clearPositions = (cell: any) => {
+          const api = cell?.chart?.drawings;
+          const ids = markIdsByCellRef.current.get(cell.id);
+          if (!api || !ids) return;
+          for (const id of [...ids]) {
+            if (!levelMetaRef.current.has(id)) continue;
+            try { api.remove(id); } catch { /* ignore */ }
+            ids.delete(id);
+            markIdsRef.current.delete(id);
+            levelMetaRef.current.delete(id);
+          }
+        };
+        const annotatePositions = (cell: any) => {
+          if (replaying()) return;
+          const levels = positionLevelsRef.current ?? [];
+          const api = cell?.chart?.drawings;
+          if (!api) return;
+          const palette = markColors(themeRef.current);
+          const tfId: string = cell?.chart?.market?.timeframe ?? '15';
+          const stepSec = TIMEFRAMES[tfId]?.seconds ?? 900;
+          const snapTime = (ms: number): number => Math.floor(ms / 1000 / stepSec) * stepSec * 1000;
+          const now = snapTime(Date.now());
+          const ids = markIdsByCellRef.current.get(cell.id) ?? new Set<string>();
+          const keep = (drawing: unknown, meta: { ticket: string; field: 'entry' | 'sl' | 'tp' }) => {
+            const id = (drawing as { id?: string } | null)?.id;
+            if (!id) return;
+            ids.add(id); markIdsRef.current.add(id); levelMetaRef.current.set(id, meta);
+          };
+          for (const level of levels) {
+            if (!Number.isFinite(level.entry) || level.entry <= 0) continue;
+            const color = level.side === 'sell' ? (palette.labelExit ?? '#d17b7b') : (palette.labelEntry ?? '#63c08d');
+            try {
+              keep(api.add('hline', {
+                anchors: [{ time: now, price: level.entry }],
+                style: { lineColor: color, lineWidth: 1, lineStyle: 'solid' },
+                text: { value: `开仓 ${level.entry.toFixed(2)}`, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: 'bottom' as const, color },
+                zIndex: 1990,
+              }), { ticket: level.ticket, field: 'entry' });
+              const entryId = [...ids].filter((id) => levelMetaRef.current.get(id)?.field === 'entry' && levelMetaRef.current.get(id)?.ticket === level.ticket).pop();
+              if (entryId) api.lock?.(entryId, true);
+            } catch { /* ignore */ }
+            if (typeof level.sl === 'number' && level.sl > 0) {
+              try {
+                keep(api.add('hline', {
+                  anchors: [{ time: now, price: level.sl }],
+                  style: { lineColor: 'var(--bad, #d17b7b)', lineWidth: 1, lineStyle: 'dashed' },
+                  text: { value: `止损 ${level.sl.toFixed(2)}`, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: 'top' as const, color: '#d17b7b' },
+                  zIndex: 1995,
+                }), { ticket: level.ticket, field: 'sl' });
+              } catch { /* ignore */ }
+            }
+            if (typeof level.tp === 'number' && level.tp > 0) {
+              try {
+                keep(api.add('hline', {
+                  anchors: [{ time: now, price: level.tp }],
+                  style: { lineColor: '#63c08d', lineWidth: 1, lineStyle: 'dashed' },
+                  text: { value: `止盈 ${level.tp.toFixed(2)}`, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: 'bottom' as const, color: '#63c08d' },
+                  zIndex: 1995,
+                }), { ticket: level.ticket, field: 'tp' });
+              } catch { /* ignore */ }
+            }
+          }
+          markIdsByCellRef.current.set(cell.id, ids);
+        };
+        const syncPositions = () => {
+          for (const cell of wsRef.current?.cells?.() ?? []) {
+            clearPositions(cell);
+            annotatePositions(cell);
+          }
+        };
+        positionSyncRef.current = syncPositions;
+
         const stripMarks = (document: any) => {
           if (!document || !Array.isArray(document.charts)) return document;
           for (const chart of document.charts) {
@@ -906,6 +989,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             focusOne(cell);
             lockDrawings(cell);
             annotate(cell);
+            annotatePositions(cell);
             try {
               const api = cell.chart?.drawings;
               if (favoritesRef.current.length) api?.setFavorites?.(favoritesRef.current);
@@ -920,6 +1004,17 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           });
           cell.chart?.on?.('drawing:tool', ({ type }: { type: string | null }) => {
             onTool?.(type ?? null);
+          });
+          // 拖动止损/止盈线：松手后把新价格交给调用方去改单。
+          cell.chart?.on?.('drawing:edited', ({ id }: { id?: string }) => {
+            if (!id) return;
+            const meta = levelMetaRef.current.get(id);
+            if (!meta || meta.field === 'entry') return;
+            const rows = (cell.chart?.drawings?.all?.() ?? []) as Array<{ id: string; anchors?: Array<{ price?: number }> }>;
+            const row = rows.find((item) => item.id === id);
+            const price = row?.anchors?.[0]?.price;
+            if (!Number.isFinite(price)) return;
+            levelDragRef.current?.(meta.ticket, meta.field, Number(price));
           });
           cell.chart?.on?.('market:changed', () => {
             onTimeframe?.(cell.chart?.market?.timeframe ?? '15');
@@ -999,6 +1094,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     };
     // charts 的一次性数据：换交易时整个组件重挂载（key 由上层控制）。
   }, [charts, symbol]);
+
+  const levelsKey = JSON.stringify(props.positionLevels ?? []);
+  useEffect(() => {
+    try { positionSyncRef.current?.(); } catch { /* ignore */ }
+    // 只在持仓档位真的变化时重画，避免每次渲染都清一遍。
+  }, [levelsKey]);
 
   // Reuse Vela's actual controls and listeners instead of duplicating its APIs.
   // The workspace keeps owning the menus/dialogs and destroys the toolbar.

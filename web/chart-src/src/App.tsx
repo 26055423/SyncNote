@@ -1495,6 +1495,30 @@ export default function App() {
                 savedState={null}
                 readOnly={false}
                 timeframes={TIMEFRAME_OPTIONS.map((o) => o.id)}
+                positionLevels={myPositions.filter((position: any) => !liveSymbol || position.symbol === liveSymbol).map((position: any) => ({
+                  ticket: String(position.ticket),
+                  side: position.side,
+                  entry: Number(position.price_open ?? position.open ?? 0),
+                  sl: Number(position.sl ?? 0) || null,
+                  tp: Number(position.tp ?? 0) || null,
+                  volume: Number(position.volume ?? 0),
+                }))}
+                onLevelDrag={(ticket, field, price) => {
+                  if (!localConnected) { setError('本机 EA 未连接，无法修改止损止盈。'); return; }
+                  const position = myPositions.find((row: any) => String(row.ticket) === String(ticket));
+                  if (!position) return;
+                  const current = Number(position[field] ?? 0);
+                  if (Number.isFinite(current) && Math.abs(current - price) < 1e-6) return;
+                  try {
+                    localTerminal.command('modify', {
+                      ticket: String(ticket),
+                      sl: field === 'sl' ? price : Number(position.sl ?? 0) || 0,
+                      tp: field === 'tp' ? price : Number(position.tp ?? 0) || 0,
+                    });
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                  }
+                }}
               favorites={favs}
                 onFavorites={saveFavorites}
                 onTool={setActiveTool}
@@ -1515,7 +1539,7 @@ export default function App() {
                 symbol={trade.symbol || 'XAUUSD'}
                 anchorMs={anchorMs}
                 savedState={entry!.chart?.document ?? null}
-                tradeMarks={
+          tradeMarks={
                   entry!.review.opened != null && trade?.closed != null
                     ? {
                         openedAt: Number(openedSeconds ?? 0),
