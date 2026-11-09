@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import chapterPresets from './publicChapterPresets.json';
 import {
@@ -88,18 +88,22 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   const carets = useRef(new Map<string, { start: number; end: number }>());
   const lastFocused = useRef<string | null>(null);
   const mounted = useRef(true);
+  const libraryRequest = useRef(0);
+  const refresh = useCallback(async () => {
+    const request = ++libraryRequest.current;
+    const result = await api<NotebookLibrary>('/api/journal/library');
+    if (mounted.current && request === libraryRequest.current) setLibrary({ ...EMPTY_LIBRARY, ...result });
+  }, []);
   useEffect(() => {
     mounted.current = true;
     if (!readOnly) {
       setLoading(true);
-      void api<NotebookLibrary>('/api/journal/library').then(result => {
-        if (mounted.current) setLibrary({ ...EMPTY_LIBRARY, ...result });
-      }).catch(failure => {
+      void refresh().catch(failure => {
         if (mounted.current) setError(failure instanceof Error ? failure.message : String(failure));
       }).finally(() => { if (mounted.current) setLoading(false); });
     }
     return () => { mounted.current = false; };
-  }, [readOnly]);
+  }, [readOnly, refresh]);
   useEffect(() => {
     const onSelectionChange = () => {
       const node = document.activeElement as HTMLTextAreaElement | null;
@@ -146,10 +150,6 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       if (mounted.current) setError(text);
       onError?.(text);
     } finally { if (mounted.current) setBusy(false); }
-  };
-  const refresh = async () => {
-    const result = await api<NotebookLibrary>('/api/journal/library');
-    if (mounted.current) setLibrary({ ...EMPTY_LIBRARY, ...result });
   };
   const rememberCaret = (section: NoteSection, area: HTMLTextAreaElement | null) => {
     if (!area) return;
@@ -233,6 +233,14 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   const addFromCloud = (title: string, group?: string | null) => {
     addChapter(title, group);
     closeQuickAdd();
+    if (library.chapters.some(row => row.title === title && row.favorite)) return;
+    void favoriteChapter(title, group).catch(() => {
+      if (mounted.current) setError(`「${title}」已添加到复盘，暂时无法确认收藏。`);
+    });
+  };
+  const favoriteChapter = async (title: string, group?: string | null) => {
+    await api('/api/journal/chapters/favorite', { title, group }, { keepalive: true });
+    await refresh();
   };
 
   const openSummary = () => {
@@ -471,8 +479,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         {pickedChapter && <div className="notebook-picked-chapter">
           <strong>{pickedChapter.title}</strong>
           <button type="button" disabled={busy || loading || library.chapters.some(row => row.title === pickedChapter.title && row.favorite)} onClick={() => void run(async () => {
-            await api('/api/journal/chapters/favorite', { title: pickedChapter.title, group: pickedChapter.group });
-            await refresh();
+            await favoriteChapter(pickedChapter.title, pickedChapter.group);
             if (mounted.current) setMessage('已收藏到我的词云');
           })}>{library.chapters.some(row => row.title === pickedChapter.title && row.favorite) ? '已收藏' : '收藏'}</button>
           <button type="button" disabled={full || chapterExists(pickedChapter.title)} onClick={() => addFromCloud(pickedChapter.title, pickedChapter.group)}>添加到复盘</button>
