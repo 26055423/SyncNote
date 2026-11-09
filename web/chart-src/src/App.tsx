@@ -1504,20 +1504,44 @@ export default function App() {
                   volume: Number(position.volume ?? 0),
                 }))}
                 onLevelDrag={(ticket, field, price) => {
-                  if (!localConnected) { setError('本机 EA 未连接，无法修改止损止盈。'); return; }
+                  const revert = () => { try { chartRef.current?.syncPositionLevels(); } catch { /* 忽略 */ } };
+                  if (!localConnected) { setError('本机 EA 未连接，无法修改止损止盈。'); revert(); return; }
                   const position = myPositions.find((row: any) => String(row.ticket) === String(ticket));
-                  if (!position) return;
+                  if (!position) { revert(); return; }
                   const current = Number(position[field] ?? 0);
                   if (Number.isFinite(current) && Math.abs(current - price) < 1e-6) return;
+                  let commandId = '';
                   try {
-                    localTerminal.command('modify', {
+                    commandId = localTerminal.command('modify', {
                       ticket: String(ticket),
                       sl: field === 'sl' ? price : Number(position.sl ?? 0) || 0,
                       tp: field === 'tp' ? price : Number(position.tp ?? 0) || 0,
                     });
                   } catch (err) {
                     setError(err instanceof Error ? err.message : String(err));
+                    revert();
+                    return;
                   }
+                  // 等 EA 回报：被拒或超时就把线拉回原价，避免图上留下一个不存在的止损。
+                  const started = Date.now();
+                  const watch = () => {
+                    const command = localTerminal.getSnapshot().commands.find((row: any) => row.command_id === commandId);
+                    const state = command?.state ?? '';
+                    if (state === 'completed') return;
+                    if (state === 'uncertain') { setError('改单结果待核实，请到 MT5 确认后再拖一次。'); return; }
+                    if (state === 'rejected' || state === 'not_found') {
+                      setError(command?.error || 'EA 拒绝了这次改单，止损止盈保持原值。');
+                      revert();
+                      return;
+                    }
+                    if (Date.now() - started > 12000) {
+                      setError('改单等待超时，请到 MT5 核实；图上已恢复原值。');
+                      revert();
+                      return;
+                    }
+                    window.setTimeout(watch, 300);
+                  };
+                  window.setTimeout(watch, 250);
                 }}
               favorites={favs}
                 onFavorites={saveFavorites}

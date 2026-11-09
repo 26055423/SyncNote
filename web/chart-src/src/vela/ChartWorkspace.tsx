@@ -87,6 +87,8 @@ export interface ChartHandle {
   /** 当前图的画线（笔记证据挑选用）。 */
   drawingCandidates(): Array<{ id: string; type: string; text: string; timeframe: string; anchorMs: number | null; snapshot: unknown }>;
   selectDrawings(ids: string[] | null): void;
+  /** 重画持仓线（改单失败时把拖走的止损/止盈线拉回真实值）。 */
+  syncPositionLevels(): void;
   replayStatus(): ReplayUiState;
   replaySelect(): void;
   replayStartFromView(): Promise<void>;
@@ -239,6 +241,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   levelDragRef.current = props.onLevelDrag;
   const positionSyncRef = useRef<(() => void) | null>(null);
   const levelMetaRef = useRef(new Map<string, { ticket: string; field: 'entry' | 'sl' | 'tp' }>());
+  const positionIdsRef = useRef(new Map<string, string>());
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   // 分享时要把开平仓标注剔掉，`stripMarks` 定义在初始化闭包里，用 ref 传出来。
   const stripRef = useRef<((document: unknown) => unknown) | null>(null);
@@ -441,6 +444,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     /** 高亮一组图形（传 null 清除）：只影响选中态，不写回画线存档。 */
     selectDrawings(ids: string[] | null) {
       try { (wsRef.current?.active?.chart as any)?.drawings?.select?.(ids && ids.length ? ids : null); } catch { /* 忽略 */ }
+    },
+    syncPositionLevels() {
+      try { positionSyncRef.current?.(); } catch { /* 忽略 */ }
     },
     getTimeframe() {
       return wsRef.current?.active?.chart?.market?.timeframe ?? '15';
@@ -809,18 +815,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         };
 
         /** 当前持仓的开仓/止损/止盈线；止损止盈不锁，可以直接拖动改价。 */
-        const clearPositions = (cell: any) => {
-          const api = cell?.chart?.drawings;
-          const ids = markIdsByCellRef.current.get(cell.id);
-          if (!api || !ids) return;
-          for (const id of [...ids]) {
-            if (!levelMetaRef.current.has(id)) continue;
-            try { api.remove(id); } catch { /* ignore */ }
-            ids.delete(id);
-            markIdsRef.current.delete(id);
-            levelMetaRef.current.delete(id);
-          }
-        };
+        const positionKey = (cellId: string, ticket: string, field: string) => `${cellId}|${ticket}|${field}`;
         const annotatePositions = (cell: any) => {
           if (replaying()) return;
           const levels = positionLevelsRef.current ?? [];
@@ -829,55 +824,57 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           const palette = markColors(themeRef.current);
           const tfId: string = cell?.chart?.market?.timeframe ?? '15';
           const stepSec = TIMEFRAMES[tfId]?.seconds ?? 900;
-          const snapTime = (ms: number): number => Math.floor(ms / 1000 / stepSec) * stepSec * 1000;
-          const now = snapTime(Date.now());
-          const ids = markIdsByCellRef.current.get(cell.id) ?? new Set<string>();
-          const keep = (drawing: unknown, meta: { ticket: string; field: 'entry' | 'sl' | 'tp' }) => {
-            const id = (drawing as { id?: string } | null)?.id;
-            if (!id) return;
-            ids.add(id); markIdsRef.current.add(id); levelMetaRef.current.set(id, meta);
+          const now = Math.floor(Date.now() / 1000 / stepSec) * stepSec * 1000;
+          const present = new Set<string>(((api.all?.() ?? []) as Array<{ id: string }>).map((row) => row.id));
+          const wanted = new Set<string>();
+          // 同一个 (格子, 持仓, 字段) 只维护一条线：价格变化时原地 update，不新增、不重复。
+          const draw = (ticket: string, field: 'entry' | 'sl' | 'tp', price: number, options: { color: string; label: string; dashed: boolean; zIndex: number; vAlign: 'top' | 'bottom' }) => {
+            const key = positionKey(cell.id, ticket, field);
+            wanted.add(key);
+            const existing = positionIdsRef.current.get(key);
+            if (existing && present.has(existing)) {
+              try {
+                api.update(existing, {
+                  anchors: [{ time: now, price }],
+                  text: { value: options.label, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: options.vAlign, color: options.color },
+                });
+                return;
+              } catch { /* 失败就重建 */ }
+            }
+            try {
+              const drawing = api.add('hline', {
+                anchors: [{ time: now, price }],
+                style: { lineColor: options.color, lineWidth: 1, lineStyle: options.dashed ? 'dashed' : 'solid' },
+                text: { value: options.label, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: options.vAlign, color: options.color },
+                zIndex: options.zIndex,
+              });
+              const id = (drawing as { id?: string } | null)?.id;
+              if (!id) return;
+              positionIdsRef.current.set(key, id);
+              markIdsRef.current.add(id);
+              levelMetaRef.current.set(id, { ticket, field });
+              if (field === 'entry') api.lock?.(id, true);
+            } catch { /* ignore */ }
           };
           for (const level of levels) {
             if (!Number.isFinite(level.entry) || level.entry <= 0) continue;
             const color = level.side === 'sell' ? (palette.labelExit ?? '#d17b7b') : (palette.labelEntry ?? '#63c08d');
-            try {
-              keep(api.add('hline', {
-                anchors: [{ time: now, price: level.entry }],
-                style: { lineColor: color, lineWidth: 1, lineStyle: 'solid' },
-                text: { value: `开仓 ${level.entry.toFixed(2)}`, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: 'bottom' as const, color },
-                zIndex: 1990,
-              }), { ticket: level.ticket, field: 'entry' });
-              const entryId = [...ids].filter((id) => levelMetaRef.current.get(id)?.field === 'entry' && levelMetaRef.current.get(id)?.ticket === level.ticket).pop();
-              if (entryId) api.lock?.(entryId, true);
-            } catch { /* ignore */ }
-            if (typeof level.sl === 'number' && level.sl > 0) {
-              try {
-                keep(api.add('hline', {
-                  anchors: [{ time: now, price: level.sl }],
-                  style: { lineColor: 'var(--bad, #d17b7b)', lineWidth: 1, lineStyle: 'dashed' },
-                  text: { value: `止损 ${level.sl.toFixed(2)}`, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: 'top' as const, color: '#d17b7b' },
-                  zIndex: 1995,
-                }), { ticket: level.ticket, field: 'sl' });
-              } catch { /* ignore */ }
-            }
-            if (typeof level.tp === 'number' && level.tp > 0) {
-              try {
-                keep(api.add('hline', {
-                  anchors: [{ time: now, price: level.tp }],
-                  style: { lineColor: '#63c08d', lineWidth: 1, lineStyle: 'dashed' },
-                  text: { value: `止盈 ${level.tp.toFixed(2)}`, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: 'bottom' as const, color: '#63c08d' },
-                  zIndex: 1995,
-                }), { ticket: level.ticket, field: 'tp' });
-              } catch { /* ignore */ }
-            }
+            draw(level.ticket, 'entry', level.entry, { color, label: `开仓 ${level.entry.toFixed(2)}`, dashed: false, zIndex: 1990, vAlign: 'bottom' });
+            if (typeof level.sl === 'number' && level.sl > 0) draw(level.ticket, 'sl', level.sl, { color: '#d17b7b', label: `止损 ${level.sl.toFixed(2)}`, dashed: true, zIndex: 1995, vAlign: 'top' });
+            if (typeof level.tp === 'number' && level.tp > 0) draw(level.ticket, 'tp', level.tp, { color: '#63c08d', label: `止盈 ${level.tp.toFixed(2)}`, dashed: true, zIndex: 1995, vAlign: 'bottom' });
           }
-          markIdsByCellRef.current.set(cell.id, ids);
+          // 已经平掉/移出视野的持仓：把它的线删掉。
+          const prefix = cell.id + '|';
+          for (const [key, id] of [...positionIdsRef.current]) {
+            if (!key.startsWith(prefix) || wanted.has(key)) continue;
+            if (present.has(id)) { try { api.remove(id); } catch { /* ignore */ } }
+            positionIdsRef.current.delete(key);
+            markIdsRef.current.delete(id);
+            levelMetaRef.current.delete(id);
+          }
         };
         const syncPositions = () => {
-          for (const cell of wsRef.current?.cells?.() ?? []) {
-            clearPositions(cell);
-            annotatePositions(cell);
-          }
+          for (const cell of wsRef.current?.cells?.() ?? []) annotatePositions(cell);
         };
         positionSyncRef.current = syncPositions;
 
