@@ -1807,11 +1807,6 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .review-notebook button:disabled { opacity: .45; cursor: default; }
 .notebook-toolbar > button, .notebook-library-form > button { padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); }
 .notebook-toolbar > button:hover:not(:disabled), .notebook-library-form > button:hover:not(:disabled) { background: var(--hover); border-color: var(--accent-line); }
-.notebook-empty p { margin: 8px 0 10px; color: var(--dim); font-size: 12px; line-height: 1.7; }
-.notebook-chapter-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-bottom: 12px; }
-.notebook-chapter-suggestions > span { color: var(--dim); font-size: 11px; }
-.notebook-chapter-suggestions > button { padding: 3px 7px; border: 1px dashed var(--line-strong); border-radius: 5px; background: transparent; color: var(--dim); }
-.notebook-chapter-suggestions > button:hover { background: var(--hover); color: var(--text); }
 .notebook-sections { display: flex; flex-direction: column; gap: 10px; }
 .notebook-section { min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; }
 .notebook-section.is-selected { border-color: var(--accent-line); }
@@ -1895,9 +1890,6 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-phrase-pin { flex: 0 0 auto; padding: 3px 4px 3px 6px; border: 0; background: transparent; color: var(--dim); font-size: 11px; line-height: 1; }
 .notebook-phrase-pin[aria-pressed='true'] { color: var(--warn-ink); }
 
-.notebook-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; padding: 6px 9px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--dim); font-size: 11px; }
-.notebook-hint > button { padding: 3px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--well); color: var(--text); font-size: 11px; }
-.notebook-hint > button.link { border: 0; background: transparent; color: var(--dim); padding: 3px 2px; }
 
 /* 公开模板库 */
 .notebook-public { margin: 6px 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); }
@@ -1931,33 +1923,24 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); color: var(--dim); font-size: 10px; }
 
 /* 全服章节词云 */
-.notebook-cloud { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px 10px; margin: 8px 0 4px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
-.notebook-cloud-item { display: inline-flex; align-items: baseline; gap: 3px; border: 0; background: transparent; color: var(--text); padding: 1px 2px; line-height: 1.25; }
-.notebook-cloud-item > small { color: var(--dim); font-size: 9px; }
-.notebook-cloud-item:hover:not(:disabled) { color: var(--accent-ink); }
-.notebook-cloud-item.is-used { color: var(--dim); text-decoration: line-through; opacity: .6; }
-
-/* 灵感：全服条目词云浮层 */
-.notebook-cloud-backdrop { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 24px; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); }
-.notebook-cloud-modal { display: flex; flex-direction: column; gap: 10px; width: min(900px, 94vw); max-height: min(78dvh, 720px); overflow: auto; padding: 16px 18px 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
-.notebook-cloud-modal-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
-.notebook-cloud-modal-head strong { font-size: 14px; }
-.notebook-cloud-modal-head span { color: var(--dim); font-size: 11px; line-height: 1.6; }
-.notebook-cloud-modal-head .link { margin-left: auto; border: 0; background: transparent; color: var(--dim); font-size: 16px; line-height: 1; }
-.notebook-cloud-tools { display: flex; gap: 8px; }
-.notebook-cloud-tools > input { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); font: inherit; font-size: 12px; }
-.notebook-cloud-tools > button { flex: 0 0 auto; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); font: inherit; font-size: 12px; }
-.notebook-cloud-lg { min-height: 120px; padding: 14px; }
-.notebook-cloud-lg .notebook-cloud-item { padding: 2px 4px; }
 
 /* 词云：居中、无边框、字号与颜色都有层次 */
-.notebook-cloud { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 14px; padding: 12px 6px; border: 0; background: transparent; line-height: 1.15; }
-.notebook-cloud-item { border: 0; background: transparent; padding: 1px 3px; line-height: 1.1; letter-spacing: .01em; }
-.notebook-cloud-item > small { margin-left: 4px; color: var(--dim); font-size: 9px; font-weight: 400; }
-.notebook-cloud-item:hover:not(:disabled) { opacity: .78; }
-.notebook-cloud-item.is-used { color: var(--dim) !important; text-decoration: line-through; opacity: .45; }
-.notebook-cloud-lg { gap: 10px 22px; padding: 22px 12px; min-height: 220px; }
-.notebook-cloud-lg .notebook-cloud-item { padding: 3px 6px; }
+.notebook-quick-dialog { box-sizing: border-box; width: min(580px, calc(100vw - 24px)); max-height: min(740px, calc(100dvh - 24px)); margin: auto; padding: 18px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+.notebook-quick-dialog::backdrop { background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); }
+.notebook-quick-dialog .notebook-library-head strong { font-size: 16px; }
+.notebook-quick-cloud { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.notebook-quick-cloud h5 { margin: 0; font-size: 12px; }
+.notebook-cloud { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; max-height: 220px; padding: 8px 0 0; overflow: auto; }
+.notebook-cloud-item { max-width: 100%; border: 1px solid transparent; border-radius: 5px; background: transparent; padding: 3px 5px; line-height: 1.2; overflow-wrap: anywhere; }
+.notebook-cloud-item > small { margin-right: 4px; color: var(--warn-ink); font-size: 10px; }
+.notebook-cloud-item:hover:not(:disabled), .notebook-cloud-item.is-picked { background: var(--hover); border-color: var(--accent-line); }
+.notebook-cloud-item:disabled { opacity: .45; }
+.notebook-quick-dialog .notebook-library-form > button { padding-inline: 10px; }
+.notebook-picked-chapter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.notebook-picked-chapter > strong { flex: 1 1 120px; font-size: 12px; overflow-wrap: anywhere; }
+.notebook-picked-chapter > button { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); font-size: 11px; }
+.notebook-quick-dialog > .notebook-library { margin-bottom: 0; }
+.notebook-quick-dialog > .notebook-library > summary { cursor: pointer; font-size: 12px; }
 
 /* 账户概况：放在右栏交易面板顶部，不再占用顶栏 */
 .account-summary { display: flex; align-items: center; gap: 14px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }

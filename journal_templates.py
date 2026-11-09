@@ -10,6 +10,7 @@ def initialize(db):
  CREATE INDEX IF NOT EXISTS journal_templates_owner ON journal_templates(person);
  CREATE TABLE IF NOT EXISTS journal_phrases(id TEXT PRIMARY KEY,person TEXT NOT NULL,text TEXT NOT NULL,uses INTEGER NOT NULL DEFAULT 0,last_used REAL NOT NULL DEFAULT 0,updated REAL NOT NULL,UNIQUE(person,text));
  CREATE INDEX IF NOT EXISTS journal_phrases_owner ON journal_phrases(person);
+ CREATE TABLE IF NOT EXISTS journal_chapter_favorites(person TEXT NOT NULL,title TEXT NOT NULL,chapter_group TEXT,created REAL NOT NULL,PRIMARY KEY(person,title));
 ''')
  for table,column,definition in (('journal_templates','phrases',"TEXT NOT NULL DEFAULT '[]'"),
                                  ('journal_templates','pinned','INTEGER NOT NULL DEFAULT 0'),
@@ -84,12 +85,30 @@ def library(db,person):
  # Each title counts once per meaningful trade note, not once per Save click.
  chapters={}
  for row in db.execute('SELECT s.sections,n.updated FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket WHERE s.person=?',(person,)):
-  titles={section['title'] for section in json.loads(row['sections']) if section.get('checked') or section.get('body','').strip()}
-  for title in titles:
-   entry=chapters.setdefault(title,{'title':title,'uses':0,'last_used':0})
+  titles={section['title']:section.get('group') for section in json.loads(row['sections']) if section.get('checked') or section.get('body','').strip()}
+  for title,group in titles.items():
+   if not title:continue
+   entry=chapters.setdefault(title,{'title':title,'uses':0,'last_used':0,'group':None})
+   if row['updated']>=entry['last_used']:entry['group']=group
    entry['uses']+=1;entry['last_used']=max(entry['last_used'],row['updated'])
+ favorites=[]
+ for row in db.execute('SELECT title,chapter_group FROM journal_chapter_favorites WHERE person=? ORDER BY created DESC,title',(person,)):
+  entry=chapters.pop(row['title'],{'title':row['title'],'uses':0,'last_used':0})
+  favorites.append({**entry,'group':row['chapter_group'],'favorite':True})
  ordered=sorted(chapters.values(),key=lambda item:(-item['uses'],-item['last_used'],item['title']))[:30]
- return {'templates':templates,'phrases':phrases,'chapters':ordered}
+ return {'templates':templates,'phrases':phrases,'chapters':favorites+ordered}
+
+def favorite_chapter(db,person,data):
+ title=data.get('title')
+ group=data.get('group')
+ if not isinstance(title,str) or not 1<=len(title.strip())<=80:raise JournalError('条目名称须为 1 至 80 字')
+ if group is not None and (not isinstance(group,str) or len(group.strip())>40):raise JournalError('分组名称最多 40 字')
+ title=title.strip()
+ db.execute('INSERT OR IGNORE INTO journal_chapter_favorites SELECT ?,?,?,? WHERE (SELECT count(*) FROM journal_chapter_favorites WHERE person=?)<100',
+            (person,title,(group or '').strip() or None,time.time(),person))
+ if not db.execute('SELECT 1 FROM journal_chapter_favorites WHERE person=? AND title=?',(person,title)).fetchone():
+  raise JournalError('最多收藏 100 个条目')
+ return {'ok':True}
 
 def save_template(db,person,data):
  name=data.get('name','')
@@ -141,6 +160,10 @@ def pin_item(db,person,data):
  return {'ok':True,'pinned':pinned}
 
 SYSTEM_CHAPTERS=[
+ {'title':'交易前的判断','group':None,'weight':3},
+ {'title':'入场依据','group':None,'weight':3},
+ {'title':'持仓过程','group':None,'weight':3},
+ {'title':'结果与改进','group':None,'weight':3},
  {'title':'大周期方向','group':'方向判断','weight':5},
  {'title':'扫流动性（扫低/扫高）','group':'结构','weight':5},
  {'title':'结构突破（BOS）','group':'结构','weight':4},

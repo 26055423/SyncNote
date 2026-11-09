@@ -1013,6 +1013,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'ok':True})
                     if path=='/api/journal':result=journal.save(db,uid,data)
                     elif path=='/api/journal/templates':result=journal.journal_templates.save_template(db,uid,data)
+                    elif path=='/api/journal/chapters/favorite':result=journal.journal_templates.favorite_chapter(db,uid,data)
                     elif path=='/api/journal/phrases':result=journal.journal_templates.save_phrase(db,uid,data)
                     elif path=='/api/journal/phrases/pin':result=journal.journal_templates.pin_phrase(db,uid,data)
                     elif path=='/api/journal/templates/pin':result=journal.journal_templates.pin_item(db,uid,data)

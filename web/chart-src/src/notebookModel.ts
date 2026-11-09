@@ -28,7 +28,7 @@ export interface NotebookPhrase { id: string | number; text: string; uses: numbe
 export interface NotebookLibrary {
   templates: NotebookTemplate[];
   phrases: NotebookPhrase[];
-  chapters: Array<{ title: string; uses: number; last_used: number }>;
+  chapters: Array<{ title: string; uses: number; last_used: number; group?: string | null; favorite?: boolean }>;
 }
 
 export interface PublicChapter {
@@ -43,7 +43,6 @@ export interface PublicChapter {
 }
 
 export const SYSTEM_PHRASES = ['扫了低点', '扫了高点', '拿了 IDM', 'FVG 被缓解', '触及 POI', '出现 Flip', '突破后回踩', '等待确认'];
-export const STARTER_CHAPTERS = ['交易前的判断', '入场依据', '持仓过程', '结果与改进'];
 
 export const VERDICTS: Array<{ id: Verdict; label: string }> = [
   { id: 'yes', label: '符合' },

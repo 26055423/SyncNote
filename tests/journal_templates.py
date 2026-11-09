@@ -45,6 +45,18 @@ class JournalTemplates(unittest.TestCase):
   self.assertEqual(library.library(self.db,'alice')['chapters'][0]['uses'],2)
   self.assertEqual(library.library(self.db,'bob')['chapters'],[])
 
+ def test_chapter_favorite_is_private_and_merges_with_used_titles(self):
+  title='我收藏的条目'
+  library.favorite_chapter(self.db,'alice',{'title':' '+title+' ','group':'结构'})
+  library.favorite_chapter(self.db,'alice',{'title':title,'group':'别的分组'})
+  self.assertEqual(library.library(self.db,'alice')['chapters'],[
+   {'title':title,'group':'结构','favorite':True,'uses':0,'last_used':0}])
+  self.assertEqual(library.library(self.db,'bob')['chapters'],[])
+  self.assertNotIn(title,[row['title'] for row in library.public_chapters(self.db)['chapters']])
+  self.note(sections=[self.section(title,checked=True)])
+  rows=library.library(self.db,'alice')['chapters']
+  self.assertEqual([(row['title'],row['favorite'],row['uses']) for row in rows],[(title,True,1)])
+
  def test_templates_strip_trade_content_and_checks_but_keep_custom_order(self):
   created=library.save_template(self.db,'alice',{'name':'我的开单前五问','sections':[self.section('先问自己',body='私人交易细节',checked=True),self.section('再看位置',id='b')]})['template']
   self.assertEqual([row['title'] for row in created['sections']],['先问自己','再看位置'])

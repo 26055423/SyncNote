@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { api } from './api';
 import {
   appendChecklist, appendPhrase, appendTemplate, checklistProgress, frequentFirst, MAX_SECTIONS, moveSection,
-  newSection, STARTER_CHAPTERS, summarizeNote, SYSTEM_PHRASES, templateStructure, VERDICTS,
+  newSection, summarizeNote, SYSTEM_PHRASES, templateStructure, VERDICTS,
   type NotebookLibrary, type NotebookValue, type NoteSection, type PublicChapter, type Verdict,
 } from './notebookModel';
 export type { NotebookValue, NoteSection } from './notebookModel';
@@ -53,7 +52,11 @@ const verdictLabel = (verdict?: Verdict | null) => VERDICTS.find(v => v.id === v
 /** User-owned chapters and reusable structures; no trading-system taxonomy. */
 export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }: Props) {
   const [library, setLibrary] = useState<NotebookLibrary>(EMPTY_LIBRARY);
-  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [libraryExpanded, setLibraryExpanded] = useState(false);
+  const [chapterDraft, setChapterDraft] = useState('');
+  const [pickedChapter, setPickedChapter] = useState<PublicChapter | null>(null);
+  const quickDialog = useRef<HTMLDialogElement>(null);
   const [selected, setSelected] = useState<string | null>(value.sections[0]?.id ?? null);
   const [templateName, setTemplateName] = useState('');
   const [templatePhrases, setTemplatePhrases] = useState<string[]>([]);
@@ -69,10 +72,10 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeTemplate, setActiveTemplate] = useState<{ name: string; phrases: string[] } | null>(null);
   const [selection, setSelection] = useState<{ id: string; text: string } | null>(null);
-  const [templateHintOff, setTemplateHintOff] = useState(false);
   const [cloud, setCloud] = useState<PublicChapter[]>([]);
   const [cloudQuery, setCloudQuery] = useState('');
   const [cloudLoading, setCloudLoading] = useState(false);
+  const [cloudError, setCloudError] = useState('');
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<DrawingCandidate[]>([]);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -87,7 +90,6 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     mounted.current = true;
     if (!readOnly) {
       setLoading(true);
-      void loadCloud();
       void api<NotebookLibrary>('/api/journal/library').then(result => {
         if (mounted.current) setLibrary({ ...EMPTY_LIBRARY, ...result });
       }).catch(failure => {
@@ -115,6 +117,10 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
 
   const active = value.sections.find(section => section.id === selected) ?? value.sections[0];
   const progress = checklistProgress(value.sections);
+  const closeQuickAdd = () => {
+    quickDialog.current?.close();
+    setQuickOpen(false);
+  };
   const updateSection = (id: string, patch: Partial<NoteSection>) => {
     onChange({ ...value, sections: value.sections.map(section => section.id === id ? { ...section, ...patch } : section) });
   };
@@ -169,6 +175,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     }
     if (body.length > 3000) { setError('这一条已接近 3000 字，无法继续插入。'); return; }
     updateSection(goal.id, { body });
+    closeQuickAdd();
     carets.current.set(goal.id, { start: position, end: position });
     setError(''); setMessage(`已插入「${goal.title.trim() || '未命名条目'}」`);
     window.requestAnimationFrame(() => {
@@ -194,21 +201,33 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   });
   const loadCloud = async () => {
     setCloudLoading(true);
+    setCloudError('');
     try {
       const result = await api<{ chapters: PublicChapter[] }>('/api/journal/chapters?limit=60');
       if (mounted.current) setCloud(result.chapters ?? []);
     } catch {
-      if (mounted.current) setCloud([]);
+      if (mounted.current) setCloudError('暂时无法读取灵感，点击重试。');
     } finally {
       if (mounted.current) setCloudLoading(false);
     }
   };
   useEffect(() => {
-    if (!inspirationOpen) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setInspirationOpen(false); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [inspirationOpen]);
+    if (quickOpen && !quickDialog.current?.open) quickDialog.current?.showModal();
+  }, [quickOpen]);
+  const openQuickAdd = () => {
+    setLibraryExpanded(false);
+    setInspirationOpen(false);
+    setPickedChapter(null);
+    setCloudQuery('');
+    setChapterDraft('');
+    setError('');
+    setMessage('');
+    setQuickOpen(true);
+  };
+  const addFromCloud = (title: string, group?: string | null) => {
+    addChapter(title, group);
+    closeQuickAdd();
+  };
 
   const openSummary = () => {
     setSummaryOpen(true);
@@ -222,36 +241,29 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     for (const char of title) sum += char.codePointAt(0) ?? 0;
     return CLOUD_INKS[sum % CLOUD_INKS.length];
   };
-  const cloudRows = () => {
-    const keyword = cloudQuery.trim();
-    return keyword ? cloud.filter(item => item.title.includes(keyword)) : cloud;
-  };
-  /** 字号：真实条目按人数开方放大，预置术语按人工权重，保证有层次。 */
-  const renderCloud = (rows: PublicChapter[], big: boolean) => {
-    const real = rows.filter(item => !item.system);
-    const maxUsers = Math.max(1, ...real.map(item => item.users));
-    return <div className={`notebook-cloud${big ? ' notebook-cloud-lg' : ''}`}>
+  const keyword = cloudQuery.trim().toLocaleLowerCase();
+  const cloudRows = cloud.filter(item => item.title.toLocaleLowerCase().includes(keyword));
+  const chapterExists = (title: string) => value.sections.some(section => section.title.trim() === title);
+  const full = value.sections.length >= MAX_SECTIONS;
+  const renderCloud = (rows: Array<{ title: string; uses: number; group?: string | null; users?: number; weight?: number; favorite?: boolean }>, publicCloud: boolean) => {
+    const maxWeight = Math.max(1, ...rows.map(item => item.users ?? item.uses));
+    return <div className="notebook-cloud">
       {rows.map(item => {
-        const exists = value.sections.some(section => section.title.trim() === item.title);
-        const size = item.system
-          ? (big ? 10 + (item.weight ?? 3) * 6.8 : 11 + (item.weight ?? 3) * 3.2)
-          : (big ? 16 + 30 * Math.sqrt(item.users / maxUsers) : 14 + 18 * Math.sqrt(item.users / maxUsers));
-        const weight = size >= 34 ? 700 : size >= 24 ? 600 : 500;
-        let wobble = 0;
-        if (big) {
-          let sum = 0;
-          for (const char of item.title) sum += char.codePointAt(0) ?? 0;
-          wobble = ((sum % 7) - 3) * 1.6;
-        }
+        const size = item.weight ? 14 + item.weight * 2 : 14 + 13 * Math.sqrt((item.users ?? item.uses) / maxWeight);
+        const chosen = publicCloud && pickedChapter?.title === item.title;
         return <button
           type="button"
           key={item.title}
-          className={`notebook-cloud-item${exists ? ' is-used' : ''}`}
-          style={{ fontSize: `${size.toFixed(1)}px`, color: inkOf(item.title), fontWeight: weight, transform: wobble ? `translateY(${wobble.toFixed(1)}px)` : undefined }}
-          title={item.system ? `系统推荐条目${item.group ? ` · 常归在「${item.group}」` : ''}` : `${item.users} 人用过 · 共 ${item.uses} 笔${item.group ? ` · 常归在「${item.group}」` : ''}`}
-          disabled={exists || value.sections.length >= MAX_SECTIONS}
-          onClick={() => addChapter(item.title, item.group)}
-        >{item.title}{item.system ? null : <small>{item.users}</small>}</button>;
+          className={`notebook-cloud-item${chosen ? ' is-picked' : ''}`}
+          style={{ fontSize: `${size}px`, color: inkOf(item.title) }}
+          aria-pressed={publicCloud ? chosen : undefined}
+          title={item.group ? `分组：${item.group}` : undefined}
+          disabled={!publicCloud && (full || chapterExists(item.title))}
+          onClick={() => {
+            if (!publicCloud) { addFromCloud(item.title, item.group); return; }
+            setPickedChapter(cloud.find(chapter => chapter.title === item.title) ?? null);
+          }}
+        >{item.favorite && <small aria-hidden="true">★</small>}{item.title}</button>;
       })}
     </div>;
   };
@@ -274,21 +286,16 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     setPickerFor(null);
     setMessage('已关联图表证据，悬停可高亮原图。');
   };
-  const structureKey = (rows: NoteSection[]) => rows.map(row => `${row.group || ''}/${row.title}`).join('|');
   const applyTemplate = (template: { id: string | number; name: string; sections: NoteSection[]; phrases?: string[] }) => {
     if (!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS) return;
     const sections = appendTemplate(value.sections, template);
     onChange({ ...value, sections });
     setSelected(sections[value.sections.length]?.id ?? null);
     setActiveTemplate({ name: template.name, phrases: template.phrases ?? [] });
+    closeQuickAdd();
     setMessage(`已添加「${template.name}」的条目，原有内容已保留。`);
     void api('/api/journal/library/use', { template_id: template.id }).then(refresh).catch(() => {});
   };
-  const topTemplate = frequentFirst(library.templates)[0];
-  const structureMatches = library.templates.some(template => structureKey(template.sections) === structureKey(templateStructure(value.sections)));
-  const suggestTemplate = !readOnly && value.sections.length >= 3 && !structureMatches && !templateHintOff;
-  const chapterChoices = frequentFirst(library.chapters).map(row => row.title).concat(STARTER_CHAPTERS)
-    .filter((title, index, all) => all.indexOf(title) === index && !value.sections.some(section => section.title.trim() === title)).slice(0, 4);
 
   const renderSection = (section: NoteSection, index: number) => {
     const verdict = section.verdict ?? null;
@@ -365,7 +372,12 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
           </div>}
 
           <div className="notebook-section-foot">
-            <button type="button" className="link" onClick={() => { setSelected(section.id); setLibraryOpen(true); }}>插入常用语</button>
+            <button type="button" className="link" onClick={() => {
+              setSelected(section.id);
+              lastFocused.current = section.id;
+              openQuickAdd();
+              setLibraryExpanded(true);
+            }}>插入常用语</button>
             <div className="notebook-foot-right">
               <button type="button" className="link" disabled={!picked.trim() || busy} title="把选中文字存成常用语" onClick={() => savePhrase(picked)}>存选中为常用语</button>
               <button type="button" className="link" title="最多保存 500 字" disabled={!section.body.trim() || section.body.trim().length > 500 || busy} onClick={() => savePhrase(section.body)}>存为常用语</button>
@@ -384,34 +396,9 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     {activeTemplate && <div className="notebook-active-template"><span>模板：{activeTemplate.name}</span><button type="button" onClick={() => setActiveTemplate(null)}>清除</button></div>}
     {!readOnly && <>
       <div className="notebook-toolbar">
-        <button type="button" onClick={() => addChapter()} disabled={value.sections.length >= MAX_SECTIONS}>＋ 添加条目</button>
-        {progress.total === 0 && <button type="button" title="加入一套可删改的通用检查项" disabled={value.sections.length >= MAX_SECTIONS} onClick={() => {
-          const next = appendChecklist(value.sections);
-          onChange({ ...value, sections: next });
-          setSelected(next[value.sections.length]?.id ?? null);
-          setMessage('已加入通用清单，可以改名、删项或拖动排序。');
-        }}>＋ 通用清单</button>}
-        <button type="button" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(!libraryOpen)}>我的模板与常用语</button>
+        <button type="button" aria-haspopup="dialog" onClick={openQuickAdd}>＋ 快捷添加</button>
         <button type="button" aria-expanded={summaryOpen} onClick={() => (summaryOpen ? setSummaryOpen(false) : openSummary())}>复盘摘要</button>
-        <button type="button" aria-expanded={inspirationOpen} onClick={() => { setInspirationOpen(true); void loadCloud(); }}>灵感</button>
       </div>
-      {!value.sections.length && <div className="notebook-empty"><p>标题、顺序和内容都由你决定。可以从空白开始，也可以加一套通用清单再改。</p></div>}
-      {!value.sections.length && topTemplate && <div className="notebook-hint">
-        <span>上次用的是「{topTemplate.name}」（{topTemplate.sections.length} 条）</span>
-        <button type="button" onClick={() => applyTemplate(topTemplate)}>套用</button>
-      </div>}
-      {suggestTemplate && <div className="notebook-hint">
-        <span>这套结构以后还会用吗？</span>
-        <button type="button" onClick={() => {
-          setLibraryOpen(true);
-          setTemplateName(`我的第 ${library.templates.length + 1} 套`);
-          setTemplatePhrases([]);
-        }}>存为模板</button>
-        <button type="button" className="link" onClick={() => setTemplateHintOff(true)}>不用</button>
-      </div>}
-      {!!chapterChoices.length && value.sections.length < MAX_SECTIONS && <div className="notebook-chapter-suggestions" aria-label="推荐条目">
-        <span>快捷添加</span>{chapterChoices.map(title => <button type="button" key={title} onClick={() => addChapter(title)}>{title}</button>)}
-      </div>}
     </>}
 
     <div className="notebook-blocks">
@@ -437,11 +424,65 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       onChange({ ...value, sections }); setRemoved(null);
     }}>撤销移除</button></div>}
 
-    {!readOnly && libraryOpen && <div className="notebook-library">
-      <div className="notebook-library-head"><strong>我的模板与常用语</strong><button type="button" aria-label="收起模板与常用语" onClick={() => setLibraryOpen(false)}>×</button></div>
-      <p className="notebook-library-hint">仅自己可见。按使用频率优先推荐，原有条目顺序由你决定。</p>
-      {loading && <p className="notebook-library-hint">正在读取个人词库…</p>}
+    {!readOnly && quickOpen && <dialog ref={quickDialog} className="notebook-quick-dialog" aria-labelledby="sn-quick-title"
+      onClose={() => setQuickOpen(false)} onClick={event => {
+        if (event.target !== event.currentTarget) return;
+        const { left, top, right, bottom } = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) closeQuickAdd();
+      }}>
+      <div className="notebook-library-head">
+        <strong id="sn-quick-title">快捷添加</strong>
+        <button type="button" aria-label="关闭快捷添加" onClick={closeQuickAdd}>×</button>
+      </div>
+      <section className="notebook-quick-cloud" aria-label="我的词云">
+        <h5>我的词云</h5>
+        {library.chapters.length ? renderCloud(library.chapters, false) : <p className="notebook-library-hint">
+          {loading ? '正在读取个人词云…' : '常用条目和收藏会出现在这里。'}
+        </p>}
+      </section>
+      <form className="notebook-library-form notebook-chapter-form" onSubmit={event => {
+        event.preventDefault();
+        const title = chapterDraft.trim();
+        if (title && !full && !chapterExists(title)) addFromCloud(title);
+      }}>
+        <input autoFocus={!libraryExpanded} aria-label="条目名称" maxLength={80} placeholder="输入条目名称" value={chapterDraft} onChange={event => setChapterDraft(event.target.value)}/>
+        <button type="submit" disabled={full || !chapterDraft.trim() || chapterExists(chapterDraft.trim())}>添加</button>
+        <button type="button" aria-expanded={inspirationOpen} aria-controls="sn-public-cloud" onClick={() => {
+          if (!inspirationOpen && (!cloud.length || cloudError) && !cloudLoading) void loadCloud();
+          setInspirationOpen(!inspirationOpen);
+        }}>灵感</button>
+      </form>
+      {full && <p className="notebook-library-hint">这笔复盘已达 {MAX_SECTIONS} 个条目。</p>}
+      {inspirationOpen && <section className="notebook-quick-cloud notebook-public-cloud" id="sn-public-cloud" aria-label="公共词云">
+        <h5>公共词云</h5>
+        <div className="notebook-library-form">
+          <input aria-label="筛选灵感条目" maxLength={80} placeholder="筛选条目名" value={cloudQuery} onChange={event => { setCloudQuery(event.target.value); setPickedChapter(null); }}/>
+          {cloudError && <button type="button" disabled={cloudLoading} onClick={() => void loadCloud()}>重试</button>}
+        </div>
+        {cloudRows.length ? renderCloud(cloudRows, true) : <p className="notebook-library-hint">
+          {cloudLoading ? '正在读取灵感…' : cloudError || (keyword ? '没有匹配的条目。' : '暂无公共条目。')}
+        </p>}
+        {pickedChapter && <div className="notebook-picked-chapter">
+          <strong>{pickedChapter.title}</strong>
+          <button type="button" disabled={busy || loading || library.chapters.some(row => row.title === pickedChapter.title && row.favorite)} onClick={() => void run(async () => {
+            await api('/api/journal/chapters/favorite', { title: pickedChapter.title, group: pickedChapter.group });
+            await refresh();
+            if (mounted.current) setMessage('已收藏到我的词云');
+          })}>{library.chapters.some(row => row.title === pickedChapter.title && row.favorite) ? '已收藏' : '收藏'}</button>
+          <button type="button" disabled={full || chapterExists(pickedChapter.title)} onClick={() => addFromCloud(pickedChapter.title, pickedChapter.group)}>添加到复盘</button>
+        </div>}
+      </section>}
+      {message && <p className="notebook-feedback" role="status">{message}</p>}
+      {error && <p className="notebook-error" role="alert">{error}</p>}
+      <details className="notebook-library" open={libraryExpanded} onToggle={event => setLibraryExpanded(event.currentTarget.open)}>
+      <summary>模板与常用语</summary>
       <h5>条目组合</h5>
+      {progress.total === 0 && <button type="button" className="tool-btn" disabled={full} onClick={() => {
+        const next = appendChecklist(value.sections);
+        onChange({ ...value, sections: next });
+        setSelected(next[value.sections.length]?.id ?? null);
+        closeQuickAdd();
+      }}>添加通用清单</button>}
       {frequentFirst(library.templates).map(template => <div className="notebook-template" key={template.id}><div className="notebook-library-item">
         <button type="button" title={`添加 ${template.sections.length} 个条目；保留已有内容`} disabled={!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS || busy} onClick={() => applyTemplate(template)}><span>{template.pinned ? '★ ' : ''}{template.name}</span><small>{template.sections.length} 条{(template.phrases ?? []).length ? ` · ${(template.phrases ?? []).length} 条用语` : ''} · 用过 {template.uses} 次</small></button>
         <button type="button" className="notebook-library-remove" aria-pressed={Boolean(template.pinned)} title={template.pinned ? '取消固定' : '固定到前面'} aria-label={`固定模板 ${template.name}`} disabled={busy} onClick={() => void run(async () => {
@@ -468,22 +509,10 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         })}>用当前条目更新此模板</button>
       </div>}</div>)}
       {!library.templates.length && <p className="notebook-library-hint">保存自己的条目组合，下次可以一键添加。</p>}
-      <h5>全服常用条目</h5>
-      <p className="notebook-library-hint">按使用人数排的真实条目名，点一下加进自己的清单；只统计标题与人数，不含任何人的笔记内容。</p>
-      <div className="notebook-library-form">
-        <input aria-label="筛选条目" maxLength={40} placeholder="筛选条目名" value={cloudQuery} onChange={event => setCloudQuery(event.target.value)}/>
-        <button type="button" disabled={cloudLoading} onClick={() => void loadCloud()}>{cloudLoading ? '读取中…' : '刷新'}</button>
-      </div>
-      {(() => {
-        const rows = cloudRows();
-        if (!rows.length) return <p className="notebook-library-hint">{cloudLoading ? '正在读取…' : cloudQuery.trim() ? '没有匹配的条目。' : '还没有足够的复盘数据。'}</p>;
-        return renderCloud(rows, false);
-      })()}
-
       <div className="notebook-library-form"><input aria-label="模板名称" maxLength={80} placeholder="给这套条目起个名字" value={templateName} onChange={event => setTemplateName(event.target.value)}/>
         <button type="button" disabled={busy || !templateName.trim() || !templateStructure(value.sections).length} onClick={() => void run(async () => {
           await api('/api/journal/templates', { name: templateName.trim(), sections: templateStructure(value.sections), phrases: templatePhrases });
-          await refresh(); setTemplateName(''); setTemplatePhrases([]); setTemplateHintOff(false); setMessage('条目结构已存为模板，不含本次交易文字与勾选。');
+          await refresh(); setTemplateName(''); setTemplatePhrases([]); setMessage('条目结构已存为模板，不含本次交易文字与勾选。');
         })}>保存组合</button></div>
       <p className="notebook-library-hint">只保存条目标题、分组和顺序，复盘内容仍属于这笔交易。</p>
 
@@ -504,7 +533,8 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       <div className="notebook-phrases" aria-label="系统常用语">{SYSTEM_PHRASES.map(text => <button type="button" key={text} disabled={!active} onClick={() => insertPhrase(text)}>{text}</button>)}</div>
       <div className="notebook-library-form"><input aria-label="新常用语" maxLength={500} placeholder="写一句自己的常用语" value={phraseText} onChange={event => setPhraseText(event.target.value)}/>
         <button type="button" disabled={busy || !phraseText.trim()} onClick={() => savePhrase(phraseText)}>保存</button></div>
-    </div>}
+      </details>
+    </dialog>}
 
     {summaryOpen && <div className="notebook-summary">
       <div className="notebook-summary-head">
@@ -526,27 +556,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       </div>}
     </div>}
 
-    {inspirationOpen && createPortal(<div className="notebook-cloud-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setInspirationOpen(false); }}>
-      <div className="notebook-cloud-modal" role="dialog" aria-modal="true" aria-labelledby="sn-inspiration-title">
-        <div className="notebook-cloud-modal-head">
-          <strong id="sn-inspiration-title">灵感 · 全服常用条目</strong>
-          <span>按使用人数排的真实条目名，点一下加进这笔复盘；只有标题和人数，没有别人的内容。</span>
-          <button type="button" className="link" aria-label="关闭灵感" onClick={() => setInspirationOpen(false)}>×</button>
-        </div>
-        <div className="notebook-cloud-tools">
-          <input aria-label="筛选灵感条目" maxLength={40} placeholder="筛选条目名" value={cloudQuery} onChange={event => setCloudQuery(event.target.value)}/>
-          <button type="button" disabled={cloudLoading} onClick={() => void loadCloud()}>{cloudLoading ? '读取中…' : '刷新'}</button>
-        </div>
-        {(() => {
-          const rows = cloudRows();
-          if (!rows.length) return <p className="notebook-library-hint">{cloudLoading ? '正在读取…' : cloudQuery.trim() ? '没有匹配的条目。' : '还没有足够的复盘数据。等大家写过条目，这里会长出来。'}</p>;
-          return renderCloud(rows, true);
-        })()}
-        <p className="notebook-library-hint">点条目会直接追加到这笔复盘，可再改名字或写内容。</p>
-      </div>
-    </div>, document.body)}
-
     <div className="notebook-free"><label htmlFor="note-body">自由笔记</label>{readOnly ? <p className="notebook-section-content">{value.body || '暂无自由笔记'}</p> : <textarea id="note-body" value={value.body} maxLength={10000} placeholder="其他想法可以写在这里，原来的笔记也保留在这里。" onChange={event => onChange({ ...value, body: event.target.value })}/>}</div>
-    {!readOnly && <><p className="notebook-feedback" role="status">{message}</p>{error && <p className="notebook-error" role="alert">{error}</p>}</>}
+    {!readOnly && !quickOpen && <><p className="notebook-feedback" role="status">{message}</p>{error && <p className="notebook-error" role="alert">{error}</p>}</>}
   </div>;
 }
