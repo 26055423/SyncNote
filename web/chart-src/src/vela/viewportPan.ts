@@ -27,8 +27,18 @@ function panFraction(chart: PanChart, fraction: number): void {
 }
 
 export function centerChartOnTime(chart: PanChart, at: number): boolean {
-  const range = chart.getVisibleRange();
-  return Boolean(range && panChartByTime(chart, at - (range.from + range.to) / 2));
+  // 一次 panBy 在远距离跳转时容易被数据边界钳住，迭代几次收敛到目标附近。
+  for (let i = 0; i < 8; i += 1) {
+    const range = chart.getVisibleRange();
+    if (!range || !(range.to > range.from)) return false;
+    const span = range.to - range.from;
+    const delta = at - (range.from + range.to) / 2;
+    if (Math.abs(delta) <= span * 0.02) return true;
+    if (!panChartByTime(chart, delta)) return false;
+    const next = chart.getVisibleRange();
+    if (!next || Math.abs(next.from - range.from) < 1) return true;
+  }
+  return true;
 }
 
 /** Data reloads keep native bar spacing; restore the left anchor without fitting a range. */

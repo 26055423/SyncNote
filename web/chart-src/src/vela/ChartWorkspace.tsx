@@ -294,11 +294,13 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     viewport: timeSyncRef.current,
     crosshair: crosshairSyncRef.current,
   });
-  /** 把除 exceptId 之外的格子平移到 at 附近，保持实际蜡烛宽度。 */
+  /** 点击同步：只有「当前视野里看不到这个时间」的格子才跳过去；已经能看到的不动。 */
   const jumpAllTo = (at: number | null, exceptId?: string) => {
     if (at == null) return;
     for (const cell of wsRef.current?.cells?.() ?? []) {
       if (exceptId && cell.id === exceptId) continue;
+      const range = cell.chart?.getVisibleRange?.();
+      if (range && Number.isFinite(range.from) && Number.isFinite(range.to) && at >= range.from && at <= range.to) continue;
       programmaticUntilRef.current.set(cell.id, Date.now() + 250);
       try { centerChartOnTime(cell.chart, at); } catch { /* ignore */ }
     }
