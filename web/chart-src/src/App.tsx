@@ -198,7 +198,6 @@ export default function App() {
     }
   };
   const [mode, setMode] = useState<'review' | 'live'>(() => initialReview ? 'review' : 'live');
-  const [marketReviewVisit, setMarketReviewVisit] = useState(0);
   const tradeReview = mode === 'review' && (target !== null || shareId !== null);
   const marketView = !tradeReview;
   const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
@@ -268,7 +267,7 @@ export default function App() {
   const chooseSymbol = async (symbol: string) => {
     if (localConnected) await localTerminal.selectSymbol(symbol);
     else setStoredSymbol(symbol);
-    switchMode('live');
+    showLatestChart();
     setError('');
   };
   const liveProvider = useMemo(
@@ -801,24 +800,11 @@ export default function App() {
 
   const confirmLeaveNote = () => !noteDirty() || window.confirm('这笔交易的笔记还没保存，确定要离开吗？');
 
-  const switchMode = (next: 'review' | 'live') => {
-    if (next === 'review') {
-      if (!confirmLeaveNote()) return;
-      if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
-      chartRef.current?.flush();
-      setTarget(null);
-      setShareId(null);
-      setEntry(null);
-      setShareRequest(null);
-      setMarketReviewVisit(visit => visit + 1);
-      setTab('review');
-      setRailOpen(true);
-      refreshTrackRef.current?.();
-    }
-    setMode(next);
+  const showLatestChart = () => {
+    setMode('live');
     const qs = new URLSearchParams(location.search);
     for (const key of ['share', 'person', 'ticket', 't']) qs.delete(key);
-    qs.set('view', next);
+    qs.set('view', 'live');
     history.replaceState(null, '', '/chart?' + qs.toString());
   };
 
@@ -1442,9 +1428,10 @@ export default function App() {
             }}
           />
           <span className="toolbar-separator" aria-hidden="true" />
-          <span className="mode-switch" role="group" aria-label="图表视图">
-            <button type="button" className={`tool-btn ${mode === 'review' && !replayActive ? (tradeReview ? 'review-view-chip' : 'is-active') : ''}`.trim()} aria-pressed={mode === 'review' && !replayActive} disabled={replayActive} title="从最新可读 K 线开始复盘" onClick={() => switchMode('review')}>复盘</button>
-            <button type="button" className={`tool-btn ${mode === 'live' && !replayActive ? 'is-active' : ''}`.trim()} aria-pressed={mode === 'live' && !replayActive} disabled={replayActive} onClick={() => switchMode('live')}><ToolbarIcon name="live" />行情</button>
+          <span className="chart-view-actions" role="group" aria-label="图表视图">
+            {tradeReview && !replayActive ? (
+              <button type="button" className="tool-btn" onClick={showLatestChart}><ToolbarIcon name="live" />回到最新</button>
+            ) : null}
             <button
               type="button"
               className={`tool-btn ${replayActive ? 'is-active' : ''}`.trim()}
@@ -1572,7 +1559,7 @@ export default function App() {
             ) : null}
             {marketView && liveSeries ? (
               <ChartWorkspace
-                key={`${mode}:${mode === 'review' ? marketReviewVisit : 0}:${cacheScope}:${liveTrack}`}
+                key={`market:${cacheScope}:${liveTrack}`}
                 ref={chartRef}
                 toolbarHost={nativeToolbarHost}
                 loadIndicatorMinutes={loadIndicatorMinutes}
@@ -1724,7 +1711,6 @@ export default function App() {
                     onClick={() => {
                       const same = tab === key && railOpen;
                       if (same) { setRailOpen(false); return; }
-                      if (key === 'review' && mode !== 'review') { switchMode('review'); return; }
                       setTab(key);
                       setRailOpen(true);
                     }}
