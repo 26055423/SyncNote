@@ -1333,15 +1333,6 @@ export default function App() {
         </a>
         <div className="status-row" title={reviewingOther ? '正在复盘的是别人的交易；账户数字已隐藏，避免和对方混淆' : '我的账户'}>
           <SymbolPicker symbol={mode === 'live' ? liveSymbol : trade.symbol || 'XAUUSD'} symbols={symbolOptions} loading={symbolsLoading} disabled={local.symbol_switching} error={symbolsError} contextNote={mode === 'review' ? '选择品种后打开行情，当前复盘记录保留。' : !localConnected && !catalogAvailable ? '当前仅列出已有行情；更新并运行 SyncNote 1.015 后可同步券商品种目录。' : undefined} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} />
-          {/* 没有任何账户数据源时不显示净值/余额，避免把云端旧快照当成本机状态。 */}
-          {reviewingOther || !(localConnected || mt5Online) ? null : (
-            <>
-              <span className="sep account-stat" aria-hidden="true" />
-              <span className="stat account-stat"><span className="stat-k">净值</span><b className="stat-v">{money(displayedAccount?.equity)}</b></span>
-              <span className="stat account-stat"><span className="stat-k">余额</span><b className="stat-v">{money(displayedAccount?.balance)}</b></span>
-              <span className="stat account-stat"><span className="stat-k">浮盈</span><b className={floating >= 0 ? 'stat-v up' : 'stat-v down'}>{money(floating)}</b></span>
-            </>
-          )}
         </div>
         <div
           className="chart-toolbar unified-chart-tools"
@@ -1619,6 +1610,11 @@ export default function App() {
         <div className="rail-body">
               {tab === 'trade' ? (
                 <div className="pane">
+                  {!reviewingOther && (localConnected || mt5Online) ? <div className="account-summary" aria-label="账户概况">
+                    <span><span className="stat-k">净值</span><b>{money(displayedAccount?.equity)}</b></span>
+                    <span><span className="stat-k">余额</span><b>{money(displayedAccount?.balance)}</b></span>
+                    <span><span className="stat-k">浮盈</span><b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b></span>
+                  </div> : null}
                   <LocalTradePanel key={`${local.server}:${local.account_id}:${local.symbol}`} state={local} />
                   {mode === 'live' && liveSeries && chartSyncReady ? <MarketRangeSync key={syncScope} symbol={liveSymbol} transport={localConnected ? 'synctrade' : 'syncnote'} getLocalContext={getLocalSyncContext} onStartLocal={() => localRangeSync.start()} onStopLocal={() => localRangeSync.stop('区间任务已取消。')} localStatus={rangeSync} onJobChange={receiveSyncJob} onViewBars={viewPartialBars} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}

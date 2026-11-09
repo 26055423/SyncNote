@@ -1958,3 +1958,11 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-cloud-item.is-used { color: var(--dim) !important; text-decoration: line-through; opacity: .45; }
 .notebook-cloud-lg { gap: 10px 22px; padding: 22px 12px; min-height: 220px; }
 .notebook-cloud-lg .notebook-cloud-item { padding: 3px 6px; }
+
+/* 账户概况：放在右栏交易面板顶部，不再占用顶栏 */
+.account-summary { display: flex; align-items: center; gap: 14px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.account-summary > span { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
+.account-summary .stat-k { color: var(--dim); font-size: 10px; }
+.account-summary b { font-size: 12px; font-variant-numeric: tabular-nums; }
+.account-summary b.up { color: var(--good-ink); }
+.account-summary b.down { color: var(--bad-ink); }
