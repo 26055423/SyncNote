@@ -1,7 +1,7 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.020"
+#property version "1.021"
 #property description "Read-only history, review charts and shared K-line track backfill. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 
@@ -18,9 +18,9 @@ input int PanelFontSize=14;   // 状态面板正文字号，10~24；配对码使
 CSyncNoteHistory g_snh;
 string g_sn_origin="",g_sn_account="",g_sn_server="",g_sn_key="",g_sn_state_path="",g_sn_binding_path="",g_sn_sync_scope="";
 string g_sn_cursor="",g_sn_pending="",g_sn_batch="";
-long g_sn_from=0,g_sn_to=0,g_sn_completed=0,g_sn_last_full=0;
-bool g_sn_full_run=false,g_sn_paused=false;
-ulong g_sn_next_upload=0,g_sn_retry_after=0,g_sn_last_paint=0;
+long g_sn_from=0,g_sn_to=0,g_sn_completed=0,g_sn_last_full=0,g_sn_recent_through=0;
+bool g_sn_full_run=false,g_sn_recent_run=false,g_sn_paused=false;
+ulong g_sn_next_upload=0,g_sn_next_recent=0,g_sn_retry_after=0,g_sn_last_paint=0;
 int g_sn_failures=0,g_sn_ack_batches=0;
 string g_sn_review_ticket="",g_sn_review_symbol="";
 string g_sn_token="";
@@ -95,6 +95,12 @@ bool SNLoadState()
  g_sn_from=from;g_sn_to=to;g_sn_cursor=fields[4];g_sn_completed=completed;g_sn_last_full=full;
  g_sn_full_run=(g_sn_from>0&&g_sn_from<=g_sn_to-(long)MathMax(1,HistoryDays)*86400+60);
  return true;
+}
+void SNRestoreHistory()
+{
+ g_snh.Reset();
+ g_sn_from=0;g_sn_to=0;g_sn_cursor="";g_sn_completed=0;g_sn_last_full=0;g_sn_full_run=false;
+ if(!SNLoadState())Print("SyncNote: checkpoint invalid; safely restarting configured history range (server deduplicates)");
 }
 void SNPause(const string reason)
 {
@@ -174,17 +180,26 @@ void SNTryReview()
 
 void SNStartRange()
 {
+ long now=(long)TimeTradeServer();if(now<1)return;
+ bool full_due=g_sn_completed==0||g_sn_last_full==0||now-g_sn_last_full>=(long)MathMax(1,ReconcileHours)*3600;
+ ulong tick=GetTickCount64();
+ // Run recent history first on startup, and between pages of a long reconciliation.
+ // Its replayable cursor is kept in memory so it never replaces the durable full-history cursor.
+ if(!g_sn_recent_run&&(g_sn_next_recent==0||((g_sn_full_run||full_due)&&tick>=g_sn_next_recent)))
+ {
+  g_sn_recent_run=true;
+  g_sn_from=MathMax(1,MathMax(now-86400,MathMin(now,g_sn_recent_through-(long)OverlapSeconds)));
+  g_sn_to=now;g_sn_cursor="";
+ }
  if(g_sn_from==0)
  {
-  long now=(long)TimeTradeServer();if(now<1)return;
-  bool full=g_sn_completed==0||g_sn_last_full==0||now-g_sn_last_full>=(long)MathMax(1,ReconcileHours)*3600;
-  long from=full?MathMax(1,now-(long)HistoryDays*86400):MathMax(1,g_sn_completed-(long)OverlapSeconds);
+  long from=full_due?MathMax(1,now-(long)HistoryDays*86400):MathMax(1,g_sn_completed-(long)OverlapSeconds);
   if(from>now)from=now;
   // Persist the planned fixed range before scanning, without advancing acknowledged progress.
   // A crash before the first ACK must not slide its oldest boundary forward on restart.
   if(!SNSaveState(from,now,"",g_sn_completed,g_sn_last_full)){SNBackoff("Could not persist planned history range");return;}
   g_sn_to=now;g_sn_from=from;
-  g_sn_full_run=full;g_sn_cursor="";
+  g_sn_full_run=full_due;g_sn_cursor="";
  }
  if(!g_snh.Begin(g_sn_from,g_sn_to,g_sn_cursor,100))SNBackoff("Invalid persisted history request: "+g_snh.Error());
 }
@@ -215,10 +230,22 @@ void SNUploadPending()
  if(code!=200||!SNJAcknowledged(reply,g_sn_key,g_sn_batch)){SNBackoff("History upload or exact batch ACK failed; HTTP "+IntegerToString(code));return;}
  long from=g_sn_from,to=g_sn_to,completed=g_sn_completed,full=g_sn_last_full;
  string next=g_snh.NextCursor();
- if(!g_snh.HasMore()){completed=g_sn_to;if(g_sn_full_run)full=g_sn_to;from=0;to=0;next="";}
- // Durable local state is written only after an exact server ACK, before moving RAM state.
- if(!SNSaveState(from,to,next,completed,full)){SNBackoff("Could not persist acknowledged checkpoint");return;}
- g_sn_from=from;g_sn_to=to;g_sn_cursor=next;g_sn_completed=completed;g_sn_last_full=full;
+ if(g_sn_recent_run)
+ {
+  if(g_snh.HasMore())g_sn_cursor=next;
+  else
+  {
+   g_sn_recent_through=g_sn_to;g_sn_recent_run=false;g_sn_next_recent=GetTickCount64()+60000;
+   SNRestoreHistory();
+  }
+ }
+ else
+ {
+  if(!g_snh.HasMore()){completed=g_sn_to;if(g_sn_full_run)full=g_sn_to;from=0;to=0;next="";}
+  // Durable local state is written only after an exact server ACK, before moving RAM state.
+  if(!SNSaveState(from,to,next,completed,full)){SNBackoff("Could not persist acknowledged checkpoint");return;}
+  g_sn_from=from;g_sn_to=to;g_sn_cursor=next;g_sn_completed=completed;g_sn_last_full=full;
+ }
  g_sn_pending="";g_sn_batch="";g_snh.Reset();g_sn_failures=0;g_sn_retry_after=0;g_sn_ack_batches++;
  g_sn_next_upload=GetTickCount64()+(ulong)MathMax(3,SyncSeconds)*1000;
  SNAcceptReviewJob(reply);
@@ -232,7 +259,8 @@ bool SNPrepareSync()
  g_sn_binding_path="SyncNote\\binding-"+StringSubstr(token_hash,0,24)+".txt";
  g_sn_state_path="SyncNote\\history-"+StringSubstr(g_sn_key,0,24)+"-"+StringSubstr(scope,0,16)+".state";
  if(!SNBindToken())return false;
- if(!SNLoadState()){Print("SyncNote: checkpoint invalid; safely restarting configured history range (server deduplicates)");g_sn_from=0;g_sn_to=0;g_sn_cursor="";g_sn_completed=0;g_sn_last_full=0;g_snh.Reset();}
+ SNRestoreHistory();
+ g_sn_recent_run=false;g_sn_next_recent=0;g_sn_recent_through=0;
  g_sn_sync_scope=scope;
  SNSymbolsInit();
  SNRangeInit();

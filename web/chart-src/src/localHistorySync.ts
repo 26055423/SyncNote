@@ -54,6 +54,7 @@ export interface HistorySyncState {
   last_synced: number | null;
   last_full: number | null;
   full_run: boolean;
+  recent_ready: boolean;
   reviews: number;
   review_message: string;
   account: string;
@@ -72,7 +73,7 @@ interface Dependencies {
   uploadReview?: (body: ReviewImportBody, signal: AbortSignal) => Promise<{ ok: boolean }>;
 }
 
-const EMPTY: HistorySyncState = { enabled: false, status: 'off', message: '', pages: 0, deals: 0, reviews: 0, review_message: '', last_synced: null, last_full: null, full_run: false, account: '', server: '' };
+const EMPTY: HistorySyncState = { enabled: false, status: 'off', message: '', pages: 0, deals: 0, reviews: 0, review_message: '', last_synced: null, last_full: null, full_run: false, recent_ready: false, account: '', server: '' };
 const DAY = 86400;
 const HISTORY_DAYS = 365;
 const FULL_RECONCILE_MS = DAY * 1000;
@@ -95,9 +96,11 @@ export class LocalHistorySync {
   private wakeup: number | null = null;
   private runningGeneration: number | null = null;
   private checkpoint: Checkpoint | null = null;
+  private recentCheckpoint: Checkpoint | null = null;
+  private nextRecentAt = 0;
   private storageKey = '';
   private planNeedsSave = false;
-  private pending: { body: HistoryImportBody; checkpoint: Checkpoint } | null = null;
+  private pending: { body: HistoryImportBody; checkpoint: Checkpoint; recent: boolean } | null = null;
   constructor(private readonly dependencies: Dependencies) {
     dependencies.terminal.subscribe(() => {
       if (!this.state.enabled) return;
@@ -125,10 +128,12 @@ export class LocalHistorySync {
     this.wakeup = null;
     this.pending = null;
     this.checkpoint = null;
+    this.recentCheckpoint = null;
+    this.nextRecentAt = 0;
     this.storageKey = '';
     this.planNeedsSave = false;
     this.session = '';
-    this.update({ enabled: false, status: 'off', full_run: false, message });
+    this.update({ enabled: false, status: 'off', full_run: false, recent_ready: false, message });
   }
   async start() {
     const terminal = this.dependencies.terminal.getSnapshot();
@@ -217,7 +222,14 @@ export class LocalHistorySync {
       }
       while (this.active(generation)) {
         if (!this.pending) {
-          const checkpoint: Checkpoint = this.checkpoint!;
+          const main = this.checkpoint!;
+          if (main.full_run && !this.recentCheckpoint && this.dependencies.now() >= this.nextRecentAt) {
+            const to = Math.floor(this.dependencies.now() / 1000) + this.dependencies.terminal.getSnapshot().server_offset_sec;
+            const from = Math.max(1, to - DAY);
+            this.recentCheckpoint = { ...main, range: { from_server: from, to_server: to }, cursor: '',
+              through_server: from - 1, last_deal_ticket: '0', window_complete: false, full_run: false };
+          }
+          const checkpoint = this.recentCheckpoint ?? main;
           this.update({ status: 'reading', message: checkpoint.full_run ? '正在全量核对最近 365 天的全品种历史，每页最多 100 条…' : '正在回查最近一天的全品种历史，每页最多 100 条…' });
           let page: NoteHistoryPage;
           try { page = await this.dependencies.terminal.requestHistoryPage(checkpoint.range, checkpoint.cursor, signal); }
@@ -241,9 +253,10 @@ export class LocalHistorySync {
               server_offset_sec: page.server_offset_sec, batch_id: this.dependencies.uuid(), range: { ...checkpoint.range }, deals: page.deals,
               checkpoint: { through_server: page.through_server, last_deal_ticket: lastTicket, window_complete: !page.has_more } },
             checkpoint: next,
+            recent: checkpoint === this.recentCheckpoint,
           };
         }
-        const pending: { body: HistoryImportBody; checkpoint: Checkpoint } = this.pending!;
+        const pending = this.pending!;
         this.update({ status: 'uploading', message: `正在将 ${pending.body.deals.length} 条历史记录同步到当前网站账户…` });
         const ack = await this.dependencies.upload(pending.body, signal);
         if (!this.active(generation)) return;
@@ -251,11 +264,19 @@ export class LocalHistorySync {
         const acknowledgedAt = this.dependencies.now();
         const saved: Checkpoint = { ...pending.checkpoint, saved_at: acknowledgedAt,
           last_full: pending.checkpoint.full_run && pending.checkpoint.window_complete ? acknowledgedAt : pending.checkpoint.last_full };
-        this.dependencies.storage.setItem(this.storageKey, JSON.stringify(saved));
-        this.checkpoint = saved;
+        if (pending.recent) {
+          // A recent pass can be replayed after reload. The saved yearly cursor only advances on its own ACKs.
+          this.recentCheckpoint = saved.window_complete ? null : saved;
+          if (saved.window_complete) this.nextRecentAt = acknowledgedAt + 30000;
+        } else {
+          this.dependencies.storage.setItem(this.storageKey, JSON.stringify(saved));
+          this.checkpoint = saved;
+        }
         this.pending = null;
-        this.update({ pages: this.state.pages + 1, deals: this.state.deals + pending.body.deals.length, last_synced: saved.saved_at, last_full: saved.last_full || null });
-        if (saved.window_complete) {
+        this.update({ pages: this.state.pages + 1, deals: this.state.deals + pending.body.deals.length,
+          last_synced: saved.saved_at, last_full: saved.last_full || null,
+          recent_ready: this.state.recent_ready || saved.window_complete });
+        if (saved.window_complete && !pending.recent) {
           const deferred = await this.processReview(generation, saved);
           if (!this.active(generation)) return;
           if (!deferred) this.finishWindow(generation);

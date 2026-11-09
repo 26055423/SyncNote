@@ -24,7 +24,7 @@ import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { ToolbarIcon } from './ui/ToolbarIcon';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
 import { localTerminal, useLocalTerminal } from './localTerminal';
-import { localHistorySync, historyAccountKey } from './localHistorySync';
+import { localHistorySync, historyAccountKey, useLocalHistorySync } from './localHistorySync';
 import { localRangeSync, useLocalRangeSync } from './localRangeSync';
 import { backfillBars, useBackfillBars } from './backfillBars';
 import { SymbolPicker, type MarketSymbol } from './SymbolPicker';
@@ -136,6 +136,7 @@ export default function App() {
   const local = useLocalTerminal();
   const localConnected = local.phase === 'connected';
   const backfill = useBackfillBars();
+  const historySync = useLocalHistorySync();
   const params = useMemo(() => new URLSearchParams(location.search), []);
   const [mt5ConnectionOpen, setMT5ConnectionOpen] = useState(params.get('connect') === '1');
 
@@ -488,24 +489,29 @@ export default function App() {
     localRangeSync.bindUser(board?.user.id || '');
   }, [board?.user.id]);
 
+  // 有续传授权时先确认最近成交，再让 K 线补齐争用同一个本机历史通道。
+  const waitForRecentDeals = board?.user.auto_history_sync && !historySync.recent_ready && historySync.status !== 'error';
   // 连上 EA 后只在后台补近7天缺口，不锁轨道图，也不恢复旧的多年回溯。
   // error 态不在此自动重试(否则 error→initializing→error 无退避空转);重连会话变化会被
   // backfillBars 内部 stop 回 idle,那时再由本 effect 重启。
   useEffect(() => {
     if (!board?.user.id || !localConnected || !local.history_ready || !local.features.includes('history')) return;
-    if (backfill.phase !== 'idle') return;
+    if (backfill.phase !== 'idle' || waitForRecentDeals) return;
     void backfillBars.start();
-  }, [board?.user.id, localConnected, local.history_ready, local.features, backfill.phase]);
+  }, [board?.user.id, localConnected, local.history_ready, local.features, backfill.phase, waitForRecentDeals]);
 
-  // 个人中心勾了「自动续传」后：近期首轮结束或用户暂停补齐后才启动，
-  // 避免与回填争用本机历史读通道(localTerminal 串行互斥)。已在同步中则不重复开。
+  // 个人中心勾了「自动续传」后，连接一旦可读就先上传近期成交。
   useEffect(() => {
-    if (!board?.user.auto_history_sync || !localConnected || !local.history_ready) return;
+    if (!board?.user.id) return;
+    if (!board.user.auto_history_sync) {
+      if (localHistorySync.getSnapshot().enabled) localHistorySync.stop();
+      return;
+    }
+    if (!localConnected || !local.history_ready) return;
     if (!local.features.includes('history')) return;
-    if (backfill.phase !== 'ready' && backfill.phase !== 'partial_ready' && backfill.phase !== 'paused' && backfill.phase !== 'error') return;
     if (localHistorySync.getSnapshot().enabled) return;
     void localHistorySync.start().catch(() => undefined);
-  }, [board?.user.auto_history_sync, localConnected, local.history_ready, local.features, backfill.phase]);
+  }, [board?.user.id, board?.user.auto_history_sync, localConnected, local.history_ready, local.features, local.epoch, local.account_id, local.server]);
 
   useEffect(() => {
     const pause = () => { localHistorySync.stop('网页已关闭，笔记同步已暂停。'); backfillBars.stop('网页已关闭，行情回填已暂停。'); localRangeSync.stop('网页已关闭，SyncTrade 区间同步已暂停。'); };
@@ -1978,6 +1984,8 @@ export default function App() {
         localOrders={local.orders}
         cloudPositions={myPositions}
         history={myHistory}
+        historySync={localConnected ? historySync : undefined}
+        onRetryHistorySync={() => localHistorySync.retry()}
         reviewed={board?.reviewed}
         onReview={(ticket) => openTicket(me!.id, ticket)}
         tracksSlot={tradeReview ? (

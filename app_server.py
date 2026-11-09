@@ -116,7 +116,8 @@ def digest(s):return hashlib.sha256(s.encode()).hexdigest()
 def history_for(db,person):
  clock=db.execute('SELECT * FROM broker_clocks WHERE person=?',(person,)).fetchone()
  rows=[json.loads(row[0]) for row in db.execute('SELECT payload FROM trades WHERE person=?',(person,))]
- return [utc_trade(row,clock) for row in rows if row.get('history_status') not in ('invalidated','context_unavailable','context_unverified')]
+ history=[utc_trade(row,clock) for row in rows if row.get('history_status') not in ('invalidated','context_unavailable','context_unverified')]
+ return sorted(history,key=lambda row:(row.get('closed') is not None,row.get('closed') or 0),reverse=True)
 
 def history_snapshot(db,person,live_data=None):
  """Account freshness and persisted trade-history acknowledgements are separate clocks."""

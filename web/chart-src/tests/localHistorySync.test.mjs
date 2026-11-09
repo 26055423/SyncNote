@@ -92,7 +92,9 @@ test('history consent starts off, and import contains raw history without accoun
   assert.equal(reads.length, 0);
   assert.equal(uploads.length, 0);
   await sync.start();
-  assert.equal(uploads.length, 1);
+  assert.equal(uploads.length, 2);
+  assert.equal(reads[0].range.to_server - reads[0].range.from_server, 86400);
+  assert.equal(reads[1].range.to_server - reads[1].range.from_server, 365 * 86400);
   const body = uploads[0].body;
   assert.equal(body.website_user_id, 'site-user');
   assert.equal(body.account, '1001');
@@ -114,13 +116,14 @@ test('a failed HTTP upload preserves the exact batch for explicit safe retry and
   } });
   await sync.start();
   assert.equal(sync.getSnapshot().status, 'error');
+  assert.equal(sync.getSnapshot().recent_ready, false);
   assert.equal(scheduled.size, 0, 'failed HTTP writes are never automatically retried');
   unconfirmedPlan(stored);
   sync.retry();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(uploads.length, 2);
+  assert.equal(uploads.length, 3);
   assert.strictEqual(uploads[0].body, uploads[1].body);
-  assert.equal(reads.length, 1);
+  assert.equal(reads.length, 2);
   assert.equal(stored.size, 1);
 });
 
@@ -138,28 +141,28 @@ test('a locally busy read waits and retries the identical fixed range without ad
   subject.advance(1500);await subject.wake();
   assert.deepEqual(subject.reads[1].range, subject.reads[0].range);
   assert.equal(subject.reads[1].cursor, subject.reads[0].cursor);
-  assert.equal(subject.uploads.length, 1);
+  assert.equal(subject.uploads.length, 2);
   assert.equal(JSON.parse(before).saved_at, 0);
   assert.equal(subject.sync.getSnapshot().status, 'idle');
 });
 
 test('busy between pages retains the acknowledged cursor and does not upload that page twice', async () => {
   const subject = fixture({ read: (page, count) => {
-    if (count === 1) return { ...page, has_more: true, next_cursor: 'acknowledged-first-page', through_server: page.range.from_server+60 };
-    if (count === 2) throw Object.assign(new Error('local read already in progress'), { code: 'history_read_busy' });
+    if (count === 2) return { ...page, has_more: true, next_cursor: 'acknowledged-first-page', through_server: page.range.from_server+60 };
+    if (count === 3) throw Object.assign(new Error('local read already in progress'), { code: 'history_read_busy' });
     return page;
   } });
   await subject.sync.start();
-  assert.equal(subject.uploads.length, 1);
+  assert.equal(subject.uploads.length, 2);
   const checkpoint = JSON.parse([...subject.stored.values()][0]);
   assert.equal(checkpoint.cursor, 'acknowledged-first-page');
   assert.equal(checkpoint.window_complete, false);
   assert.equal(subject.sync.getSnapshot().status, 'reading');
   await subject.wake();
-  assert.deepEqual(subject.reads[2].range, subject.reads[1].range);
-  assert.equal(subject.reads[2].cursor, 'acknowledged-first-page');
-  assert.equal(subject.uploads.length, 2);
-  assert.notEqual(subject.uploads[0].body.batch_id, subject.uploads[1].body.batch_id);
+  assert.deepEqual(subject.reads[3].range, subject.reads[2].range);
+  assert.equal(subject.reads[3].cursor, 'acknowledged-first-page');
+  assert.equal(subject.uploads.length, 3);
+  assert.notEqual(subject.uploads[1].body.batch_id, subject.uploads[2].body.batch_id);
 });
 
 test('read timeouts and busy-like HTTP write failures remain errors without automatic retries', async () => {
@@ -225,7 +228,7 @@ test('EA disconnect or epoch switch revokes sync consent without uploading to th
   changeTerminal({ epoch: 'e2', account_id: '2002' });
   assert.equal(sync.getSnapshot().enabled, false);
   assert.equal(scheduled.size, 0);
-  assert.equal(uploads.length, 1);
+  assert.equal(uploads.length, 2);
 });
 
 test('an unfinished window resumes its acknowledged cursor after reload; consent still starts off', async () => {
@@ -243,7 +246,7 @@ test('an unfinished window resumes its acknowledged cursor after reload; consent
 test('same-second partial pagination may report from-1 and all pages keep the fixed window', async () => {
   const { sync, reads, uploads } = fixture({ read: (page, count) => count === 1 ? { ...page, has_more: true, next_cursor: 'first', through_server: page.range.from_server - 1 } : page });
   await sync.start();
-  assert.equal(uploads.length, 2);
+  assert.equal(uploads.length, 3);
   assert.equal(reads[1].cursor, 'first');
   assert.deepEqual(reads[0].range, reads[1].range);
 });
@@ -251,11 +254,11 @@ test('same-second partial pagination may report from-1 and all pages keep the fi
 test('completed windows overlap a day on the next scan to pick up late deals and fee edits', async () => {
   const { sync, reads, scheduled } = fixture();
   await sync.start();
-  const previousTo = reads[0].range.to_server;
+  const previousTo = reads.at(-1).range.to_server;
   [...scheduled.values()][0].callback();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(reads[1].range.from_server, previousTo - 86400);
-  assert.equal(reads[1].cursor, '');
+  assert.equal(reads[2].range.from_server, previousTo - 86400);
+  assert.equal(reads[2].cursor, '');
 });
 
 test('a full reconciliation is successful only after its final matching ACK', async () => {
@@ -267,17 +270,33 @@ test('a full reconciliation is successful only after its final matching ACK', as
   assert.equal(sync.getSnapshot().last_full, NOW);
 });
 
+test('a long reconciliation refreshes recent deals between acknowledged pages', async () => {
+  const subject = fixture({ read: (page, count) => {
+    if (count !== 2) return page;
+    subject.advance(31000);
+    return { ...page, has_more: true, next_cursor: 'full-next', through_server: page.range.from_server + 60 };
+  } });
+  await subject.sync.start();
+  const [recent, full, refreshed, resumed] = subject.reads;
+  assert.equal(subject.sync.getSnapshot().recent_ready, true);
+  assert.equal(refreshed.range.to_server, recent.range.to_server + 31);
+  assert.equal(refreshed.range.to_server - refreshed.range.from_server, 86400);
+  assert.deepEqual(resumed.range, full.range);
+  assert.equal(resumed.cursor, 'full-next');
+});
+
 test('daily reconciliation switches from one-day overlap to the full 365-day range exactly at 24 hours', async () => {
   const subject = fixture();
   await subject.sync.start();
   subject.advance(24 * 3600 * 1000 - 1);
   await subject.wake();
-  assert.equal(subject.reads[1].range.to_server - subject.reads[1].range.from_server, 86400 + 24 * 3600 - 1);
+  assert.equal(subject.reads[2].range.to_server - subject.reads[2].range.from_server, 86400 + 24 * 3600 - 1);
   assert.equal(JSON.parse([...subject.stored.values()][0]).last_full, NOW);
   subject.advance(1);
   await subject.wake();
-  assert.equal(subject.reads[2].range.to_server - subject.reads[2].range.from_server, 365 * 86400);
-  assert.equal(subject.reads[2].cursor, '');
+  assert.equal(subject.reads[3].range.to_server - subject.reads[3].range.from_server, 86400);
+  assert.equal(subject.reads[4].range.to_server - subject.reads[4].range.from_server, 365 * 86400);
+  assert.equal(subject.reads[4].cursor, '');
   assert.equal(JSON.parse([...subject.stored.values()][0]).last_full, NOW + 24 * 3600 * 1000);
 });
 
@@ -285,7 +304,7 @@ test('refresh restores last_full and schedules a due full reconciliation without
   const subject = fixture({ stored: checkpointStorage(completedCheckpoint(NOW - 24 * 3600 * 1000)) });
   assert.equal(subject.sync.getSnapshot().enabled, false);
   await subject.sync.start();
-  assert.equal(subject.reads[0].range.to_server - subject.reads[0].range.from_server, 365 * 86400);
+  assert.equal(subject.reads[1].range.to_server - subject.reads[1].range.from_server, 365 * 86400);
   assert.equal(JSON.parse([...subject.stored.values()][0]).last_full, NOW);
 });
 
@@ -295,7 +314,7 @@ test('legacy completed cursors without reconciliation metadata get one full reco
   delete old.full_run;
   const subject = fixture({ stored: checkpointStorage(old) });
   await subject.sync.start();
-  assert.equal(subject.reads[0].range.to_server - subject.reads[0].range.from_server, 365 * 86400);
+  assert.equal(subject.reads[1].range.to_server - subject.reads[1].range.from_server, 365 * 86400);
 });
 
 test('a legacy unfinished short window completes its fixed range before a due full reconciliation starts', async () => {
@@ -317,14 +336,14 @@ test('a legacy unfinished short window completes its fixed range before a due fu
   assert.equal(subject.reads[0].cursor, 'legacy-partial');
   assert.equal(JSON.parse([...subject.stored.values()][0]).last_full, 0);
   await subject.wake();
-  assert.equal(subject.reads[2].range.to_server - subject.reads[2].range.from_server, 365 * 86400);
+  assert.equal(subject.reads[3].range.to_server - subject.reads[3].range.from_server, 365 * 86400);
 });
 
 test('partial full reconciliation ACKs do not change last_full and restore the same range after failure/reload', async () => {
   const lastFull = NOW - 24 * 3600 * 1000;
   const subject = fixture({ stored: checkpointStorage(completedCheckpoint(lastFull)),
-    read: (page, count) => count === 1 ? { ...page, has_more: true, next_cursor: 'ack-full-page-1', through_server: page.range.from_server + 100 } : page,
-    upload: (body, count) => { if (count === 2) throw new Error('network'); return { ok: true, batch_id: body.batch_id, account_key: body.account_key }; } });
+    read: (page, count) => count === 2 ? { ...page, has_more: true, next_cursor: 'ack-full-page-1', through_server: page.range.from_server + 100 } : page,
+    upload: (body, count) => { if (count === 3) throw new Error('network'); return { ok: true, batch_id: body.batch_id, account_key: body.account_key }; } });
   await subject.sync.start();
   const partial = JSON.parse([...subject.stored.values()][0]);
   assert.equal(partial.window_complete, false);
@@ -335,14 +354,19 @@ test('partial full reconciliation ACKs do not change last_full and restore the s
   subject.sync.stop();
   const resumed = fixture({ stored: subject.stored, now: NOW + 48 * 3600 * 1000 });
   await resumed.sync.start();
-  assert.deepEqual(resumed.reads[0].range, partial.range);
-  assert.equal(resumed.reads[0].cursor, partial.cursor);
+  assert.equal(resumed.reads[0].range.to_server - resumed.reads[0].range.from_server, 86400);
+  assert.deepEqual(resumed.reads[1].range, partial.range);
+  assert.equal(resumed.reads[1].cursor, partial.cursor);
   assert.equal(JSON.parse([...resumed.stored.values()][0]).last_full, NOW + 48 * 3600 * 1000);
 });
 
 test('even a failed first full-reconciliation page leaves a fixed plan without advancing acknowledged progress', async () => {
   const lastFull = NOW - 24 * 3600 * 1000;
-  const subject = fixture({ stored: checkpointStorage(completedCheckpoint(lastFull)), upload: () => { throw new Error('network'); } });
+  const subject = fixture({ stored: checkpointStorage(completedCheckpoint(lastFull)),
+    upload: (body, count) => {
+      if (count === 2) throw new Error('network');
+      return { ok: true, batch_id: body.batch_id, account_key: body.account_key };
+    } });
   await subject.sync.start();
   const planned = JSON.parse([...subject.stored.values()][0]);
   assert.equal(planned.last_full, lastFull);
@@ -351,7 +375,7 @@ test('even a failed first full-reconciliation page leaves a fixed plan without a
   assert.equal(planned.window_complete, false);
   const resumed = fixture({ stored: subject.stored, now: NOW + 48 * 3600 * 1000 });
   await resumed.sync.start();
-  assert.deepEqual(resumed.reads[0].range, planned.range);
+  assert.deepEqual(resumed.reads[1].range, planned.range);
 });
 
 test('history data from a different account or range is never uploaded', async () => {
@@ -406,13 +430,13 @@ test('a busy review read retains its exact task and never uploads fabricated mis
     return page;
   } });
   await subject.sync.start();
-  assert.equal(subject.uploads.length, 1, 'history page has already been ACKed');
+  assert.equal(subject.uploads.length, 2, 'both history windows have already been ACKed');
   assert.equal(subject.reviewUploads.length, 0, 'busy is not missing history');
   assert.equal(subject.sync.getSnapshot().status, 'reading');
   assert.deepEqual([...subject.scheduled.values()].map((timer) => timer.ms), [1500]);
   const firstM1 = subject.reviewReads[0];
   await subject.wake();
-  assert.equal(subject.uploads.length, 1, 'deferred review must not re-upload the history batch');
+  assert.equal(subject.uploads.length, 2, 'deferred review must not re-upload history batches');
   assert.equal(subject.reviewUploads.length, 1);
   assert.equal(subject.reviewUploads[0].ticket, job.ticket);
   assert.deepEqual(subject.reviewReads[2].range, firstM1.range);

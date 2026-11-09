@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { money, quotePrice, stamp } from './api';
+import type { HistorySyncState } from './localHistorySync';
 
 /**
  * 底部交易区：持仓 / 挂单 / 历史，对应 MT5 终端下方那一排。
@@ -14,6 +15,8 @@ export interface BottomDockProps {
   localOrders: any[];
   cloudPositions: any[];
   history: any[];
+  historySync?: HistorySyncState;
+  onRetryHistorySync?: () => void;
   reviewed?: string[];
   onReview: (ticket: string) => void;
   /** 「轨道」页签的内容：复盘时是数据轨道条，没开复盘时给一句提示。 */
@@ -27,7 +30,7 @@ const DOCK_MIN = 120;
 const DOCK_MAX = 600;
 const clampHeight = (h: number) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, h));
 
-export function BottomDock({ connected, localPositions, localOrders, cloudPositions, history, reviewed, onReview, tracksSlot }: BottomDockProps) {
+export function BottomDock({ connected, localPositions, localOrders, cloudPositions, history, historySync, onRetryHistorySync, reviewed, onReview, tracksSlot }: BottomDockProps) {
   const [tab, setTab] = useState<Tab>('positions');
   const [open, setOpen] = useState(() => {
     try {
@@ -178,7 +181,14 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
           ) : null}
 
           {tab === 'history' ? (
-            rows.length ? (
+            <>
+            {historySync?.status === 'error' ? (
+              <p className="dim dock-empty" role="status">{historySync.message} <button type="button" className="link" onClick={onRetryHistorySync}>重试成交同步</button></p>
+            ) : null}
+            {historySync?.enabled && !historySync.recent_ready && historySync.status !== 'error' ? (
+              <p className="dim dock-empty" role="status">{historySync.message}</p>
+            ) : null}
+            {rows.length ? (
               <>
                 <table className="grid-table">
                   <thead>
@@ -210,7 +220,8 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
                   {limit < rows.length ? <button type="button" className="tool-btn" onClick={() => setLimit((n) => n + 200)}>加载更多</button> : null}
                 </div>
               </>
-            ) : <p className="dim dock-empty">还没有已同步的成交</p>
+            ) : <p className="dim dock-empty">还没有已同步的成交</p>}
+            </>
           ) : null}
 
           {tab === 'tracks' ? (

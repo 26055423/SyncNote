@@ -307,6 +307,9 @@ def main():
    alice.request('/api/mt5/history-sync',tampered,status=400,extra=history_bearer)
    anon.request('/api/mt5/history-sync',history_body('batch-0004'),status=401)
    ensure(any(str(row.get('ticket','')).startswith('deal:') for row in alice.request('/api/history')['history']),'imported trades show up in the site history')
+   with sqlite3.connect(db) as conn:
+    conn.execute('INSERT INTO trades VALUES(?,?,?)',(a['id'],'fixture-zz-latest',json.dumps({'ticket':'fixture-zz-latest','closed':int(time.time()),'time_basis':'utc'})))
+   ensure(alice.request('/api/history')['history'][0]['ticket']=='fixture-zz-latest','history sorts by UTC close time, not storage order')
 
    # ---- 群：建群 / 邀请码加入 / 群聊 / 把一笔交易发进群 ----
    member=Client(base);register(member,'gg')
