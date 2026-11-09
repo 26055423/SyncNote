@@ -211,12 +211,24 @@ test('pairing waits for local approval and sends history serially with scoped cr
   assert.equal(client.getSnapshot().phase, 'connected');
   assert.equal(socket.sent.filter((message) => message.type === 'bars').length, 1);
   assert.equal(socket.sent.at(-1).tf, '1m');
+  assert.equal(socket.sent.at(-1).limit, 500);
+  assert.equal(socket.sent.at(-1).from_server, undefined);
   assert.equal(socket.sent.at(-1).account_id, '1001');
   assert.equal(socket.sent.at(-1).token, 'ram-only');
   socket.emit({ type: 'bars', request_id: socket.sent.at(-1).request_id, tf: '1m', bars: [[100, 1, 2, 1, 2]] });
   assert.equal(socket.sent.at(-1).tf, '5m');
   assert.equal(client.getSnapshot().bars['1m'][0][0], 100);
   assert.equal(client.getSnapshot().history_ready, false);
+});
+
+test('empty bootstrap history preserves candles already pushed by the terminal', () => {
+  const { client, connect } = fixture();
+  const socket = connect();
+  const request = socket.sent.at(-1);
+  socket.emit({ type: 'bar', tf: '1m', symbol: 'XAUUSD', bar: [180, 1, 3, 1, 3, 10] });
+  socket.emit({ type: 'bars', request_id: request.request_id, tf: '1m', symbol: 'XAUUSD', bars: [] });
+  assert.deepEqual(Array.from(client.getSnapshot().bars['1m'], row => Array.from(row)), [[180, 1, 3, 1, 3, 10]]);
+  assert.equal(socket.sent.at(-1).tf, '5m');
 });
 
 test('history errors and read timeouts advance bootstrap without replaying a trade', () => {

@@ -209,6 +209,7 @@ export default function App() {
 
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
   const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
+  const [marketLoadError, setMarketLoadError] = useState('');
   const [marketInfo, setMarketInfo] = useState<{ source: string; server: string; last: number | null; tfs?: TrackCatalog['sources'][number]['tfs'] } | null>(null);
   const trackSourceRef = useRef<string | null>(null);
   const storedTipsRef = useRef<Partial<Record<BaseTimeframe, number>>>({});
@@ -407,6 +408,7 @@ export default function App() {
     trackSourceRef.current = null;
     storedTipsRef.current = {};
     setMarketInfo(null);
+    setMarketLoadError('');
     setLoadedCacheScope(cacheScope);
   }, [cacheScope]);
 
@@ -529,16 +531,18 @@ export default function App() {
     let alive = true;
     void (async () => {
       try {
-        const catalog = await api<TrackCatalog>('/api/data/sources');
+        const catalogRequest = api<TrackCatalog>('/api/data/sources').catch(() => null);
+        const knownSource = connectedTrack ?? (localConnected ? null : catalogSource);
+        const catalog = knownSource ? null : await catalogRequest;
         if (!alive) return;
-        const source = connectedTrack ?? (localConnected ? null : catalogSource || selectTrackSource(catalog, liveSymbol));
+        const source = knownSource ?? (!localConnected && catalog ? selectTrackSource(catalog, liveSymbol) : null);
         if (!source) {
           if (!localConnected) {
             for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as BaseTimeframe];
             setLiveBars(null);
           }
           trackSourceRef.current = null; setMarketSeries(null); setMarketInfo(null);
-          if (!localConnected) setError('当前券商的数据轨道尚未入库这个品种的行情。');
+          if (!localConnected) setMarketLoadError(catalog ? '当前轨道尚未入库这个品种的行情。' : '暂时无法读取行情数据源，稍后重试。');
           return;
         }
         if (trackSourceRef.current && trackSourceRef.current !== source) {
@@ -549,10 +553,11 @@ export default function App() {
           storedTipsRef.current = {};
         }
         trackSourceRef.current = source;
-        const pages = await Promise.all(REVIEW_BASE_TFS.map((base) => readTrackPage((path) => api<TrackPage>(path), {
+        const results = await Promise.allSettled(REVIEW_BASE_TFS.map((base) => readTrackPage((path) => api<TrackPage>(path), {
           source, symbol: liveSymbol, base, limit: MARKET_LIMIT[base],
         })));
         if (!alive || trackSourceRef.current !== source) return;
+        const pages = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
         const out: ReviewCharts = {};
         for (const page of pages) if (page.bars.length) {
           const base = page.tf as BaseTimeframe;
@@ -561,12 +566,17 @@ export default function App() {
         }
         mergeLiveHistory(liveRef.current, out);
         setMarketSeries(Object.keys(out).length ? out : null);
-        setMarketInfo({ source, server: pages[0]?.feed?.server ?? '', last: Math.max(0, ...pages.map((page) => page.last_bar ?? 0)) || null,
-          tfs: catalog.sources.find((track) => track.id === source && track.symbol === liveSymbol)?.tfs });
+        setMarketInfo({ source, server: pages[0]?.feed?.server ?? '', last: Math.max(0, ...pages.map((page) => page.last_bar ?? 0)) || null });
+        setMarketLoadError(pages.length < results.length ? '暂时无法读取部分轨道行情，后台会重试。' : '');
         if (Object.keys(liveRef.current).length) { setLiveBars(liveRef.current); }
+        void catalogRequest.then(data => {
+          if (!alive || trackSourceRef.current !== source) return;
+          const tfs = data?.sources.find(track => track.id === source && track.symbol === liveSymbol)?.tfs;
+          if (tfs) setMarketInfo(info => info?.source === source ? { ...info, tfs } : info);
+        });
         await Promise.all(REVIEW_BASE_TFS.map((base) => out[base]?.length ? chartRef.current?.applySeries(base, liveRef.current[base]!) : undefined));
       } catch (error) {
-        if (alive) setError(`轨道历史读取失败：${error instanceof Error ? error.message : String(error)}`);
+        if (alive) setMarketLoadError(`轨道历史读取失败：${error instanceof Error ? error.message : String(error)}`);
       }
     })();
     return () => {
@@ -574,10 +584,10 @@ export default function App() {
     };
   }, [mode, localConnected, local.server, local.epoch, liveSymbol, board?.user.id, connectedTrack, catalogSource, marketRetry]);
   useEffect(() => {
-    if (mode !== 'live' || !localConnected || marketInfo?.source) return;
+    if (mode !== 'live' || !board?.user.id || marketInfo?.source) return;
     const timer = window.setInterval(() => setMarketRetry((revision) => revision + 1), 15000);
     return () => window.clearInterval(timer);
-  }, [mode, localConnected, marketInfo?.source]);
+  }, [mode, board?.user.id, marketInfo?.source]);
 
   // 补采入库后刷新轨道尾部。通常每周期只取两根，发现落后一段才拉近期窗口补齐。
   const refreshTrackRef = useRef<((forceRecent?: boolean) => void) | null>(null);
@@ -591,11 +601,12 @@ export default function App() {
       if (refreshing) { pendingRecent ||= forceRecent; return; }
       refreshing = true;
       try {
-        const pages = await Promise.all(REVIEW_BASE_TFS.map((base) => readTrackHead((path) => api<TrackPage>(path), {
+        const results = await Promise.allSettled(REVIEW_BASE_TFS.map((base) => readTrackHead((path) => api<TrackPage>(path), {
           source, symbol: liveSymbol, base, period: TF_SECONDS[base], storedTip: storedTipsRef.current[base],
           forceRecent: forceRecent || (!liveRef.current[base]?.length && storedTipsRef.current[base] === undefined),
         })));
         if (!alive || trackSourceRef.current !== source) return;
+        const pages = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
         const changed: BaseTimeframe[] = [];
         for (const page of pages) {
           if (!page.bars.length) continue;
@@ -613,6 +624,7 @@ export default function App() {
         setMarketInfo((info) => info?.source === source ? { ...info,
           last: Math.max(info.last ?? 0, ...pages.map((page) => page.last_bar ?? 0)) || null } : info);
         if (Object.values(liveRef.current).some((rows) => rows?.length)) setLiveBars(liveRef.current);
+        if (pages.length === results.length) setMarketLoadError('');
         for (const listener of liveListeners.current) listener();
         if (forceRecent || Date.now() - catalogAt > 60000) {
           const catalog = await api<TrackCatalog>('/api/data/sources');
@@ -1709,6 +1721,7 @@ export default function App() {
                       ? (ready ? '无需连接 EA，读取完成后图表会自动出现。' : '同步完成后图表会自动出现。')
                       : '在 MT5 同步一笔成交，或从底部「历史」打开已有交易。'}
                 </p>
+                {mode === 'live' && marketLoadError ? <p role="status">{marketLoadError}</p> : null}
                 {mode === 'live' ? <MarketRangeSync key={syncScope} symbol={liveSymbol} transport={localConnected ? 'synctrade' : 'syncnote'} getLocalContext={getLocalSyncContext} onStartLocal={() => localRangeSync.start()} onStopLocal={() => localRangeSync.stop('区间任务已取消。')} localStatus={rangeSync} onJobChange={receiveSyncJob} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                 <div className="empty-actions">
                   {mode === 'review' && !target && myHistory[0] ? (

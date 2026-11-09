@@ -273,12 +273,9 @@ export class LocalTerminal {
       this.nextHistory();
     }, 10000);
     this.pendingHistory = { id, tf, timer };
-    // 原来只取 400 根（1m 才 6 小时），指标和复盘都不够用。
-    // 改成 range 模式一次取满 2000 个周期槽：1m≈33h、5m≈7天、15m≈20天、1h≈83天。
-    const period = TF_SECONDS[tf] ?? 60;
-    const to = Math.floor(Date.now() / 1000) + (this.state.server_offset_sec || 0);
-    const from = to - (HISTORY_SLOTS - 1) * period;
-    this.send({ type: 'bars', symbol: this.state.symbol, tf, from_server: from, to_server: to, request_id: id });
+    // Request actual recent candles, even if the most recent calendar window was closed.
+    // Deeper history is read from the stored track and the gap sync runs separately.
+    this.send({ type: 'bars', symbol: this.state.symbol, tf, limit: 500, request_id: id });
   }
   private identity(message: Record<string, any>) {
     return {
@@ -424,7 +421,12 @@ export class LocalTerminal {
         // range 模式的时间是券商墙钟，减掉券商偏移后与复盘/成交的 UTC 对齐。
         const shift = (message as { range?: unknown }).range ? (this.state.server_offset_sec || 0) : 0;
         const rows = message.bars.filter((row: unknown) => Array.isArray(row) && row.length >= 5 && row.slice(0, 5).every((value: unknown) => typeof value === 'number' && Number.isFinite(value))).map((row: number[]) => (shift ? [row[0] - shift, ...row.slice(1)] : row));
-        this.update({ bars: { ...this.state.bars, [message.tf]: rows.slice(-3000) } });
+        // A live candle may already have arrived while this history page was in flight.
+        const merged = new Map<number, number[]>(rows.map((row: number[]) => [row[0], row]));
+        for (const row of this.state.bars[message.tf] ?? []) merged.set(row[0], row);
+        if (merged.size) {
+          this.update({ bars: { ...this.state.bars, [message.tf]: [...merged.values()].sort((a, b) => a[0] - b[0]).slice(-3000) } });
+        }
         this.nextHistory();
       } else if (message.type === 'bar' && tfKeys.has(message.tf)) {
         if (this.state.symbol_switching || (message.symbol && message.symbol !== this.state.symbol)) return;
