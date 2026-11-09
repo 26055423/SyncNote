@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
 
 export type LocalPhase = 'disconnected' | 'connecting' | 'pairing' | 'confirming' | 'connected' | 'error';
+/** Sunday = 0. The two offsets are measured from broker-wall midnight. */
+export type QuoteSession = [weekday: number, from: number, to: number];
 export interface LocalCommand {
   command_id: string;
   action: string;
@@ -25,6 +27,7 @@ export interface LocalTerminalState {
   server: string;
   epoch: string;
   symbol: string;
+  quote_sessions: QuoteSession[] | null;
   read_only: boolean;
   demo: boolean;
   /** 对冲账户：false = 净额账户（持仓合并，归属无法证明）。 */
@@ -97,7 +100,7 @@ const freshState = (): LocalTerminalState => ({
   historyWarnings: {},
   phase: 'disconnected', error: '', instance_id: '', account_id: '', server: '', epoch: '',
   symbol: 'XAUUSD', read_only: true, demo: false, hedging: false, netting_manage: false, real_trading: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
-  latency: null, account: {}, tick: null,
+  latency: null, account: {}, tick: null, quote_sessions: null,
   positions: [], orders: [], bars: {}, history_ready: false, commands: [], revision: 0,
 });
 const TF_SECONDS: Record<string, number> = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600 };
@@ -107,6 +110,16 @@ const HISTORY_SLOTS = 1990;
 const terminalStates = new Set(['completed', 'rejected']);
 const unresolvedStates = new Set(['sending', 'received', 'submitted', 'uncertain', 'not_found']);
 const tfKeys = new Set(['1m', '5m', '15m', '1h']);
+
+function parseQuoteSessions(value: unknown, previous: QuoteSession[] | null = null): QuoteSession[] | null {
+  if (!Array.isArray(value) || !value.length || value.length > 224) return null;
+  if (!value.every((row): row is QuoteSession =>
+    Array.isArray(row) && row.length === 3 && row.every(Number.isInteger) &&
+    row[0] >= 0 && row[0] <= 6 && row[1] >= 0 && row[1] < 86400 && row[2] >= 0 && row[2] <= 172800
+  )) return null;
+  if (previous?.length === value.length && value.every((row, i) => row.every((part, j) => part === previous[i][j]))) return previous;
+  return value;
+}
 
 class EaBarsError extends Error {
   constructor(readonly code: string, readonly detail: string) { super(code); }
@@ -361,7 +374,8 @@ export class LocalTerminal {
             pending.cleanup(); pending.reject(new Error('品种已切换，请重新读取历史。'));
           }
           this.noteReads.clear(); this.reviewReads.clear();
-          this.update({ symbol: message.symbol, symbol_switching: false, tick: null, bars: {}, historyWarnings: {}, history_ready: false });
+          this.update({ symbol: message.symbol, symbol_switching: false, tick: null, bars: {}, historyWarnings: {}, history_ready: false,
+            quote_sessions: parseQuoteSessions(message.quote_sessions) });
           this.send({ type: 'snapshot' });
           this.historyQueue = [...tfKeys];
           this.nextHistory();
@@ -379,6 +393,8 @@ export class LocalTerminal {
           positions: Array.isArray(message.positions) ? message.positions : this.state.positions,
           orders: Array.isArray(message.orders) ? message.orders : this.state.orders,
           tick: message.tick || this.state.tick,
+          ...(message.symbol === this.state.symbol && message.quote_sessions !== undefined
+            ? { quote_sessions: parseQuoteSessions(message.quote_sessions, this.state.quote_sessions) } : {}),
           read_only: message.read_only === undefined ? this.state.read_only : message.read_only !== false,
           demo: message.demo === undefined ? this.state.demo : message.demo === true,
           hedging: message.hedging === undefined ? this.state.hedging : message.hedging === true,
@@ -412,12 +428,14 @@ export class LocalTerminal {
         this.nextHistory();
       } else if (message.type === 'bar' && tfKeys.has(message.tf)) {
         if (this.state.symbol_switching || (message.symbol && message.symbol !== this.state.symbol)) return;
-        const row = Array.isArray(message.bar) ? message.bar : [message.bar_time, message.open, message.high, message.low, message.close, message.tick_volume || 0];
+        const row = Array.isArray(message.bar) ? message.bar : [message.bar_time, message.open, message.high, message.low, message.close, message.tick_volume ?? message.volume ?? 0];
         if (!row.slice(0, 5).every((value: unknown) => typeof value === 'number' && Number.isFinite(value))) return;
         const previous = this.state.bars[message.tf] || [];
         // 高频热点路径:当前蜡烛更新(替换末尾)和新蜡烛(追加末尾)无需 filter+sort。
         // 只有罕见乱序/历史回补才走慢路径,避免每帧 O(n log n) 扫全数组。
-        const lastTime = previous.length ? previous[previous.length - 1][0] : -Infinity;
+        const last = previous.at(-1);
+        if (last && row.length === last.length && row.every((value: number, index: number) => value === last[index])) return;
+        const lastTime = last?.[0] ?? -Infinity;
         let rows: number[][];
         if (row[0] === lastTime) rows = [...previous.slice(0, -1), row];
         else if (row[0] > lastTime) rows = previous.length >= 3000 ? [...previous.slice(1), row] : [...previous, row];

@@ -102,6 +102,18 @@ int main(int argc,char** argv){try{
   require(b.Gaps()<=SNB_GAP_LIMIT+3,"gap storage exceeds bound");
   for(int i=0;i<1200;i+=2)require(b.Unconfirmed(tf,from+i*60),"fragment overflow erased an unconfirmed minute");
  }
+ else if(scenario=="coverage"){
+  std::int64_t a=NOW-600,z=NOW-60,missingFrom=0,missingTo=0;
+  string prefix="{\"source\":\"srv:Synthetic-Demo\",\"symbol\":\"XAUUSD\",\"tf\":\"M1\",\"from\":"+IntegerToString(a)+",\"to\":"+IntegerToString(z)+",\"missing\":";
+  auto point=a+120;
+  string reply=prefix+"[{\"from\":"+IntegerToString(a+1)+",\"to\":"+IntegerToString(a+59)+"},{\"from\":"+IntegerToString(point)+",\"to\":"+IntegerToString(point)+"}]}";
+  auto before=b.State();
+  require(!SNBarsReconcileCoverage(b,prefix+"[{\"from\":1,\"to\":2}]}",0,a,z,"Synthetic-Demo","XAUUSD",missingFrom,missingTo),"outside range accepted");
+  require(b.State()==before,"bad coverage changed checkpoint");
+  require(SNBarsReconcileCoverage(b,reply,0,a,z,"Synthetic-Demo","XAUUSD",missingFrom,missingTo),"valid coverage rejected");
+  require(missingFrom==point&&missingTo==point&&b.Unconfirmed(0,point),"real gap was lost");
+  require(!b.Unconfirmed(0,a)&&!b.Unconfirmed(0,z),"covered slots or regular closure remained pending");
+ }
  else throw std::runtime_error("unknown scenario");
  std::cout<<"passed "<<scenario;return 0;
 }catch(const std::exception& e){std::cerr<<e.what();return 1;}}
@@ -136,5 +148,6 @@ class SyncNoteBarRuntime(unittest.TestCase):
  def test_v2_state_identity_symbol_scope_and_v1_rejection(self):self.scenario('state')
  def test_strict_ack_validates_existing_and_extended_response(self):self.scenario('ack')
  def test_fragment_overflow_stays_conservative(self):self.scenario('overflow')
+ def test_server_coverage_limits_reads_to_actual_missing_candle_slots(self):self.scenario('coverage')
 
 if __name__=='__main__':unittest.main()

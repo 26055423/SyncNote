@@ -1,7 +1,7 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.016"
+#property version "1.019"
 #property description "Read-only history, review charts and shared K-line track backfill. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 
@@ -12,6 +12,7 @@ input int HistoryDays=365;
 input int OverlapSeconds=3600;
 input int ReconcileHours=24; // Periodically replay the whole configured range for older corrections.
 input bool UploadBars=true;   // 当前图表品种近7天K线与持续增量；不恢复旧多年回溯任务
+input bool UploadFormingBars=true; // HTTPS 上传当前图表品种的未收盘 K 线
 input int PanelFontSize=14;   // 状态面板正文字号，10~24；配对码使用双倍字号
 
 CSyncNoteHistory g_snh;
@@ -108,12 +109,12 @@ void SNBackoff(const string reason)
  g_sn_retry_after=GetTickCount64()+(ulong)seconds*1000;
  Print("SyncNote: ",reason,"; retry in ",seconds," seconds (no checkpoint advanced)");
 }
-int SNPost(const string endpoint,const string body,string &reply)
+int SNPost(const string endpoint,const string body,string &reply,const int timeout_ms=5000)
 {
  reply="";if(!SNStillBound())return -2;
  char data[],response[];int n=StringToCharArray(body,data,0,-1,CP_UTF8)-1;ArrayResize(data,n);
  string headers="",request_headers="Content-Type: application/json\r\nAuthorization: Bearer "+g_sn_token+"\r\n";
- ResetLastError();int code=WebRequest("POST",g_sn_origin+endpoint,request_headers,5000,data,response,headers);
+ ResetLastError();int code=WebRequest("POST",g_sn_origin+endpoint,request_headers,timeout_ms,data,response,headers);
  if(ArraySize(response)>2097152)return -3;
  reply=CharArrayToString(response,0,ArraySize(response),CP_UTF8);return code;
 }
@@ -277,6 +278,38 @@ int OnInit()
  SNPaint();return INIT_SUCCEEDED;
 }
 void OnDeinit(const int reason){EventKillTimer();SNPairDeleteButtons();SNPanelDelete();Comment("");}
+bool SNFormingPump(const ulong now)
+{
+ static ulong next=0;
+ static long last_tick=0;
+ if(!UploadFormingBars||now<next)return false;
+ next=now+1000;
+ MqlTick tick;
+ if(!SymbolInfoTick(_Symbol,tick)||tick.time_msc<=last_tick)return false;
+ string series="";
+ int digits=(int)SymbolInfoInteger(_Symbol,SYMBOL_DIGITS);
+ for(int i=0;i<4;i++)
+ {
+  MqlRates rows[];
+  if(CopyRates(_Symbol,SNBarsTfPeriod(i),0,1,rows)!=1)continue;
+  MqlRates row=rows[0];
+  if(tick.time<row.time||tick.time>=row.time+SNBarsTfSeconds(i))continue;
+  if(series!="")series+=",";
+  series+=SNJQuote(SNBarsTfName(i))+":["+IntegerToString(row.time)+","+
+   DoubleToString(row.open,digits)+","+DoubleToString(row.high,digits)+","+
+   DoubleToString(row.low,digits)+","+DoubleToString(row.close,digits)+","+
+   IntegerToString(row.tick_volume)+"]";
+ }
+ if(series=="")return false;
+ string body="{\"account\":"+SNJQuote(g_sn_account)+",\"server\":"+SNJQuote(g_sn_server)+
+  ",\"account_key\":"+SNJQuote(g_sn_key)+",\"symbol\":"+SNJQuote(_Symbol)+
+  ",\"tick_time_msc_server\":"+IntegerToString(tick.time_msc)+",\"bars\":{"+series+"}}";
+ string reply;
+ int code=SNPost("/api/mt5/forming-bars",body,reply,1200);
+ if(code==200)last_tick=tick.time_msc;
+ else next=GetTickCount64()+2000;
+ return true;
+}
 void OnTimer()
 {
  if(g_sn_paused)return;
@@ -284,6 +317,9 @@ void OnTimer()
  ulong now=GetTickCount64();
  if(now-g_sn_last_paint>=2000){g_sn_last_paint=now;SNPaint();}
  if(g_sn_token==""){SNPairPump();return;}
+ // Give current candles a timer slot even while historical data is waiting or retrying.
+ // Never combine two HTTP operations in the same slot.
+ if(UploadBars&&g_sn_ack_batches>0&&SNFormingPump(now))return;
  if(now<g_sn_retry_after)return;
  if(g_sn_review_ticket!="")
  {
@@ -303,7 +339,9 @@ void OnTimer()
     if(!g_sn_bf_inited)SNBarsInit(g_sn_sync_scope);
     if(g_sn_bf_inited&&now>=g_sn_bf_next)
     {
-     SNBarsPump();g_sn_bf_next=GetTickCount64()+(ulong)MathMax(3,SyncSeconds)*1000;
+     SNBarsPump();
+     g_sn_bf_next=GetTickCount64()+(g_sn_bf_tf>=0?400:(ulong)MathMax(3,SyncSeconds)*1000);
+     return;
     }
    }
    return;

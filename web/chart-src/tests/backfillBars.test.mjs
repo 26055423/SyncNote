@@ -62,9 +62,32 @@ test('old deep-history checkpoints stay untouched and explicit starts inspect th
   for (const read of f.reads.slice(before)) assert.ok(read.range.from_server >= f.wallNow() - RECENT);
   assert.ok(f.reads[before].range.to_server > f.reads[0].range.to_server);
 });
-test('stored coverage skips reads while coverage failures retain bounded idempotent uploads', async () => {
+test('stored coverage skips reads and an unavailable coverage service defers backfill', async () => {
   const covered = fixture({ coverage: async () => ({ missing: [] }) });await covered.sync.start();assert.equal(covered.reads.length, 0);assert.equal(covered.sync.getSnapshot().phase, 'ready');
-  const failed = fixture({ coverage() { throw new Error('temporary coverage network error'); } });await failed.sync.start();assert.ok(failed.reads.length < 20);assert.equal(failed.sync.getSnapshot().phase, 'ready');
+  const failed = fixture({ coverage() { throw new Error('temporary coverage network error'); } });await failed.sync.start();assert.equal(failed.reads.length, 0);assert.equal(failed.sync.getSnapshot().phase, 'partial_ready');
+});
+test('reconnect clears stale gaps using server coverage and skips seconds between candle starts', async () => {
+  const target = Math.floor(NOW_SERVER / 60) * 60 - 60;
+  const storedLater = target - 60;
+  let reconnected = false;
+  const f = fixture({
+    read(page) {
+      return !reconnected && page.tf === '1m' ? { ...page, bars: page.bars.filter(row => row[0] !== storedLater) } : page;
+    },
+    coverage(query) {
+      if (!reconnected) return { missing: [{ from: query.from, to: query.to }] };
+      return { missing: query.tf === 'M1' && query.from <= storedLater && query.to >= target
+        ? [{ from: storedLater + 1, to: target - 1 }] : [] };
+    },
+  });
+  await f.sync.start();
+  assert.ok(f.checkpoint().gaps.M1.some(gap => gap.from <= storedLater && gap.to >= storedLater));
+  reconnected = true;
+  const reads = f.reads.length;
+  await f.sync.start();
+  assert.equal(f.reads.length, reads);
+  assert.deepEqual(f.checkpoint().gaps.M1, []);
+  assert.equal(f.sync.getSnapshot().phase, 'ready');
 });
 test('holes are clipped into aligned windows and a one-slot hole preserves left gaps', async () => {
   const clipped = fixture({ coverage(query) { const p = TF_PERIOD[query.tf];return { missing: [{ from: query.from - 17 * p, to: query.to + 17 * p }] }; } });await clipped.sync.start();assert.equal(clipped.sync.getSnapshot().phase, 'ready');

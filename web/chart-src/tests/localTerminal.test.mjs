@@ -80,6 +80,29 @@ test('EA clock samples retain raw UTC milliseconds and offset and clear on disco
   assert.equal(client.getSnapshot().clock_sample, undefined);
 });
 
+test('quote sessions follow the exact connected broker symbol, including overnight sessions', async () => {
+  const { client, connect } = fixture();
+  const socket = connect('1001', { features: ['select_symbol'] });
+  assert.equal(client.getSnapshot().quote_sessions, null);
+  socket.emit({ type: 'snapshot', symbol: 'XAUUSD', quote_sessions: [[5, 82800, 90000]] });
+  const gold = client.getSnapshot().quote_sessions;
+  assert.deepEqual(Array.from(gold[0]), [5, 82800, 90000]);
+  socket.emit({ type: 'snapshot', symbol: 'XAUUSD', quote_sessions: [[5, 82800, 90000]] });
+  assert.equal(client.getSnapshot().quote_sessions, gold);
+  const switching = client.selectSymbol('USTEC.m');
+  const request = socket.sent.at(-1);
+  socket.emit({ type: 'symbol_selected', request_id: request.request_id, symbol: 'USTEC.m', quote_sessions: [[1, 0, 86400]] });
+  await switching;
+  const nasdaq = client.getSnapshot().quote_sessions;
+  assert.deepEqual(Array.from(nasdaq[0]), [1, 0, 86400]);
+  socket.emit({ type: 'snapshot', symbol: 'XAUUSD', quote_sessions: [[5, 82800, 90000]] });
+  assert.equal(client.getSnapshot().quote_sessions, nasdaq);
+  socket.emit({ type: 'snapshot', symbol: 'USTEC.m', quote_sessions: [[7, 0, 86400]] });
+  assert.equal(client.getSnapshot().quote_sessions, null);
+  client.disconnect();
+  assert.equal(client.getSnapshot().quote_sessions, null);
+});
+
 test('broker catalog pages preserve exact codes and authenticated request scope', async () => {
   const { client, connect } = fixture();
   const socket = connect('1001', { features: ['symbols', 'select_symbol'] });

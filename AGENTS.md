@@ -90,10 +90,11 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 - 复盘快照在 `journal.review()` 里已平移，别重复减。
 - 详细约定见 `docs/架构说明.md` §5.1。
 
-## 数据源有两种，别混淆
+## 行情与复盘共用 K 线轨道
 
-- **复盘数据**：每笔交易的四周期 K 线，来自 `trade_reviews.payload`（EA 上传或 hub 用缓存 K 线生成）。
-- **实时行情**：`live.py` 的内存缓存，由 `tools/bridge_push.py` 每 5 秒推 `tick + 4 个周期最近几根`，网页用 `/api/live` 读；服务端重启后会回 `bootstrap:true`，采集端据此重推 300 根。
+- **已收盘 K 线**：统一从 `bars` 读取，按券商轨道 `source`、品种、周期和时间区分。行情读 `/api/market/bars`，复盘按成交或分享授权读 `/api/chart/bars`。
+- **复盘快照**：`trade_reviews.payload` 为已有交易提供起始窗口；同一时刻优先显示该轨道的已入库 K 线。图表后台读新数据并按需翻页。
+- **盘中更新**：本机 SyncTrade 推送仅合入券商与品种均匹配的视图。旧 `/api/live` 内存缓存缺少可靠轨道身份，保留旧客户端兼容用途。
 
 ## 当前状态 / 已知限制
 

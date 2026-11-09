@@ -1,6 +1,45 @@
-import { registerWidgetAction } from '@luxalgo/vela';
+import { registerWidgetAction, type Vela } from '@luxalgo/vela';
+import type { ChartCell } from '@luxalgo/vela/workspace';
 
 const PRICE_ONLY_KEY = 'sn-price-only-scale';
+const RESET_VISIBLE_BARS = 120;
+
+/** Keep the last visible candle fixed while returning to a readable zoom. */
+export function configureViewReset(
+  cell: Pick<ChartCell, 'chart' | 'resetView'>,
+  readBars: (symbol: string, timeframe: string) => Promise<ReadonlyArray<{ time: number }>>,
+): () => void {
+  const original = cell.resetView;
+  let disposed = false;
+  cell.resetView = () => {
+    const chart: Vela = cell.chart;
+    const range = chart.getVisibleRange();
+    chart.renderer.set('autoScale', true);
+    if (!range) return;
+    const { symbol, timeframe } = chart.market;
+    if (!symbol || !timeframe) return;
+    void readBars(symbol, timeframe).then(bars => {
+      if (disposed || cell.chart !== chart || chart.market.symbol !== symbol || chart.market.timeframe !== timeframe) return;
+      const current = chart.getVisibleRange();
+      if (!current || current.from !== range.from || current.to !== range.to) return;
+      // Count real candles so a weekend or market halt cannot collapse the reset window.
+      let left = 0;
+      let right = bars.length;
+      while (left < right) {
+        const mid = (left + right) >>> 1;
+        if (bars[mid].time <= range.to) left = mid + 1;
+        else right = mid;
+      }
+      if (left < 2 || bars[left - 1].time !== range.to) return;
+      const from = bars[Math.max(0, left - RESET_VISIBLE_BARS)].time;
+      chart.setVisibleRange({ from, to: range.to });
+    }).catch(() => { /* Price autoscale is still reset if candle data is unavailable. */ });
+  };
+  return () => {
+    disposed = true;
+    cell.resetView = original;
+  };
+}
 
 /** Start with readable candles; keep the native price-axis switch available. */
 export function configurePriceScale(chart: any): () => void {

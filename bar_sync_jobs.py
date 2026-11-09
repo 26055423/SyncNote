@@ -88,6 +88,8 @@ def create(db,uid,data,now=None):
  if transport=='synctrade':
   link,feed=bind_local_request(db,uid,data,now)
   identity(db,link,data,transport)
+  if data.get('quote_symbol')==symbol:
+   bars.record_quote_sessions(db,feed['account_key'],symbol,data.get('quote_sessions'),now)
  else:
   link,feed=link_of(db,uid,transport)
   catalog=market_symbols.read(db,uid,feed['source'])
@@ -96,21 +98,26 @@ def create(db,uid,data,now=None):
  if active:raise JobError('已有 '+active['symbol']+' 同步任务，请等待完成或先取消',409)
  offset=trade_time.offset_for(db,feed['source'])
  queues=[]
+ has_closed_slots=False
  for tf,p in PERIODS.items():
   start=((begin+offset+p-1)//p)*p
   last=min(((end+offset)//p)*p-p,((int(now)+offset)//p)*p-p)
   queue=[]
+  has_closed_slots=has_closed_slots or last>=start
   # Newest segments first; rotate periods so long M1 history cannot starve H1.
-  while last>=start:
-   first=max(start,last-1999*p);queue.append((tf,first,last));last=first-p
+  for gap_start,gap_end in reversed(bars.backfill_missing(db,feed['source'],feed['account_key'],symbol,tf,start,last,now)):
+   while gap_end>=gap_start:
+    first=max(gap_start,gap_end-1999*p)
+    queue.append((tf,first,gap_end))
+    gap_end=first-p
   queues.append(queue)
  segments=[]
  for index in range(max((len(q) for q in queues),default=0)):
   for queue in queues:
    if index<len(queue):segments.append(queue[index])
- if not segments:raise JobError('区间内没有已收盘 K 线，请选择更早的开始时间')
+ if not has_closed_slots:raise JobError('区间内没有已收盘 K 线，请选择更早的开始时间')
  job_id=secrets.token_hex(16)
- db.execute('INSERT INTO bar_sync_jobs(job_id,user_id,account_key,token_hash,source,symbol,from_utc,to_utc,status,total_segments,created,updated,transport) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(job_id,uid,feed['account_key'],link['token_hash'],feed['source'],symbol,begin,end,'waiting',len(segments),now,now,transport))
+ db.execute('INSERT INTO bar_sync_jobs(job_id,user_id,account_key,token_hash,source,symbol,from_utc,to_utc,status,total_segments,created,updated,transport) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(job_id,uid,feed['account_key'],link['token_hash'],feed['source'],symbol,begin,end,'waiting' if segments else 'completed',len(segments),now,now,transport))
  db.executemany('INSERT INTO bar_sync_segments(job_id,segment_id,ordinal,tf,from_server,to_server) VALUES(?,?,?,?,?,?)',[(job_id,secrets.token_hex(12),i,tf,start,end) for i,(tf,start,end) in enumerate(segments)])
  return {'job':public(db.execute('SELECT * FROM bar_sync_jobs WHERE job_id=?',(job_id,)).fetchone())}
 
@@ -170,8 +177,7 @@ def result(db,link,data,now=None,transport='syncnote'):
  try:
   summary=bars.ingest(db,row['source'],key,row['symbol'],{segment['tf']:{'bars':raw,'complete':False,'from_server':segment['from_server'],'to_server':segment['to_server']}},now)['series'][segment['tf']]
   if summary['accepted']!=len(raw) or summary['dropped']:raise JobError('K 线包含未收盘或无效数据')
-  count=db.execute('SELECT count(*) FROM bars WHERE source=? AND symbol=? AND tf=? AND t BETWEEN ? AND ?',(row['source'],row['symbol'],segment['tf'],segment['from_server'],segment['to_server'])).fetchone()[0]
-  full=count==(segment['to_server']-segment['from_server'])//p+1
+  full=not bars.backfill_missing(db,row['source'],key,row['symbol'],segment['tf'],segment['from_server'],segment['to_server'],now)
   state='completed' if full else 'partial'
   reason='' if full else error or '区间内存在未确认的空窗或缺失 K 线'
   db.execute('UPDATE bar_sync_segments SET state=?,result_hash=?,accepted=?,error=? WHERE job_id=? AND segment_id=?',(state,digest,len(raw),reason,row['job_id'],segment['segment_id']))

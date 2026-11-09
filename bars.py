@@ -66,6 +66,10 @@ def initialize(db):
     offset_sec INTEGER NOT NULL,
     updated REAL NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS quote_sessions(
+    account_key TEXT NOT NULL, symbol TEXT NOT NULL, schedule TEXT NOT NULL, updated REAL NOT NULL,
+    PRIMARY KEY(account_key, symbol)
+  );
   ''')
 
 
@@ -415,6 +419,70 @@ def missing(db, source, symbol, tf, start, end):
   if cursor <= end:
     holes.append((cursor, end))
   return holes
+
+
+def record_quote_sessions(db, account_key_value, symbol, schedule, now):
+  """Store only a complete, usable weekly schedule; unknown metadata can never prove a closure."""
+  if not isinstance(schedule, list) or not 1 <= len(schedule) <= 112:
+    return
+  for row in schedule:
+    if not isinstance(row, list) or len(row) != 3 or any(type(x) is not int for x in row):
+      return
+    day, begin, end = row
+    if not (0 <= day < 7 and 0 <= begin < 86400 and begin < end <= 172800):
+      return
+  value = json.dumps(sorted(schedule), separators=(',', ':'))
+  previous = db.execute('SELECT schedule,updated FROM quote_sessions WHERE account_key=? AND symbol=?',
+                        (account_key_value, symbol)).fetchone()
+  if not previous or previous[0] != value or previous[1] < now - 3600:
+    db.execute('INSERT INTO quote_sessions VALUES(?,?,?,?) ON CONFLICT(account_key,symbol) DO UPDATE SET schedule=excluded.schedule,updated=excluded.updated',
+               (account_key_value, symbol, value, now))
+
+
+def backfill_missing(db, source, account_key_value, symbol, tf, start, end, now=None):
+  """Return missing candle openings, excluding recent regular closures where a schedule is known."""
+  now = time.time() if now is None else now
+  period = tf_seconds(tf)
+  holes = []
+  for first, last in missing(db, source, symbol, tf, start, end):
+    first = ((first + period - 1) // period) * period
+    last = (last // period) * period
+    if first <= last:
+      holes.append((first, last))
+  schedule = db.execute('SELECT schedule FROM quote_sessions WHERE account_key=? AND symbol=? AND updated>=?',
+                        (account_key_value, symbol, now - 86400)).fetchone()
+  if not holes or not schedule:
+    return holes
+  day_seconds = 86400
+  wall_now = int(now) + source_offset(db, source)
+  # Today's recurring hours are only evidence for recent history, not an old holiday calendar.
+  recent = ((wall_now - 7 * day_seconds + period - 1) // period) * period
+  if end < recent:
+    return holes
+  sessions = json.loads(schedule[0])
+  first_day = max(start, recent) // day_seconds - 1
+  last_day = min(end, wall_now) // day_seconds
+  open_spans = []
+  for day in range(first_day, last_day + 1):
+    for weekday, begin, finish in sessions:
+      if (day + 4) % 7 != weekday:  # 1970-01-01 was Thursday.
+        continue
+      begin += day * day_seconds
+      finish += day * day_seconds
+      # Include a candle when any part of its window overlaps the quote session.
+      open_spans.append((begin // period * period, (finish - 1) // period * period))
+  spans = sorted([(start, recent - period), *open_spans, (wall_now // period * period, end)])
+  result = []
+  for first, last in holes:
+    for open_from, open_to in spans:
+      lo, hi = max(first, open_from), min(last, open_to)
+      if lo > hi:
+        continue
+      if result and lo <= result[-1][1] + period:
+        result[-1] = (result[-1][0], max(result[-1][1], hi))
+      else:
+        result.append((lo, hi))
+  return result
 
 
 def jobs(db, source, symbol, tf, start, end, min_bars=MIN_GAP_BARS):

@@ -16,6 +16,7 @@ import urllib.request
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 import auth_security
+import bars
 import device_pairing as pair
 import sync_history
 
@@ -26,7 +27,7 @@ class PairingTests(unittest.TestCase):
   self.db.executescript('''CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT,nickname TEXT,locked INTEGER);
   INSERT INTO users VALUES('alice','alice','Alice',0),('bob','bob','Bob',0);
   CREATE TABLE mt5_links(user_id TEXT PRIMARY KEY,token_hash TEXT,account_key TEXT,updated REAL);''')
-  auth_security.initialize(self.db);pair.initialize(self.db)
+  auth_security.initialize(self.db);pair.initialize(self.db);bars.initialize(self.db)
   self.db.execute('CREATE TABLE mt5_history_batches(person TEXT,account_key TEXT,updated REAL)')
   self.identity={'account':'123','server':'Synthetic-Broker','account_key':sync_history.account_key('Synthetic-Broker','123')}
  def tearDown(self):
@@ -53,6 +54,7 @@ class PairingTests(unittest.TestCase):
   self.assertFalse(self.db.execute('SELECT 1 FROM mt5_links').fetchone())
   result=self.run_call(pair.confirm,'confirm',data)
   self.assertEqual(result['status'],'approved')
+  self.assertEqual(bars.feed_of(self.db,'alice')['source'],'srv:Synthetic-Broker')
   self.assertEqual(self.db.execute('SELECT token_hash FROM mt5_links').fetchone()[0],pair.digest(result['token']))
   self.assertNotIn('token',self.run_call(pair.poll,'poll',data))
   stored=repr(tuple(self.db.execute('SELECT * FROM mt5_device_pairs').fetchone()))

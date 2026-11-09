@@ -45,7 +45,8 @@ interface Dependencies {
   terminal: Pick<typeof localTerminal, 'getSnapshot' | 'subscribe' | 'requestReviewBars'>;
   storage: Pick<Storage, 'getItem' | 'setItem'>;
   accountKey: (server: string, account: string) => Promise<string>;
-  coverage: (q: { source?: string; symbol: string; tf: string; from: number; to: number }, signal: AbortSignal) => Promise<{ missing: Array<{ from: number; to: number }> }>;
+  bindTrack?: (identity: Pick<BackfillBody, 'website_user_id' | 'account' | 'server' | 'account_key'> & { clock_sample?: LocalTerminalState['clock_sample'] }, signal: AbortSignal) => Promise<unknown>;
+  coverage: (q: { source: string; account_key: string; symbol: string; tf: string; from: number; to: number; quote_sessions?: LocalTerminalState['quote_sessions'] }, signal: AbortSignal) => Promise<{ missing: Array<{ from: number; to: number }> }>;
   upload: (body: BackfillBody, signal: AbortSignal) => Promise<{ ok: boolean }>;
   now: () => number;
   schedule?: (callback: () => void, ms: number) => number;
@@ -71,6 +72,7 @@ export class BackfillBars {
   private generation = 0;
   private controller: AbortController | null = null;
   private session = '';
+  private quoteSchedule = '';
   private storageKey = '';
   private checkpoint: Checkpoint | null = null;
   private running: Promise<void> | null = null;
@@ -106,7 +108,7 @@ export class BackfillBars {
     this.generation += 1;
     this.clearTimer();
     this.controller?.abort();
-    this.controller = null; this.running = null; this.session = ''; this.storageKey = ''; this.checkpoint = null; this.gapRoundRobin = {};
+    this.controller = null; this.running = null; this.session = ''; this.quoteSchedule = ''; this.storageKey = ''; this.checkpoint = null; this.gapRoundRobin = {};
     this.update({ phase: this.paused ? 'paused' : 'idle', message });
   }
   pause() {
@@ -160,9 +162,16 @@ export class BackfillBars {
       const generation = this.generation;
       this.controller?.abort(); this.controller = new AbortController();
       this.session = sessionKey(terminal);
+      this.quoteSchedule = JSON.stringify(terminal.quote_sessions ?? null);
       this.update({ phase: 'initializing', message: '后台补齐近期行情（最近 7 天）…', symbol: terminal.symbol, reachedServer: null, flooredTfs: [] });
       try {
         const accountKey = await this.deps.accountKey(terminal.server, terminal.account_id);
+        if (!this.active(generation)) return;
+        const sample = terminal.clock_sample;
+        await this.deps.bindTrack?.({
+          website_user_id: this.userId, account: terminal.account_id, server: terminal.server, account_key: accountKey,
+          clock_sample: sample && Math.abs(sample.server_time_ms - this.deps.now()) <= 90000 ? sample : undefined,
+        }, this.controller.signal);
         if (!this.active(generation)) return;
         // Old v1 deep-history cursors are intentionally left untouched and never resumed.
         this.storageKey = `syncnote-backfill-v2:${encodeURIComponent(this.userId)}:${accountKey}:${encodeURIComponent(terminal.symbol)}`;
@@ -205,7 +214,7 @@ export class BackfillBars {
   }
   private addGap(tf: Tf, from: number, to: number) {
     const cp = this.checkpoint!, period = TF_SECONDS[tf];
-    from = Math.floor(from / period) * period; to = Math.floor(to / period) * period;
+    from = Math.ceil(from / period) * period; to = Math.floor(to / period) * period;
     if (to < from) return;
     const all = [...(cp.gaps[tf] ?? []), { from, to }].sort((a, b) => a.from - b.from);
     const merged: Array<{ from: number; to: number }> = [];
@@ -227,6 +236,28 @@ export class BackfillBars {
       return rest;
     }).filter((gap) => gap.from <= gap.to);
     if (!cp.gaps[tf]?.length) delete cp.gap_retry_after[tf];
+  }
+  private reconcileCoverage(tf: Tf, from: number, to: number, missing: Array<{ from: number; to: number }>) {
+    const period = TF_SECONDS[tf];
+    // Coverage uses inclusive seconds; only candle-opening timestamps are possible gaps.
+    const holes = missing
+      .map(gap => ({ from: Math.ceil(Math.max(from, gap.from) / period) * period,
+        to: Math.floor(Math.min(to, gap.to) / period) * period }))
+      .filter(gap => Number.isFinite(gap.from) && Number.isFinite(gap.to) && gap.to >= gap.from)
+      .sort((a, b) => a.from - b.from);
+    let cursor = Math.ceil(from / period) * period;
+    for (const gap of holes) {
+      if (cursor < gap.from) this.confirmSpan(tf, cursor, gap.from - period);
+      cursor = Math.max(cursor, gap.to + period);
+    }
+    if (cursor <= to) this.confirmSpan(tf, cursor, to);
+    return holes.at(-1);
+  }
+  private coverage(tf: Tf, from: number, to: number, signal: AbortSignal) {
+    const cp = this.checkpoint!;
+    const terminal = this.deps.terminal.getSnapshot();
+    return this.deps.coverage({ source: 'srv:' + cp.server.trim(), account_key: cp.account_key,
+      symbol: cp.symbol, tf, from, to, quote_sessions: terminal.symbol === cp.symbol ? terminal.quote_sessions : null }, signal);
   }
   private confirmRows(tf: Tf, from: number, to: number, rows: number[][], target: number) {
     const cp = this.checkpoint!, period = TF_SECONDS[tf];
@@ -269,7 +300,9 @@ export class BackfillBars {
       // window. A resumed connection must first bridge its previous head too.
       promotionFloors[tf] = cp.heads[tf] !== undefined ? Math.max(recentFloor, cp.heads[tf]! - 2 * period)
         : Math.max(recentFloor, targets[tf]! - (MAX_BARS - 1) * period);
-      cp.gaps[tf] = (cp.gaps[tf] ?? []).filter((gap) => gap.to >= recentFloor).map((gap) => ({ from: Math.max(recentFloor, gap.from), to: gap.to }));
+      const firstBar = Math.ceil(recentFloor / period) * period;
+      cp.gaps[tf] = (cp.gaps[tf] ?? []).filter(gap => gap.to >= firstBar)
+        .map(gap => ({ from: Math.max(firstBar, gap.from), to: gap.to }));
       this.addGap(tf, delta ? floors[tf]! : promotionFloors[tf]!, targets[tf]!);
       cp.cursors[tf] = targets[tf];
     }
@@ -283,28 +316,18 @@ export class BackfillBars {
         progressed = true;
         const period = TF_SECONDS[tf], floor = floors[tf]!;
         const to = Math.floor(cp.cursors[tf]! / period) * period;
-        const from = Math.max(to - (MAX_BARS - 1) * period, floor);
+        const from = Math.max(to - (MAX_BARS - 1) * period, Math.ceil(floor / period) * period);
         if (to < from) { cp.cursors[tf] = floor - 1; continue; }
         try {
-          let fetchFrom = from, fetchTo = to;
-          try {
-            const coverage = await this.deps.coverage({ symbol: cp.symbol, tf, from, to }, signal);
-            if (!this.active(generation)) return;
-            const holes = (coverage.missing || [])
-              .filter((h) => Number.isFinite(h.from) && Number.isFinite(h.to) && h.to >= h.from)
-              .map((h) => ({ from: Math.max(from, Math.floor(h.from / period) * period), to: Math.min(to, Math.floor(h.to / period) * period) }))
-              .filter((h) => h.to >= h.from).sort((a, b) => b.to - a.to);
-            if (!holes.length) {
-              this.confirmSpan(tf, Math.floor(from / period) * period, to);
-              if (to === targets[tf] && from <= to - 2 * period) cp.tail_heads[tf] = Math.max(cp.tail_heads[tf] ?? 0, to);
-              cp.cursors[tf] = from <= floor ? floor - 1 : from;
-              this.promoteConfirmedHead(tf, recentFloor); this.save(); continue;
-            }
-            fetchFrom = holes[0].from; fetchTo = holes[0].to;
-          } catch (error) {
-            if (!this.active(generation)) return;
-            // A coverage read failure can safely fall back to idempotent row upload.
+          const coverage = await this.coverage(tf, from, to, signal);
+          if (!this.active(generation)) return;
+          const hole = this.reconcileCoverage(tf, from, to, coverage.missing);
+          if (!hole) {
+            if (to === targets[tf] && from <= to - 2 * period) cp.tail_heads[tf] = Math.max(cp.tail_heads[tf] ?? 0, to);
+            cp.cursors[tf] = from - period;
+            this.promoteConfirmedHead(tf, recentFloor); this.save(); continue;
           }
+          const { from: fetchFrom, to: fetchTo } = hole;
           const page = await this.deps.terminal.requestReviewBars(cp.symbol, TF_WIRE[tf], { from_server: fetchFrom, to_server: fetchTo }, signal);
           if (!this.active(generation)) return;
           if (page.symbol !== cp.symbol || page.tf !== TF_WIRE[tf] || page.time_basis !== 'broker_server'
@@ -322,8 +345,8 @@ export class BackfillBars {
             empty.add(tf);
             this.addGap(tf, fetchFrom, fetchTo);
           }
-          const next = fetchFrom < to ? fetchFrom : Math.max(from, to - period);
-          cp.cursors[tf] = next <= floor ? floor - 1 : next;
+          const next = fetchFrom - period;
+          cp.cursors[tf] = next;
           this.promoteConfirmedHead(tf, recentFloor);
           this.save();
           this.update({ reachedServer: next, message: `后台补齐近期行情…（${cp.symbol} ${tf}）` });
@@ -343,7 +366,7 @@ export class BackfillBars {
     const partial = tradePaused || failed.size > 0 || empty.size > 0 || TFS.some((tf) => cp.gaps[tf]?.length);
     cp.done = !partial; this.save();
     this.update({ phase: partial ? 'partial_ready' : 'ready', message: tradePaused ? '未决交易指令优先，后台补齐近期行情已让路。'
-      : partial ? '近期部分行情暂未返回，稍后继续补齐。' : '近期行情已补齐，后台每分钟检查新增 K 线。' });
+      : partial ? '近 7 天仍有未确认的 K 线时段，可能包含休市或 MT5 暂未返回的历史。后台会继续检查。' : '近期行情已补齐，后台每分钟检查新增 K 线。' });
   }
   /** Old unproven spans get one bounded probe per timeframe every ten minutes. */
   private async repairGaps(generation: number) {
@@ -362,14 +385,11 @@ export class BackfillBars {
       const from = Math.max(gap.from, to - (MAX_BARS - 1) * period);
       cp.gap_retry_after[tf] = this.deps.now() + GAP_RETRY_MS;
       try {
-        let covered = false;
-        try {
-          const coverage = await this.deps.coverage({ symbol: cp.symbol, tf, from, to }, signal);
-          if (!this.active(generation)) return;
-          covered = coverage.missing.length === 0;
-        } catch { if (!this.active(generation)) return; }
-        if (covered) this.confirmSpan(tf, from, to);
-        else {
+        const coverage = await this.coverage(tf, from, to, signal);
+        if (!this.active(generation)) return;
+        const hole = this.reconcileCoverage(tf, from, to, coverage.missing);
+        if (hole) {
+          const { from, to } = hole;
           const page = await this.deps.terminal.requestReviewBars(cp.symbol, TF_WIRE[tf], { from_server: from, to_server: to }, signal);
           if (!this.active(generation)) return;
           if (page.symbol !== cp.symbol || page.tf !== TF_WIRE[tf] || page.time_basis !== 'broker_server'
@@ -393,11 +413,12 @@ export class BackfillBars {
     cp.done = !TFS.some((tf) => cp.gaps[tf]?.length);
     this.save();
     this.update({ phase: cp.done ? 'ready' : 'partial_ready', message: cp.done ? '近期行情已补齐，后台每分钟检查新增 K 线。'
-      : '最新行情持续补齐，较早未确认空窗每十分钟有界复查。' });
+      : '近 7 天仍有未确认的 K 线时段，可能包含休市。较早时段每 10 分钟分段复查。' });
   }
   delta(): Promise<void> {
     if (this.paused) return Promise.resolve();
     if (!this.checkpoint || !this.active(this.generation)) return Promise.resolve();
+    if (this.quoteSchedule !== JSON.stringify(this.deps.terminal.getSnapshot().quote_sessions ?? null)) return this.start();
     return this.run(async () => {
       const generation = this.generation;
       try {
@@ -430,7 +451,11 @@ export const backfillBars = new BackfillBars({
   storage: { getItem: (k) => window.localStorage.getItem(k), setItem: (k, v) => window.localStorage.setItem(k, v) },
   accountKey: historyAccountKey,
   now: () => Date.now(),
-  coverage: (q, signal) => getJSON(`/api/market/coverage?symbol=${encodeURIComponent(q.symbol)}&tf=${encodeURIComponent(q.tf)}&from=${q.from}&to=${q.to}`, signal),
+  bindTrack: (body, signal) => postJSON('/api/market/bind-track', body, signal),
+  coverage: (q, signal) => q.quote_sessions ? postJSON('/api/market/coverage', q, signal)
+    : getJSON('/api/market/coverage?' + new URLSearchParams({
+      source: q.source, symbol: q.symbol, tf: q.tf, from: String(q.from), to: String(q.to),
+    }), signal),
   upload: (body, signal) => postJSON('/api/market/backfill', body, signal),
 });
 export const useBackfillBars = () => useSyncExternalStore(backfillBars.subscribe, backfillBars.getSnapshot);

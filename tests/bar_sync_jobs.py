@@ -50,6 +50,22 @@ class RangeJobs(unittest.TestCase):
   self.create();self.finish(True)
   state=jobs.status(self.db,'owner')['job'];self.assertEqual(state['status'],'partial');self.assertEqual(state['bars_received'],0)
   self.assertEqual(self.db.execute('SELECT count(*) FROM bar_coverage').fetchone()[0],0)
+ def test_quote_schedule_skips_closed_windows_and_repeat_jobs(self):
+  # Fixture is on Sunday UTC. The broker has only a Friday session ending
+  # Saturday at 00:30, so the Saturday H1 candle overlaps and must be fetched.
+  saturday=(NOW//86400-1)*86400
+  schedule=[[5,23*3600,86400+1800]]
+  bars.record_quote_sessions(self.db,self.key,'NAS100',schedule,NOW)
+  source='srv:Broker-A'
+  begin=saturday-3600
+  self.assertEqual(bars.backfill_missing(self.db,source,self.key,'NAS100','H1',begin,saturday+3600,NOW),[(begin,saturday)])
+  self.assertEqual(bars.backfill_missing(self.db,source,'other','NAS100','H1',begin,saturday+3600,NOW),[(begin,saturday+3600)])
+  self.assertEqual(bars.backfill_missing(self.db,source,self.key,'XAUUSD','H1',begin,saturday+3600,NOW),[(begin,saturday+3600)])
+  self.create(begin=begin,end=saturday+7200);self.finish()
+  repeat=self.create(begin=begin,end=saturday+7200)
+  self.assertEqual((repeat['status'],repeat['total_segments']),('completed',0))
+  self.assertIsNone(self.poll())
+  self.assertEqual(self.db.execute("SELECT count(*) FROM bar_coverage WHERE state='empty'").fetchone()[0],0)
  def test_partial_rows_import_without_swallowing_missing_slots(self):
   self.create();segment=self.poll();body=self.body(segment);body['bars']=body['bars'][1::2]
   ack=jobs.result(self.db,self.link,body|{'error':'partial_window'},NOW)

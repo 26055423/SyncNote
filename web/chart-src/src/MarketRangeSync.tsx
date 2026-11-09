@@ -100,7 +100,8 @@ export function MarketRangeSync({ symbol, transport = 'syncnote', getLocalContex
   const waiting = active(job);
   const local = transport === 'synctrade';
   const canResume = local && waiting && (!localStatus || ['idle', 'paused', 'error'].includes(localStatus.phase));
-  const progress = job && job.total_segments > 0 ? Math.min(100, Math.floor(job.processed_segments / job.total_segments * 100)) : 0;
+  const progress = job?.status === 'completed' ? 100
+    : job && job.total_segments > 0 ? Math.min(100, Math.floor(job.processed_segments / job.total_segments * 100)) : 0;
   return <section className="market-range-sync" aria-labelledby={`${id}-heading`}>
     <div className="market-range-head"><h3 id={`${id}-heading`}>同步行情</h3><span>{symbol}</span></div>
     <p className="market-range-intro">{local ? '选择区间，通过已授权的 SyncTrade 本机连接读取并同步四周期 K 线。' : '选择区间，由已授权的 SyncNote 获取该品种的四周期 K 线。'}</p>
@@ -120,7 +121,7 @@ export function MarketRangeSync({ symbol, transport = 'syncnote', getLocalContex
         const result = await api<JobResponse>('/api/market/sync-jobs', { ...context, symbol, ...range, transport });
         if (symbolRef.current === requestedSymbol && scopeRef.current === requestedScope) {
           apply(result.job);
-          if (local && result.job) await onStartLocal!();
+          if (local && result.job && ['waiting', 'running'].includes(result.job.status)) await onStartLocal!();
         }
       } catch (err) { if (scopeRef.current === requestedScope) setError(err instanceof Error ? err.message : '同步任务创建失败。'); }
       finally { if (scopeRef.current === requestedScope) setBusy(false); }
@@ -141,6 +142,7 @@ export function MarketRangeSync({ symbol, transport = 'syncnote', getLocalContex
       <p>{stamp(job.from)} — {stamp(job.to - 1)}</p>
       <progress aria-label="行情同步进度" value={progress} max={100} />
       <div className="market-range-count"><span>已处理 {job.processed_segments} / {job.total_segments} 段</span><span>已接收 {job.bars_received.toLocaleString()} 根</span></div>
+      {job.status === 'completed' && job.total_segments === 0 ? <p>所选区间已覆盖，或属于券商常规休市，无需重新读取。</p> : null}
       {waiting ? <p>{local ? '请保持本网页、MT5 与 SyncTrade 运行；关闭网页或断开本机连接会暂停，可重新连接后继续。' : '请保持 MT5 和 SyncNote 1.016 或更新版本运行；无需换到这个品种的图表。'}</p> : null}
       {local && waiting && localStatus?.message ? <p>{localStatus.message}</p> : null}
       {canResume ? <button type="button" className="primary" disabled={busy || !onStartLocal} onClick={async () => {

@@ -8,6 +8,7 @@ import re
 import secrets
 import time
 import auth_security
+import bars
 import sync_history
 
 TTL=600
@@ -121,10 +122,12 @@ def confirm(db,ip,data):
   if row['status']=='approved':raise PairError('配对已完成，请在网页解除连接',409)
   db.execute("UPDATE mt5_device_pairs SET status='rejected' WHERE secret_hash=?",(row['secret_hash'],))
   return {'ok':True,'status':'rejected'}
- _,_,key=sync_history.identity(data)
+ account,server,key=sync_history.identity(data)
  link=db.execute('SELECT * FROM mt5_links WHERE user_id=?',(row['user_id'],)).fetchone()
  if link and link['account_key'] and link['account_key']!=key:raise PairError('该同频账号已绑定其他 MT5 账户，请使用与当前 MT5 账户对应的同频账号',409)
  if row['status']=='approved' and row['account_key']!=key:raise PairError('本次配对账户不匹配',409)
+ try:bars.ensure_feed(db,server,account)
+ except bars.BarsError as error:raise PairError(error.text,error.code)
  token=token_for(secret);token_hash=digest(token)
  if row['status']=='claimed':
   db.execute('INSERT INTO mt5_links(user_id,token_hash,account_key,updated) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET token_hash=excluded.token_hash,account_key=excluded.account_key,updated=excluded.updated',(row['user_id'],token_hash,key,time.time()))

@@ -425,6 +425,8 @@ def main():
    _bars.initialize(conn)
    fetched=alice.request('/api/chart/bars?person='+a['id']+'&ticket='+traded_ticket+'&tf=M1&from='+str(window_from)+'&to='+str(window_to))
    ensure(fetched['source']=='srv:'+server_name,'bars endpoint resolves the broker source')
+   review_url='/api/chart/entry?person='+a['id']+'&ticket='+traded_ticket
+   ensure(alice.request(review_url)['review']['market_source']==fetched['source'],'review entry identifies the same authorized broker track')
    ensure(fetched['bars']==[] and len(fetched['missing'])==1,'empty source reports the whole range as missing')
    ensure(alice.request('/api/chart/tracks?person='+a['id']+'&ticket='+traded_ticket+'&from='+str(window_from)+'&to='+str(window_to))['tracks'][0]['active'],'active track is listed first')
    feed=_bars.bind_feed(conn,a['id'],mt5_account,server_name,_now)
@@ -483,6 +485,8 @@ def main():
    limited=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&limit=100')
    ensure(limited.get('count') is not None and len(limited['bars'])<=100,'market bars honours the latest-N limit')
    newest=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&limit=2')
+   review_head=alice.request('/api/chart/bars?person='+a['id']+'&ticket='+traded_ticket+'&tf=M1&limit=2&source=srv:unrelated')
+   ensure(review_head['source']==newest['source'] and review_head['bars']==newest['bars'],'review and live latest pages read the same closed bars')
    ensure(newest['count']==2 and newest['has_more'] and newest['next_before']==newest['bars'][0][0],'market count paging exposes a real next cursor')
    earlier=alice.request('/api/market/bars?symbol=XAUUSD&tf=M1&limit=2&before='+str(newest['next_before'])+'&source='+feed['source'])
    ensure(earlier['source']==newest['source'] and len(earlier['bars'])==2 and earlier['bars'][-1][0]<newest['bars'][0][0],'market count paging stays on one source with a strict UTC boundary')
@@ -530,6 +534,49 @@ def main():
    ensure(empty_result['summary']['state']=='pending' and not empty_result['summary']['complete'],'an empty unproven backfill is not declared a known market closure')
    direct_result=anon.request('/api/market/backfill',empty_backfill,extra=history_bearer)
    ensure(direct_result['account_key']==history_key and direct_result['summary']==empty_result['summary'],'SyncNote Bearer backfill uses the same conservative ingest and exact ACK')
+   live_tick=time.time()
+   live_start=int(live_tick)+original_offset-5
+   forming={'account':mt5_account,'server':server_name,'account_key':history_key,'symbol':'XAUUSD',
+            'tick_time_msc_server':int((live_tick+original_offset)*1000),'bars':{'M1':[live_start,2400,2402,2399,2401,18]}}
+   forming_url='/api/market/forming-bars?'+urllib.parse.urlencode({'source':feed['source'],'symbol':'XAUUSD'})
+   anon.request('/api/mt5/forming-bars',forming,status=401)
+   ensure(anon.request('/api/mt5/forming-bars',forming,extra=history_bearer)['accepted'],'SyncNote publishes a current candle')
+   ensure(alice.request(forming_url)['bars']['M1']==[[live_start-original_offset,2400,2402,2399,2401,18]],'current candle has UTC time and same broker scope')
+   ensure(admin.request(forming_url)['bars']=={},'other users cannot read the private forming candle')
+   ensure(alice.request(forming_url.replace('XAUUSD','EURUSD'))['bars']=={},'forming candles cannot cross symbols')
+   stale={**forming,'tick_time_msc_server':forming['tick_time_msc_server']-60000}
+   ensure(not anon.request('/api/mt5/forming-bars',stale,extra=history_bearer)['accepted'],'stale broker quotes are ignored')
+   with sqlite3.connect(db) as verify_db:
+    ensure(not verify_db.execute('SELECT 1 FROM bars WHERE source=? AND symbol=? AND tf=? AND t=?',
+                                 (feed['source'],'XAUUSD','M1',live_start)).fetchone(),'forming candle never enters the closed bar table')
+   admin_id=admin.request('/api/state')['user']['id']
+   local_server='Synthetic-First-SyncTrade'
+   local_identity={'website_user_id':admin_id,'server':local_server,'account':'771',
+                   'account_key':_bars.account_key(local_server,'771'),
+                   'clock_sample':{'server_time_ms':int(time.time()*1000),'server_offset_sec':0}}
+   anon.request('/api/market/bind-track',local_identity,status=401)
+   admin.request('/api/market/bind-track',{**local_identity,'website_user_id':a['id']},status=409)
+   local_source=admin.request('/api/market/bind-track',local_identity)['source']
+   ensure(admin.request('/api/state')['market_source']==local_source,'new local connection selects its broker before any bars arrive')
+   coverage_url='/api/market/coverage?symbol=XAUUSD&tf=M1&from='+str(upload_now-600)+'&to='+str(upload_now-60)
+   admin.request(coverage_url+'&source=srv:unrelated',status=409)
+   stamp=(upload_now//60-2)*60
+   admin.request('/api/market/backfill',{**local_identity,'symbol':'XAUUSD','tf':'M1','bars':[[stamp,10,11,9,10,1]]})
+   first_bar=admin.request('/api/market/bars?symbol=XAUUSD&tf=M1&limit=1')
+   ensure(first_bar['source']==local_source and first_bar['bars'][0][0]==stamp,'first local upload is read back from its own track')
+   point_coverage='/api/market/coverage?symbol=XAUUSD&tf=M1'
+   ensure(admin.request(f'{point_coverage}&from={stamp}&to={stamp}')['missing']==[],'single stored candle can be verified')
+   absent=stamp-60
+   ensure(admin.request(f'{point_coverage}&from={absent}&to={absent}')['missing']==[{'from':absent,'to':absent}],'single missing candle remains pending')
+   next_weekday=(absent//86400+5)%7
+   closed_check={'source':local_source,'account_key':local_identity['account_key'],'symbol':'XAUUSD',
+                 'tf':'M1','from':absent,'to':absent,'quote_sessions':[[next_weekday,0,86400]]}
+   admin.request('/api/market/coverage',{**closed_check,'account_key':'wrong'},status=409)
+   closed=admin.request('/api/market/coverage',closed_check)
+   ensure(closed['missing']==[] and closed['from']==absent and closed['to']==absent,'bound browser schedule excludes regular closure without requesting a candle')
+   ensure(admin.request(f'{point_coverage}&from={absent}&to={absent}')['missing']==[],'coverage lookup reuses the account symbol schedule')
+   open_check={**closed_check,'quote_sessions':[[((absent//86400)+4)%7,0,86400]]}
+   ensure(admin.request('/api/market/coverage',open_check)['missing']==[{'from':absent,'to':absent}],'changing the quote schedule reveals the unfilled candle again')
    # ---- 两个源码包：同一套打包器，SyncNote 必须在打包时就被证明没有 DLL / 交易 / socket ----
    for path,product in (('/downloads/syncnote.zip','SyncNote'),('/downloads/synctrade.zip','SyncTrade')):
     with zipfile.ZipFile(io.BytesIO(anon.request(path))) as archive:

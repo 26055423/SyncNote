@@ -289,6 +289,24 @@ void WsStop()
    g_listener=WIN_INVALID_SOCKET;
    if(g_winsock_started) WSACleanup();g_winsock_started=false;
 }
+void WsFlush(const int index)
+{
+   if(g_local_peers[index].handle==WIN_INVALID_SOCKET) return;
+   int left=ArraySize(g_local_peers[index].tx)-g_local_peers[index].tx_offset;
+   if(left>0)
+   {
+      uchar part[];int chunk=MathMin(left,32768);
+      ArrayCopy(part,g_local_peers[index].tx,0,g_local_peers[index].tx_offset,chunk);
+      int wrote=send(g_local_peers[index].handle,part,chunk,0);
+      if(wrote>0) g_local_peers[index].tx_offset+=wrote;
+      else if(wrote==0 || WSAGetLastError()!=10035) {WsDrop(index);return;}
+   }
+   if(g_local_peers[index].tx_offset>=ArraySize(g_local_peers[index].tx))
+   {
+      ArrayResize(g_local_peers[index].tx,0);g_local_peers[index].tx_offset=0;
+      if(g_local_peers[index].closing) WsDrop(index);
+   }
+}
 void WsPump(const string allowed_origin,const int port)
 {
    for(int attempt=0;attempt<LOCAL_PEERS;attempt++)
@@ -331,20 +349,7 @@ void WsPump(const string allowed_origin,const int port)
             for(int frames=0;frames<8 && !g_local_peers[i].closing;frames++)
                if(!WsParseFrame(i) || g_local_peers[i].handle==WIN_INVALID_SOCKET) break;
       }
-      if(g_local_peers[i].handle==WIN_INVALID_SOCKET) continue;
-      int left=ArraySize(g_local_peers[i].tx)-g_local_peers[i].tx_offset;
-      if(left>0)
-      {
-         uchar part[];int chunk=MathMin(left,32768);ArrayCopy(part,g_local_peers[i].tx,0,g_local_peers[i].tx_offset,chunk);
-         int wrote=send(g_local_peers[i].handle,part,chunk,0);
-         if(wrote>0) g_local_peers[i].tx_offset+=wrote;
-         else if(wrote==0 || WSAGetLastError()!=10035) {WsDrop(i);continue;}
-      }
-      if(g_local_peers[i].tx_offset>=ArraySize(g_local_peers[i].tx))
-      {
-         ArrayResize(g_local_peers[i].tx,0);g_local_peers[i].tx_offset=0;
-         if(g_local_peers[i].closing) WsDrop(i);
-      }
+      WsFlush(i);
    }
 }
 #endif

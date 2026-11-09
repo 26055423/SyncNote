@@ -19,7 +19,7 @@ using ushort=unsigned short;
 using uint=unsigned int;
 using datetime=std::int64_t;
 template<class T> int ArraySize(const std::vector<T>& v){return static_cast<int>(v.size());}
-template<class T> int ArrayResize(std::vector<T>& v,int n){v.resize(n);return n;}
+template<class T> int ArrayResize(std::vector<T>& v,int n,int=0){v.resize(n);return n;}
 template<class A,class B> auto MathMax(A a,B b){return std::max<std::common_type_t<A,B>>(a,b);}
 template<class A,class B> auto MathMin(A a,B b){return std::min<std::common_type_t<A,B>>(a,b);}
 bool MathIsValidNumber(double d){return std::isfinite(d);}

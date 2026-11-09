@@ -48,6 +48,7 @@ def hub_trade(user_id,item,offset):
                 db.execute("UPDATE trade_reviews SET status='ready',payload=?,updated=? WHERE person=? AND ticket=?",(json.dumps(payload,ensure_ascii=False,allow_nan=False),time.time(),user_id,str(item['ticket'])))
 HUB=ea_hub.Hub(connect,on_trade=hub_trade)
 LIVE=live.LiveStore()
+FORMING=live.FormingBars()
 with connect() as db:
     db.executescript('''
     PRAGMA journal_mode=WAL;
@@ -133,6 +134,12 @@ def history_snapshot(db,person,live_data=None):
  # A hub keeps only its latest 500 trades. It must not hide the full persisted journal.
  data['history']=history
  return {'data':data,'updated':updated,'history_synced_at':synced}
+def review_market_source(db,person,trade):
+ source=bars.source_of_trade(trade)
+ if source:return source
+ feed=bars.feed_of(db,person)
+ return feed['source'] if feed else None
+
 def review_bars(db,person,trade,data,now):
  """复盘上传顺带回填 K 线（P0 不新增 EA 端点）。回填失败不影响复盘本身。"""
  source=bars.source_of_trade(trade or {})
@@ -432,6 +439,7 @@ class Handler(BaseHTTPRequestHandler):
                         # bars 里存的是券商墙钟，交易/复盘时间戳是 UTC：把偏移一起给前端，标注才能压准 K 线。
                         clock_row=db.execute('SELECT offset FROM broker_clocks WHERE person=?',(target,)).fetchone()
                         bar_offset=int(clock_row['offset']) if clock_row and isinstance(clock_row['offset'],(int,float)) else 0
+                        review['market_source']=review_market_source(db,target,review['trade'])
                         return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored,'bar_offset':bar_offset})
                     if path=='/api/chart/bars':
                         # 一笔交易 = 一个 feed = 一个 source；只返回该 source 的 K 线，
@@ -445,11 +453,7 @@ class Handler(BaseHTTPRequestHandler):
                         if not owner:raise Error('用户不存在',404)
                         if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
                         trade=journal.trade(db,target,ticket)
-                        source=bars.source_of_trade(trade)
-                        if not source:
-                            # 旧快照交易没带 server：回落到这个人的 feed（他绑定的那台券商）。
-                            feed=bars.feed_of(db,target)
-                            source=feed['source'] if feed else None
+                        source=review_market_source(db,target,trade)
                         if not source:raise Error('这笔交易没有行情来源，暂时只能看复盘快照',404)
                         symbol=str(trade.get('symbol') or '');tf=q.get('tf',['M15'])[0]
                         counted=bool(q.get('limit'))
@@ -503,6 +507,14 @@ class Handler(BaseHTTPRequestHandler):
                         if not source:source=bars.public_source(db) or ''
                         return self.reply({'source':source,**market_symbols.read(db,uid,source),'public':not feed or source!=feed['source']})
                     if path=='/api/market/sync-jobs':return self.reply(bar_sync_jobs.status(db,uid,str(q.get('symbol',[''])[0]) or None,str(q.get('transport',['syncnote'])[0]),str(q.get('account_key',[''])[0]) or None))
+                    if path=='/api/market/forming-bars':
+                        source=q.get('source',[''])[0];symbol=q.get('symbol',[''])[0]
+                        feed=bars.feed_of(db,uid)
+                        link=db.execute('SELECT token_hash FROM mt5_links WHERE user_id=?',(uid,)).fetchone()
+                        rows={}
+                        if feed and feed['source']==source and link and link['token_hash']:
+                            rows=FORMING.read((uid,feed['account_key'],link['token_hash']),symbol,time.time())
+                        return self.reply({'source':source,'symbol':symbol,'bars':rows})
                     if path=='/api/market/bars':
                         # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
                         # `limit=N&before=UTC秒`：同轨道向前按根数分页，不按日历窗口切。
@@ -543,13 +555,14 @@ class Handler(BaseHTTPRequestHandler):
                         feed=bars.feed_of(db,uid)
                         source=feed['source'] if feed else ''
                         if not source:raise Error('请先连接本机 MT5 绑定账户',409)
+                        if q.get('source') and q['source'][0]!=source:raise Error('当前绑定券商轨道已改变',409)
                         symbol=str(q.get('symbol',['XAUUSD'])[0] or 'XAUUSD')[:64]
                         tf=bars.normalize_tf(str(q.get('tf',['M1'])[0]))
                         if not tf:raise Error('周期不正确')
                         try:start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
                         except ValueError:raise Error('时间范围不正确')
-                        if end<=start:raise Error('时间范围不正确')
-                        holes=bars.missing(db,source,symbol,tf,start,end)
+                        if start<=0 or end<start:raise Error('时间范围不正确')
+                        holes=bars.backfill_missing(db,source,feed['account_key'],symbol,tf,start,end)
                         return self.reply({'source':source,'symbol':symbol,'tf':tf,'missing':[{'from':h[0],'to':h[1]} for h in holes]})
                     if path=='/api/market/earliest':
                         # 回填起点：本账户最早一笔交易的开仓墙钟。前端据此退 100 根、再夹 5 年上限。
@@ -668,7 +681,8 @@ class Handler(BaseHTTPRequestHandler):
                         mutual=[r['id'] for r in following];chat=[uid]+mutual;cm=','.join('?' for _ in chat)
                         messages=[dict(r) for r in db.execute(f'SELECT * FROM messages WHERE person IN ({cm}) ORDER BY id DESC LIMIT 100',chat)][::-1];names={r['id']:r['nickname'] for r in [u]+following}
                         for m in messages:m['name']=names.get(m['person'],'')
-                        return self.reply({'user':public(u),'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))],'reviewed':journal.reviewed(db,uid)})
+                        feed=bars.feed_of(db,uid)
+                        return self.reply({'user':public(u),'market_source':feed['source'] if feed else None,'members':members,'snapshots':snapshots,'events':events,'messages':messages,'now':time.time(),'online_users':[r[0] for r in db.execute('SELECT user_id FROM presence WHERE updated>? AND user_id IN (SELECT target FROM follows WHERE follower=?)',(time.time()-45,uid))],'notifications':[dict(r) for r in db.execute('SELECT n.id,n.actor,u.nickname FROM social_notifications n JOIN users u ON u.id=n.actor WHERE n.recipient=? AND n.seen=0 ORDER BY n.id DESC',(uid,))],'reviewed':journal.reviewed(db,uid)})
                     raise Error('接口不存在',404)
             assets={'/board':'index.html','/history':'history.html','/login':'auth.html','/register':'auth.html','/profile':'profile.html','/welcome':'welcome.html','/local-ea':'local-ea.html','/local-ea.css':'local-ea.css','/admin':'admin.html','/admin.js':'admin.js','/admin.css':'admin.css'}
             for f in ('api.js','app.js','history.js','auth.js','login-security.js','login-security.css','registration.js','profile.js','profile-prefs.js','style.css','favicon.svg','welcome.js','avatars.js','assistant.js','journal-ui.js'):assets['/'+f]=f
@@ -809,6 +823,9 @@ class Handler(BaseHTTPRequestHandler):
                         if current.get('source_account_key')!=key:raise Error('复盘任务不属于此 MT5 账户',409)
                     result=journal.receive(db,link['user_id'],data)
                     review_bars(db,link['user_id'],current,data,now)
+                elif path=='/api/market/bind-track':
+                    _,feed=bar_sync_jobs.bind_local_request(db,self.user(db)['id'],data,now)
+                    result={'ok':True,'source':feed['source']}
                 elif path=='/api/market/sync-jobs':
                     result=bar_sync_jobs.create(db,self.user(db)['id'],data,now)
                 elif path=='/api/market/sync-jobs/cancel':
@@ -875,21 +892,38 @@ class Handler(BaseHTTPRequestHandler):
                             'source':bars.source_for(server),'symbol':symbol,
                             'summary':(summary.get('series') or {}).get(tf) if isinstance(summary,dict) else None}
                 elif path=='/api/market/coverage':
-                    # POST 版(SyncNote EA 用连接码查缺口;SNPost 固定发 POST）。GET 版见 do_GET,走会话。
-                    account,server,key=sync_history.identity(data)
-                    link=self.link_user(db)
-                    if not link['account_key'] or link['account_key']!=key:raise Error('连接码未绑定此 MT5 账户',403)
+                    if self.headers.get('Authorization','').startswith('Bearer '):
+                        _,server,key=sync_history.identity(data)
+                        link=self.link_user(db)
+                        if not link['account_key'] or link['account_key']!=key:raise Error('连接码未绑定此 MT5 账户',403)
+                        source=bars.source_for(server)
+                    else:
+                        feed=bars.feed_of(db,self.user(db)['id'])
+                        if not feed or data.get('account_key')!=feed['account_key'] or data.get('source')!=feed['source']:
+                            raise Error('当前绑定券商轨道已改变',409)
+                        source,key=feed['source'],feed['account_key']
                     symbol=str(data.get('symbol') or 'XAUUSD')[:64]
                     tf=bars.normalize_tf(str(data.get('tf') or 'M1'))
                     if not tf:raise Error('周期不正确')
                     try:start=int(data.get('from') or 0);end=int(data.get('to') or 0)
                     except (ValueError,TypeError):raise Error('时间范围不正确')
-                    if end<=start:raise Error('时间范围不正确')
-                    holes=bars.missing(db,bars.source_for(server),symbol,tf,start,end)
+                    if start<=0 or end<start:raise Error('时间范围不正确')
+                    bars.record_quote_sessions(db,key,symbol,data.get('quote_sessions'),now)
+                    holes=bars.backfill_missing(db,source,key,symbol,tf,start,end,now)
                     # SyncNote(MQL5)只读标量,不解析数组:额外给"最靠右的那个洞"和总数,省掉 EA 侧数组解析。
                     right=max(holes,key=lambda h:h[1]) if holes else None
-                    result={'source':bars.source_for(server),'symbol':symbol,'tf':tf,'missing':[{'from':h[0],'to':h[1]} for h in holes],
+                    result={'source':source,'symbol':symbol,'tf':tf,'from':start,'to':end,'missing':[{'from':h[0],'to':h[1]} for h in holes],
                             'holes':len(holes),'hole_from':right[0] if right else 0,'hole_to':right[1] if right else 0}
+                elif path=='/api/mt5/forming-bars':
+                    link=self.link_user(db)
+                    _,server,key=sync_history.identity(data)
+                    feed=bars.feed_of(db,link['user_id'])
+                    if not feed or feed['account_key']!=key or feed['server']!=server:raise Error('报价账户与绑定券商不一致',403)
+                    symbol=data.get('symbol')
+                    if not isinstance(symbol,str) or not 1<=len(symbol)<=64 or any(ord(c)<32 for c in symbol):raise Error('品种标识不正确')
+                    accepted=FORMING.put((link['user_id'],key,link['token_hash']),symbol,data.get('tick_time_msc_server'),
+                                         data.get('bars'),bars.source_offset(db,feed['source']),now)
+                    result={'ok':True,'accepted':accepted}
                 elif path=='/api/mt5/live':
                     link=self.link_user(db)
                     ingested=LIVE.ingest(link['user_id'],data);result={'ok':True,'bars':ingested['bars'],'bootstrap':ingested['first']}

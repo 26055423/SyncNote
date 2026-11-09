@@ -119,7 +119,7 @@ export interface ChartHandle {
   /** 把收藏的工具同步给所有格子的原生工具栏。 */
   setFavorites(types: string[]): void;
   /** 用新的一段 K 线替换某个基础周期，并按各格子的周期重绘（保持视窗）。 */
-  applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string, refresh?: boolean): Promise<void>;
+  applySeries(base: BaseTimeframe, bars: number[][], onlyCellId?: string, refresh?: boolean, followTail?: boolean): Promise<void>;
 }
 
 export type SyncKind = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'dateRange' | 'drawings' | 'style';
@@ -203,7 +203,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       showReplayMarks(false);
       const master = (ws.cells() as any[]).find(item => item.id === (cell ?? ws.active?.id));
       const recipe = TIMEFRAMES[master?.chart.market.timeframe ?? '1'];
-      const rows = dataRef.current[recipe.base] ?? [];
+      const rows = (props.provider ? charts : dataRef.current)[recipe.base] ?? [];
       const baseSeconds = TIMEFRAMES[basePeriodKey(recipe.base)].seconds;
       const rendered = recipe.seconds === baseSeconds ? rows : aggregate(rows, recipe.seconds);
       const { safeReplayStart } = await import('./replayController');
@@ -470,8 +470,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         }
       }
     },
-    async applySeries(base, bars, _onlyCellId, refresh = false) {
+    async applySeries(base, bars, _onlyCellId, refresh = false, followTail = false) {
       // The static provider shares this cache, including newly added/layout-switched cells.
+      const previousTip = dataRef.current[base]?.at(-1)?.[0];
       dataRef.current[base] = bars;
       if (replaying()) { replayPendingRef.current.add(base); return; }
       if (base === 'M1') minuteListenersRef.current.forEach(listener => listener());
@@ -487,6 +488,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         const rendered = recipe.seconds === baseSeconds ? source : aggregate(source, recipe.seconds);
         const chart = cell.chart;
         const range = chart.getVisibleRange?.();
+        const atTail = followTail && previousTip !== undefined && range &&
+          range.to >= (previousTip - recipe.seconds) * 1000 && bars.at(-1)![0] > previousTip;
         updates.push((async () => {
           seriesUpdateUntilRef.current.set(cell.id, Infinity);
           try {
@@ -495,12 +498,12 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
             if (props.provider) {
               // 空 data 强制从 provider 重载中间缺口，保持实时订阅。
               await chart.setMarket({ ...(refresh ? { data: [] } : {}),
-                bars: Math.max(rendered.length + (refresh ? 2 : 0), (chart.market?.bars ?? 0) + (refresh ? 2 : 1)) });
+                bars: Math.max(rendered.length + 2, (chart.market?.bars ?? 0) + (refresh ? 0 : 1)) });
             } else {
               await chart.setMarket({ data: rendered.map(toOhlcv) });
             }
             await chart.historyComplete();
-            if (range && (!props.provider || refresh)) restoreChartLeft(chart, range.from);
+            if (range && !atTail && (!props.provider || refresh)) restoreChartLeft(chart, range.from);
           } finally { seriesUpdateUntilRef.current.set(cell.id, Date.now() + 100); }
         })());
       }
@@ -620,7 +623,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         await import('./indicators/smc');
         await import('./indicators/hiddenOb');
         await import('./layouts');
-        const { configurePriceScale } = await import('./chartInteractions');
+        const { configurePriceScale, configureViewReset } = await import('./chartInteractions');
         const { attachIndicatorPicker } = await import('./enhancedIndicatorPicker');
         const [{ registerLocale }, zhHans] = await Promise.all([
           import('@luxalgo/vela'),
@@ -876,6 +879,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
           interactionDisposers.push(configurePriceScale(cell.chart));
+          interactionDisposers.push(configureViewReset(cell, (ticker, tf) => sourceProvider.getBars(ticker, tf)));
           // A quote or a resize may move the active viewport too; only a real gesture leads.
           // 拖动/缩放时把可见范围报上去，由上层决定补哪段、删哪段。
           let lastViewport = 0;

@@ -5,6 +5,58 @@
 """
 import threading
 import time
+import math
+
+FORMING_PERIODS = {'M1': 60, 'M5': 300, 'M15': 900, 'H1': 3600}
+FORMING_TTL = 12
+
+
+class FormingBars:
+    """Short-lived, private snapshots of a bound account's current candles."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._data = {}
+
+    def put(self, key, symbol, tick_ms, series, offset, now):
+        if type(tick_ms) is not int or not 0 < tick_ms <= 4102444800000 or not isinstance(series, dict):
+            return False
+        tick = tick_ms / 1000 - offset
+        if not now - FORMING_TTL <= tick <= now + 3:
+            return False
+        current = {}
+        for tf, period in FORMING_PERIODS.items():
+            row = series.get(tf)
+            if not isinstance(row, list) or len(row) != 6 or type(row[0]) is not int:
+                continue
+            if any(type(value) not in (int, float) or not -1e15 <= value <= 1e15 or not math.isfinite(value) for value in row):
+                continue
+            start, opened, high, low, closed, volume = row
+            start -= offset
+            if not (start <= tick < start + period and now < start + period):
+                continue
+            if low <= 0 or not low <= min(opened, closed) <= max(opened, closed) <= high or volume < 0:
+                continue
+            current[tf] = [[start, opened, high, low, closed, volume]]
+        if not current:
+            return False
+        with self._lock:
+            expired = [entry for entry, (seen, _) in self._data.items() if seen < now - FORMING_TTL]
+            for entry in expired:
+                del self._data[entry]
+            identity = (key, symbol)
+            previous = self._data.get(identity)
+            if previous and previous[0] > tick:
+                return False
+            self._data[identity] = (tick, current)
+        return True
+
+    def read(self, key, symbol, now):
+        with self._lock:
+            entry = self._data.get((key, symbol))
+            if not entry or entry[0] < now - FORMING_TTL:
+                return {}
+            return {tf: rows for tf, rows in entry[1].items() if rows[0][0] + FORMING_PERIODS[tf] > now}
 
 TIMEFRAMES = ('1m', '5m', '15m', '1h')
 MAX_BARS = 3000

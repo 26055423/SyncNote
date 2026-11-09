@@ -20,6 +20,7 @@ struct BarsJob{bool active=true;int peer=0;string request_id="read-old",rows="ol
 bool SymbolSelect(const string& symbol,bool){return symbol=="NAS100";}
 void LocalError(int,const string& code,const string&,const string& rid=""){fake_events.push_back(code+":"+rid);}
 string IdentityFields(){return "\"account_id\":\"1001\"";}
+string TradeQuoteSessionsJson(){return g_symbol=="NAS100" ? "[[1,3600,86400]]" : "null";}
 void SendSnapshot(int){fake_events.push_back("snapshot:"+g_symbol);}
 void PaintStatus(){}
 '''
@@ -55,6 +56,7 @@ int main(int argc,char** argv){
     result=self.select(state)
     self.assertEqual(result['symbol'],'NAS100');self.assertFalse(result['bars_active'])
     self.assertEqual(result['response']['symbol'],'NAS100');self.assertEqual(result['response']['request_id'],'switch-1')
+    self.assertEqual(result['response']['quote_sessions'],[[1,3600,86400]])
     self.assertIn('SYMBOL_CHANGED:read-old',result['events']);self.assertEqual(result['sends'],0)
 
  def test_unknown_broker_code_preserves_current_symbol(self):

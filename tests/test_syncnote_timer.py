@@ -25,7 +25,9 @@ using ulong=std::uint64_t;
 template<class A,class B> auto MathMax(A a,B b){return std::max<decltype(a+b)>(a,b);}
 bool g_sn_paused=false,bound=true,UploadBars=true,g_sn_bf_inited=false;
 ulong tick=10000,g_sn_last_paint=0,g_sn_retry_after=0,g_sn_next_upload=0,g_sn_bf_next=0;
-int SyncSeconds=15,g_sn_ack_batches=0,bar_calls=0,history_calls=0,pauses=0,pair_calls=0;
+int g_sn_bf_tf=-1;
+int SyncSeconds=15,g_sn_ack_batches=0,bar_calls=0,history_calls=0,pauses=0,pair_calls=0,forming_calls=0;
+bool quote_due=false;
 string g_sn_review_ticket="",g_sn_pending="",g_sn_sync_scope="scope",g_sn_token="synthetic-authorized-token";
 struct History {
  bool busy=false,ready=false,failed=false;
@@ -48,6 +50,11 @@ bool SNSymbolsPump(){return false;}
 bool SNRangePump(){return false;}
 void SNBarsInit(string){g_sn_bf_inited=true;}
 bool SNBarsPump(){if(g_sn_ack_batches<1)throw std::runtime_error("unbound bar upload");bar_calls++;return true;}
+bool SNFormingPump(ulong){
+ if(g_sn_ack_batches<1)throw std::runtime_error("unbound forming upload");
+ if(!quote_due)return false;
+ quote_due=false;forming_calls++;return true;
+}
 void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
 ''' +timer+r'''
 int main(int argc,char** argv){try {
@@ -67,7 +74,9 @@ int main(int argc,char** argv){try {
   for(int i=0;i<1500;i++){OnTimer();tick+=200;}
   check(history_calls>=15&&bar_calls>=15,"history and continuing bars both make progress");
  }else if(name=="backoff"){
-  g_sn_retry_after=tick+3000;OnTimer();check(history_calls==0&&bar_calls==0,"backoff must not perform IO");
+  g_sn_retry_after=tick+3000;g_sn_ack_batches=1;quote_due=true;
+  OnTimer();check(history_calls==0&&bar_calls==0&&forming_calls==1,"history backoff must not delay the live quote");
+  tick+=200;OnTimer();check(history_calls==0&&bar_calls==0&&forming_calls==1,"no extra upload without a new quote");
  }else throw std::runtime_error("unknown test");
  std::cout<<"ok";return 0;
  }catch(const std::exception& e){std::cerr<<e.what();return 1;}}

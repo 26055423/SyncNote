@@ -7,7 +7,7 @@ import { NativeRenderer, RendererControl } from '@luxalgo/vela';
 const compiled = ts.transpileModule(readFileSync(new URL('../src/vela/chartInteractions.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText
   .replace("'@luxalgo/vela'", JSON.stringify(import.meta.resolve('@luxalgo/vela')));
-const { configurePriceScale } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { configurePriceScale, configureViewReset } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 function fixture() {
   const native = new NativeRenderer();
   native.scheduler = { invalidate() {}, destroy() {} };
@@ -37,4 +37,41 @@ test('blocked browser storage still gives a readable candle price scale', () => 
   const dispose = configurePriceScale(chart);
   assert.equal(chart.renderer.get('scalePriceOnly'), true);
   dispose(); chart.cleanup(); delete globalThis.localStorage;
+});
+
+test('view reset counts real candles across a gap and keeps the historical right edge', async () => {
+  const bars = Array.from({ length: 400 }, (_, i) => ({ time: i * 60_000 + (i >= 160 ? 172_800_000 : 0) }));
+  const updates = [];
+  const range = { from: bars[177].time, to: bars[180].time };
+  const original = () => assert.fail('native reset jumps to the tail');
+  const cell = { resetView: original, chart: {
+    market: { symbol: 'XAUUSD', timeframe: '1' },
+    renderer: { set: (key, value) => updates.push([key, value]) },
+    getVisibleRange: () => range,
+    setVisibleRange: next => updates.push(next),
+  } };
+  const dispose = configureViewReset(cell, async () => bars);
+  cell.resetView();
+  await Promise.resolve();
+  assert.deepEqual(updates, [['autoScale', true], { from: bars[61].time, to: bars[180].time }]);
+  dispose();
+  assert.equal(cell.resetView, original);
+});
+
+test('a pending reset does not override a pan made while candle data is read', async () => {
+  let range = { from: 60_000, to: 120_000 };
+  let finish;
+  const updates = [];
+  const cell = { resetView() {}, chart: {
+    market: { symbol: 'XAUUSD', timeframe: '1' },
+    renderer: { set() {} },
+    getVisibleRange: () => range,
+    setVisibleRange: next => updates.push(next),
+  } };
+  configureViewReset(cell, () => new Promise(resolve => { finish = resolve; }));
+  cell.resetView();
+  range = { from: 0, to: 60_000 };
+  finish([{ time: 0 }, { time: 60_000 }, { time: 120_000 }]);
+  await Promise.resolve();
+  assert.deepEqual(updates, []);
 });
