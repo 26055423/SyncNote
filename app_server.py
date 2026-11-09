@@ -883,10 +883,17 @@ class Handler(BaseHTTPRequestHandler):
                     if not tf:raise Error('周期不正确')
                     if not isinstance(rows,list):raise Error('K 线数据格式不正确')
                     begin,end=data.get('from_server'),data.get('to_server')
-                    # 当前 EA 回传原请求范围，CopyRates 却可能只给出其中一部分。
-                    # 不能把整段请求误记为 have/empty；只按实际已收盘行登记覆盖。
-                    series={tf:{'bars':rows,'complete':False,'from_server':begin,'to_server':end}}
-                    try:summary=bars.ingest(db,bars.source_for(server),key,symbol,series,now)
+                    source=bars.source_for(server)
+                    confirmed_empty=data.get('confirmed_empty') is True
+                    if confirmed_empty:
+                        period=bars.tf_seconds(tf)
+                        if (rows or type(begin) is not int or type(end) is not int or begin<=0 or end<begin
+                            or begin%period or end%period or end-begin>=2000*period
+                            or end+period>now+bars.source_offset(db,source)):
+                            raise Error('无数据确认需要已收盘且对齐的空区间')
+                    # 普通回填只登记实际收到的行。仅 EA 验证过的空区间可登记为已检查。
+                    series={tf:{'bars':rows,'complete':confirmed_empty,'from_server':begin,'to_server':end}}
+                    try:summary=bars.ingest(db,source,key,symbol,series,now)
                     except (bars.BarsError,ValueError,TypeError) as e:raise Error('回填入库失败：'+str(e))
                     result={'ok':True,'tf':tf,'account_key':key,'account':account,'server':server,
                             'source':bars.source_for(server),'symbol':symbol,

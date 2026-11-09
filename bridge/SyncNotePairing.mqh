@@ -63,7 +63,7 @@ void SNPanelPaint()
  ObjectSetInteger(0,bg,OBJPROP_BGCOLOR,C'20,28,38');ObjectSetInteger(0,bg,OBJPROP_COLOR,clrSlateGray);
  ObjectSetInteger(0,bg,OBJPROP_BORDER_TYPE,BORDER_FLAT);ObjectSetInteger(0,bg,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,bg,OBJPROP_HIDDEN,true);
  int y=18,count=0,font=SNPanelFont(),small=MathMax(10,font-2);
- SNPanelText(compact?"SyncNote 1.019":"SyncNote 1.019 · 只读同步",font,clrWhite,y,count);
+ SNPanelText(compact?"SyncNote 1.020":"SyncNote 1.020 · 只读同步",font,clrWhite,y,count);
  if(!short_panel||!waiting_code)SNPanelText("MT5 "+g_sn_account+(compact?"":" @ "+g_sn_server),small,clrSilver,y,count);
  if(!compact)SNPanelText(g_sn_origin,small,clrSilver,y,count);
  if(g_sn_paused)

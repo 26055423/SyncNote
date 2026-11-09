@@ -1,7 +1,7 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.019"
+#property version "1.020"
 #property description "Read-only history, review charts and shared K-line track backfill. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 

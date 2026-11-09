@@ -282,25 +282,34 @@ def _coverage_rows(db, source, symbol, tf):
 def _apply_coverage(db, source, symbol, tf, start, end, state, now):
   if end < start:
     return
-  rows = _coverage_rows(db, source, symbol, tf)
-  rows.append((start, end, state))
-  # 同状态相邻合并；不同状态重叠时 have 优先（保留更"确定"的那个）
+  old = _coverage_rows(db, source, symbol, tf)
+  rows = []
+  cursor = start
+  # have 优先于重叠的 empty，但相邻区间保留各自的状态。
+  for begin, close, current in old:
+    if current == state or close < start or begin > end:
+      rows.append((begin, close, current))
+    elif state == 'have':
+      if begin < start:
+        rows.append((begin, start - 1, current))
+      if close > end:
+        rows.append((end + 1, close, current))
+    else:
+      rows.append((begin, close, current))
+      if cursor < begin:
+        rows.append((cursor, begin - 1, state))
+      cursor = max(cursor, close + 1)
+  if cursor <= end:
+    rows.append((cursor, end, state))
   rows.sort()
   merged = []
   for begin, close, current in rows:
     if merged:
       prev_begin, prev_close, prev_state = merged[-1]
-      if begin <= prev_close + 1:
-        if prev_state == current:
-          merged[-1] = (prev_begin, max(prev_close, close), prev_state)
-          continue
-        if prev_state == 'have' or current == 'have':
-          merged[-1] = (min(prev_begin, begin), max(prev_close, close), 'have')
-          continue
-        merged[-1] = (min(prev_begin, begin), max(prev_close, close), current)
+      if current == prev_state and begin <= prev_close + 1:
+        merged[-1] = (prev_begin, max(prev_close, close), current)
         continue
     merged.append((begin, close, current))
-  old = _coverage_rows(db, source, symbol, tf)
   if merged == old:
     return
   db.execute('DELETE FROM bar_coverage WHERE source=? AND symbol=? AND tf=?', (source, symbol, tf))

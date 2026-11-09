@@ -90,6 +90,9 @@ int main(int argc,char** argv){try{
   std::int64_t a=NOW-600,z=NOW-60;
   require(accepted(ack(0,a,z,2),0,a,z,2),"current response format rejected");
   require(accepted(ack(0,a,z,0),0,a,z,0),"empty pending ACK rejected");
+  string empty=ack(0,a,z,0);empty.replace(empty.find("false"),5,"true");empty.replace(empty.find("pending"),7,"empty");
+  require(SNBarsAcknowledged(empty,0,a,z,0,"key","1001","Synthetic-Demo","XAUUSD",true),"confirmed empty ACK rejected");
+  require(!SNBarsAcknowledged(ack(0,a,z,0),0,a,z,0,"key","1001","Synthetic-Demo","XAUUSD",true),"pending ACK confirmed an empty range");
   string identity=",\"account_key\":\"key\",\"account\":\"1001\",\"server\":\"Synthetic-Demo\",\"symbol\":\"XAUUSD\",\"source\":\"srv:Synthetic-Demo\"";
   require(accepted(ack(0,a,z,2,identity),0,a,z,2),"matching bound identity rejected");
   require(!accepted(ack(1,a,z,2),0,a,z,2)&&!accepted(ack(0,a+60,z,2),0,a,z,2)&&!accepted(ack(0,a,z,1),0,a,z,2),"wrong tf/range/count accepted");

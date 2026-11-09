@@ -47,7 +47,10 @@ interface Dependencies {
   accountKey: (server: string, account: string) => Promise<string>;
   bindTrack?: (identity: Pick<BackfillBody, 'website_user_id' | 'account' | 'server' | 'account_key'> & { clock_sample?: LocalTerminalState['clock_sample'] }, signal: AbortSignal) => Promise<unknown>;
   coverage: (q: { source: string; account_key: string; symbol: string; tf: string; from: number; to: number; quote_sessions?: LocalTerminalState['quote_sessions'] }, signal: AbortSignal) => Promise<{ missing: Array<{ from: number; to: number }> }>;
-  upload: (body: BackfillBody, signal: AbortSignal) => Promise<{ ok: boolean }>;
+  upload: (body: BackfillBody, signal: AbortSignal) => Promise<{
+    ok: boolean;
+    summary?: { state: string; complete: boolean; from_server: number; to_server: number };
+  }>;
   now: () => number;
   schedule?: (callback: () => void, ms: number) => number;
   cancelSchedule?: (timer: number) => void;
@@ -62,6 +65,7 @@ export interface BackfillBody {
   from_server: number;
   to_server: number;
   bars: number[][];
+  confirmed_empty?: true;
 }
 const FRESH: BackfillState = { phase: 'idle', message: '', locked: false, symbol: '', segments: 0, reachedServer: null, flooredTfs: [], lastUpdated: null, repairUpdated: null };
 
@@ -259,6 +263,19 @@ export class BackfillBars {
     return this.deps.coverage({ source: 'srv:' + cp.server.trim(), account_key: cp.account_key,
       symbol: cp.symbol, tf, from, to, quote_sessions: terminal.symbol === cp.symbol ? terminal.quote_sessions : null }, signal);
   }
+  private async uploadRange(tf: Tf, from: number, to: number, rows: number[][], confirmedEmpty: boolean, signal: AbortSignal) {
+    const cp = this.checkpoint!;
+    const ack = await this.deps.upload({
+      website_user_id: this.userId, account: cp.account, server: cp.server, account_key: cp.account_key,
+      symbol: cp.symbol, tf, from_server: from, to_server: to, bars: rows.map(row => row.slice(0, 6)),
+      ...(confirmedEmpty ? { confirmed_empty: true as const } : {}),
+    }, signal);
+    const summary = ack.summary;
+    if (!ack.ok || (confirmedEmpty && (summary?.state !== 'empty' || !summary.complete
+      || summary.from_server !== from || summary.to_server !== to))) {
+      throw new Error('服务器未确认行情覆盖');
+    }
+  }
   private confirmRows(tf: Tf, from: number, to: number, rows: number[][], target: number) {
     const cp = this.checkpoint!, period = TF_SECONDS[tf];
     this.addGap(tf, from, to);
@@ -334,13 +351,15 @@ export class BackfillBars {
             || page.range?.from_server !== fetchFrom || page.range?.to_server !== fetchTo) throw new Error('EA 返回的行情范围不一致');
           const rows = (page.bars || []).filter((row) => Array.isArray(row) && row.length >= 5 && row.slice(0, 5).every(Number.isFinite)
             && row[0] % period === 0 && row[0] >= Math.floor(fetchFrom / period) * period && row[0] <= fetchTo && row[0] + period <= nowServer);
-          if (rows.length) {
-            const ack = await this.deps.upload({ website_user_id: this.userId, account: cp.account, server: cp.server, account_key: cp.account_key,
-              symbol: cp.symbol, tf, from_server: fetchFrom, to_server: fetchTo, bars: rows.map((row) => row.slice(0, 6)) }, signal);
+          const confirmedEmpty = page.confirmed_empty === true && page.bars?.length === 0;
+          if (rows.length || confirmedEmpty) {
+            await this.uploadRange(tf, fetchFrom, fetchTo, rows, confirmedEmpty, signal);
             if (!this.active(generation)) return;
-            if (!ack.ok) throw new Error('服务器未确认行情入库');
-            this.confirmRows(tf, fetchFrom, fetchTo, rows, targets[tf]!);
-            this.update({ segments: this.state.segments + 1, lastUpdated: this.deps.now() });
+            if (confirmedEmpty) this.confirmSpan(tf, fetchFrom, fetchTo);
+            else {
+              this.confirmRows(tf, fetchFrom, fetchTo, rows, targets[tf]!);
+              this.update({ segments: this.state.segments + 1, lastUpdated: this.deps.now() });
+            }
           } else {
             empty.add(tf);
             this.addGap(tf, fetchFrom, fetchTo);
@@ -396,13 +415,15 @@ export class BackfillBars {
             || page.range?.from_server !== from || page.range?.to_server !== to) throw new Error('EA 返回的行情范围不一致');
           const rows = (page.bars || []).filter((row) => Array.isArray(row) && row.length >= 5 && row.slice(0, 5).every(Number.isFinite)
             && row[0] % period === 0 && row[0] >= from && row[0] <= to && row[0] + period <= nowServer);
-          if (rows.length) {
-            const ack = await this.deps.upload({ website_user_id: this.userId, account: cp.account, server: cp.server, account_key: cp.account_key,
-              symbol: cp.symbol, tf, from_server: from, to_server: to, bars: rows.map((row) => row.slice(0, 6)) }, signal);
+          const confirmedEmpty = page.confirmed_empty === true && page.bars?.length === 0;
+          if (rows.length || confirmedEmpty) {
+            await this.uploadRange(tf, from, to, rows, confirmedEmpty, signal);
             if (!this.active(generation)) return;
-            if (!ack.ok) throw new Error('服务器未确认行情入库');
-            this.confirmRows(tf, from, to, rows, target);
-            this.update({ segments: this.state.segments + 1, lastUpdated: this.deps.now(), repairUpdated: this.deps.now() });
+            if (confirmedEmpty) this.confirmSpan(tf, from, to);
+            else {
+              this.confirmRows(tf, from, to, rows, target);
+              this.update({ segments: this.state.segments + 1, lastUpdated: this.deps.now(), repairUpdated: this.deps.now() });
+            }
           }
         }
         this.promoteConfirmedHead(tf, cp.floor_server);

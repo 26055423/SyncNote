@@ -3,7 +3,7 @@
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading requires local pairing consent and durable journals; account-type and quota gates are disabled.
 #property copyright "SyncTrade"
-#property version "1.111"
+#property version "1.112"
 #property strict
 #property description "Windows localhost EA. Local pairing consent required; no account-type or quota gates."
 
@@ -12,6 +12,7 @@
 #include "SyncNoteHistory.mqh"
 #include "SyncTradeRisk.mqh"
 #include "QuoteSessions.mqh"
+#include "HistoryRange.mqh"
 
 input string InpAllowedOrigin="https://sync-trade.top"; // Exact HTTPS website origin, no trailing slash
 input string InpSymbol="";                            // Initial exact broker symbol; empty = current chart
@@ -39,7 +40,7 @@ input int InpTickPushMs=15;                            // Minimum gap between qu
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.111"
+#define LOCAL_VERSION "1.112"
 // Only account-type and volume/exposure/daily quotas are removed. Other protections remain.
 #define LOCAL_NO_QUOTAS true
 #define JOURNAL_MAX 10000
@@ -86,6 +87,7 @@ struct LocalBarsJob
    int digits;
    bool range_mode;
    bool loaded;
+   bool confirmed_empty;
    long from_server;
    long to_server;
    long output_offset;
@@ -571,7 +573,7 @@ void BeginBars(const int peer,const string js)
    g_bars_job.digits=(int)SymbolInfoInteger(symbol,SYMBOL_DIGITS);g_bars_job.range_mode=ranged;
    g_bars_job.from_server=(long)from;g_bars_job.to_server=(long)to;g_bars_job.output_offset=ranged?0:g_offset;
    g_bars_job.next=0;g_bars_job.rows="";ArrayResize(g_bars_job.rates,0);
-   g_bars_job.loaded=false;g_bars_job.limit=(int)limit;g_bars_job.active=true;
+   g_bars_job.loaded=false;g_bars_job.confirmed_empty=false;g_bars_job.limit=(int)limit;g_bars_job.active=true;
 }
 void BeginHistory(const int peer,const string js)
 {
@@ -639,8 +641,13 @@ void PumpBars()
       long aligned_from=g_bars_job.from_server-g_bars_job.from_server%interval;
       // The terminal cache start is not the broker's history boundary. Request
       // the original bounded range so CopyRates can load older missing history.
+      ResetLastError();
       int count=g_bars_job.range_mode ? CopyRates(g_bars_job.symbol,LocalTf(g_bars_job.tf),(datetime)aligned_from,(datetime)g_bars_job.to_server,g_bars_job.rates) :
          CopyRates(g_bars_job.symbol,LocalTf(g_bars_job.tf),0,g_bars_job.limit,g_bars_job.rates);
+      const int read_error=GetLastError();
+      if(g_bars_job.range_mode&&count<=0&&(read_error==0||read_error==ERR_HISTORY_NOT_FOUND)
+         &&SNHistoryRangeEmpty(g_bars_job.symbol,LocalTf(g_bars_job.tf),aligned_from,g_bars_job.to_server))
+      {g_bars_job.confirmed_empty=true;count=0;}
       string error="";
       if(count<0 || (!g_bars_job.range_mode && count<1)) error="MT5 history is not ready for this range";
       else if(g_bars_job.range_mode && (count>2000 || count>g_bars_job.limit)) error="Requested range exceeds limit; split it into smaller windows";
@@ -659,6 +666,7 @@ void PumpBars()
    if(end<g_bars_job.limit) return;
    string metadata="";
    if(g_bars_job.range_mode) metadata=",\"time_basis\":\"broker_server\",\"range\":{\"from_server\":"+IntegerToString(g_bars_job.from_server)+",\"to_server\":"+IntegerToString(g_bars_job.to_server)+"}";
+   if(g_bars_job.confirmed_empty)metadata+=",\"confirmed_empty\":true";
    WsText(g_bars_job.peer,"{\"type\":\"bars\",\"request_id\":"+JStr(g_bars_job.request_id)+",\"symbol\":"+JStr(g_bars_job.symbol)+
       ",\"tf\":"+JStr(g_bars_job.tf)+",\"bars\":["+g_bars_job.rows+"],"+IdentityFields()+metadata+"}");
    g_bars_job.active=false;

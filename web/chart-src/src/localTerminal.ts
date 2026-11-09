@@ -83,6 +83,7 @@ export interface NoteReviewBars {
   range: { from_server: number; to_server: number };
   time_basis: 'broker_server';
   bars: number[][];
+  confirmed_empty?: boolean;
 }
 export interface MarketSymbol {
   symbol: string;

@@ -66,6 +66,34 @@ test('stored coverage skips reads and an unavailable coverage service defers bac
   const covered = fixture({ coverage: async () => ({ missing: [] }) });await covered.sync.start();assert.equal(covered.reads.length, 0);assert.equal(covered.sync.getSnapshot().phase, 'ready');
   const failed = fixture({ coverage() { throw new Error('temporary coverage network error'); } });await failed.sync.start();assert.equal(failed.reads.length, 0);assert.equal(failed.sync.getSnapshot().phase, 'partial_ready');
 });
+test('confirmed empty ranges need a server ACK and are skipped on the next run', async () => {
+  let storedRange = false;
+  const f = fixture({
+    coverage(q) {
+      const latest = q.tf === 'M1' && q.to === Math.floor(NOW_SERVER / 60) * 60 - 60;
+      return { missing: latest && !storedRange ? [{ from: q.to, to: q.to }] : [] };
+    },
+    read(page) { return { ...page, bars: [], confirmed_empty: true }; },
+    upload(body) {
+      assert.equal(body.confirmed_empty, true);
+      storedRange = true;
+      return { ok: true, summary: { state: 'empty', complete: true, from_server: body.from_server, to_server: body.to_server } };
+    },
+  });
+  await f.sync.start();
+  assert.equal(f.reads.length, 1);
+  assert.equal(f.sync.getSnapshot().phase, 'ready');
+  await f.sync.start();
+  assert.equal(f.reads.length, 1);
+
+  const rejected = fixture({
+    coverage(q, call) { return { missing: call === 1 ? [{ from: q.to, to: q.to }] : [] }; },
+    read(page) { return { ...page, bars: [], confirmed_empty: true }; },
+    upload() { return { ok: true }; },
+  });
+  await rejected.sync.start();
+  assert.equal(rejected.sync.getSnapshot().phase, 'partial_ready');
+});
 test('reconnect clears stale gaps using server coverage and skips seconds between candle starts', async () => {
   const target = Math.floor(NOW_SERVER / 60) * 60 - 60;
   const storedLater = target - 60;

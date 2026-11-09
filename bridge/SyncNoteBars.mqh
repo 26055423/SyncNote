@@ -1,4 +1,4 @@
-// Read-only, bounded recent-bar scheduler. No server coverage is inferred from CopyRates.
+// Read-only, bounded recent-bar scheduler.
 #ifndef SYNCNOTE_BARS_V2
 #define SYNCNOTE_BARS_V2
 #include "SyncNoteJson.mqh"
@@ -208,13 +208,13 @@ bool SNBarsReconcileCoverage(CSyncNoteBars &state,const string reply,const int t
  return true;
 }
 
-bool SNBarsAcknowledged(const string reply,const int tf,const long from,const long to,const int sent,const string key,const string account,const string server,const string symbol)
+bool SNBarsAcknowledged(const string reply,const int tf,const long from,const long to,const int sent,const string key,const string account,const string server,const string symbol,const bool confirmed_empty=false)
 {
  string raw,value,summary;long v;
  if(!SNJTop(reply,"ok",raw)||raw!="true"||!SNJTopString(reply,"tf",value)||value!=SNBarsTfName(tf)||!SNJTop(reply,"summary",summary))return false;
  if(!SNJTop(summary,"from_server",raw)||!SNJSignedPositive(raw,v)||v!=from||!SNJTop(summary,"to_server",raw)||!SNJSignedPositive(raw,v)||v!=to)return false;
- if(!SNJTop(summary,"accepted",raw)||!SNJSignedPositive(raw,v)||v!=sent||!SNJTop(summary,"dropped",raw)||raw!="0"||!SNJTop(summary,"complete",raw)||raw!="false")return false;
- if(!SNJTopString(summary,"state",value)||value!=(sent>0?"have":"pending"))return false;
+ if(!SNJTop(summary,"accepted",raw)||!SNJSignedPositive(raw,v)||v!=sent||!SNJTop(summary,"dropped",raw)||raw!="0"||!SNJTop(summary,"complete",raw)||raw!=(confirmed_empty?"true":"false"))return false;
+ if(!SNJTopString(summary,"state",value)||value!=(confirmed_empty?"empty":(sent>0?"have":"pending")))return false;
  string names[]={"account_key","account","server","symbol","source"};string expected[]={key,account,server,symbol,"srv:"+server};
  for(int i=0;i<5;i++)if(SNJTop(reply,names[i],raw)&&(!SNJTopString(reply,names[i],value)||value!=expected[i]))return false;
  return true;
@@ -223,6 +223,7 @@ bool SNBarsAcknowledged(const string reply,const int tf,const long from,const lo
 #ifndef SYNCNOTE_BARS_CORE_ONLY
 // --- MT5 IO: include this header AFTER SNPost/SNStillBound/SNPause/SNWriteExact.
 #include "QuoteSessions.mqh"
+#include "HistoryRange.mqh"
 CSyncNoteBars g_sn_bars;
 string g_sn_bf_state_path="",g_sn_bars_symbol="",g_sn_bars_schedule="";
 bool g_sn_bf_inited=false;
@@ -294,8 +295,14 @@ bool SNBarsPump()
  tf=g_sn_bf_tf;kind=g_sn_bf_kind;from=g_sn_bf_from;to=g_sn_bf_to;g_sn_bf_tf=-1;
  if(!SymbolSelect(g_sn_bars_symbol,true)){g_sn_bars.Failed(tf,kind,now);return true;}
  MqlRates rates[];ArraySetAsSeries(rates,false);
+ ResetLastError();
  int count=CopyRates(g_sn_bars_symbol,SNBarsTfPeriod(tf),(datetime)from,(datetime)to,rates);
+ const int read_error=GetLastError();
  if(!SNStillBound()||Symbol()!=g_sn_bars_symbol){SNPause("Account or symbol changed during recent bar read");return true;}
+ const bool confirmed_empty=count<=0&&(read_error==0||read_error==ERR_HISTORY_NOT_FOUND)
+  &&SNHistoryRangeEmpty(g_sn_bars_symbol,SNBarsTfPeriod(tf),from,to);
+ if(confirmed_empty&&(!SNStillBound()||Symbol()!=g_sn_bars_symbol)){SNPause("Account or symbol changed during empty range verification");return true;}
+ if(confirmed_empty)count=0;
  if(count<0||count>2000||count>ArraySize(rates)){g_sn_bars.Failed(tf,kind,now);return true;}
  string rows="";int sent=0,p=SNBarsTfSeconds(tf);long last=0,stamps[];ArrayResize(stamps,count);
  for(int j=0;j<count;j++)
@@ -306,17 +313,17 @@ bool SNBarsPump()
   rows+="["+IntegerToString(t)+","+SNJNumber(rates[j].open)+","+SNJNumber(rates[j].high)+","+SNJNumber(rates[j].low)+","+SNJNumber(rates[j].close)+","+IntegerToString((long)rates[j].tick_volume)+"]";
   last=t;stamps[sent]=t;sent++;
  }
- if(sent>0)
+ if(sent>0||confirmed_empty)
  {
-  string body="{\"account_key\":"+SNJQuote(g_sn_key)+",\"account\":"+SNJQuote(g_sn_account)+",\"server\":"+SNJQuote(g_sn_server)+",\"symbol\":"+SNJQuote(g_sn_bars_symbol)+",\"tf\":"+SNJQuote(SNBarsTfName(tf))+",\"from_server\":"+IntegerToString(from)+",\"to_server\":"+IntegerToString(to)+",\"complete\":false,\"bars\":["+rows+"]}";
+  string body="{\"account_key\":"+SNJQuote(g_sn_key)+",\"account\":"+SNJQuote(g_sn_account)+",\"server\":"+SNJQuote(g_sn_server)+",\"symbol\":"+SNJQuote(g_sn_bars_symbol)+",\"tf\":"+SNJQuote(SNBarsTfName(tf))+",\"from_server\":"+IntegerToString(from)+",\"to_server\":"+IntegerToString(to)+",\"confirmed_empty\":"+(confirmed_empty?"true":"false")+",\"bars\":["+rows+"]}";
   string reply;int code=SNPost("/api/market/backfill",body,reply);
   if(!SNStillBound()||Symbol()!=g_sn_bars_symbol){SNPause("Account or symbol changed during recent bar upload");return true;}
   if(code==401||code==403||code==409){SNPause("Recent K-line authorization/account binding rejected; inspect website connection settings");return true;}
-  if(code!=200||!SNBarsAcknowledged(reply,tf,from,to,sent,g_sn_key,g_sn_account,g_sn_server,g_sn_bars_symbol))
+  if(code!=200||!SNBarsAcknowledged(reply,tf,from,to,sent,g_sn_key,g_sn_account,g_sn_server,g_sn_bars_symbol,confirmed_empty))
   {g_sn_bars.Failed(tf,kind,now);Print("SyncNote bars: upload not acknowledged; HTTP ",code);return true;}
  }
- // Only the actual emitted timestamps become confirmed; absent prefix/interior/tail stay holes.
- for(int j=0;j<sent;j++)g_sn_bars.Confirm(tf,stamps[j],stamps[j]);
+ if(confirmed_empty)g_sn_bars.Confirm(tf,from,to);
+ else for(int j=0;j<sent;j++)g_sn_bars.Confirm(tf,stamps[j],stamps[j]);
  g_sn_bars.Acknowledged(tf,kind,from,now);
  if(!SNBarsSaveState())Print("SyncNote bars: recent checkpoint write failed; replay remains idempotent");
  return true;

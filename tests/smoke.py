@@ -534,6 +534,19 @@ def main():
    ensure(empty_result['summary']['state']=='pending' and not empty_result['summary']['complete'],'an empty unproven backfill is not declared a known market closure')
    direct_result=anon.request('/api/market/backfill',empty_backfill,extra=history_bearer)
    ensure(direct_result['account_key']==history_key and direct_result['summary']==empty_result['summary'],'SyncNote Bearer backfill uses the same conservative ingest and exact ACK')
+   confirmed={**empty_backfill,'confirmed_empty':True}
+   result=anon.request('/api/market/backfill',confirmed,extra=history_bearer)
+   ensure(result['summary']['state']=='empty' and result['summary']['complete'],'verified empty ranges are persisted by the common ingest')
+   gap_start,gap_end=confirmed['from_server'],confirmed['to_server']
+   coverage_url='/api/market/coverage?'+urllib.parse.urlencode({'symbol':'XAUUSD','tf':'M1','from':gap_start,'to':gap_end})
+   ensure(alice.request(coverage_url)['missing']==[],'SyncTrade sees the empty interval confirmed by SyncNote')
+   alice.request('/api/market/backfill',{**confirmed,'to_server':(wall_now//60)*60},status=400)
+   real_stamp=gap_start+60
+   alice.request('/api/market/backfill',{**empty_backfill,'bars':[[real_stamp,2400,2401,2399,2400,7]]})
+   with sqlite3.connect(db) as verify_db:
+    coverage=verify_db.execute('SELECT state FROM bar_coverage WHERE source=? AND symbol=? AND tf=? AND from_t<=? AND to_t>=?',
+                               (feed['source'],'XAUUSD','M1',real_stamp,real_stamp)).fetchall()
+    ensure(coverage==[('have',)] and alice.request(coverage_url)['missing']==[],'a later real candle replaces empty only at its covered timestamp')
    live_tick=time.time()
    live_start=int(live_tick)+original_offset-5
    forming={'account':mt5_account,'server':server_name,'account_key':history_key,'symbol':'XAUUSD',
