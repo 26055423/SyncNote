@@ -4,7 +4,7 @@ import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type
 import { registerBigwolf } from './bigwolfNative';
 import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
-import { centerChartOnTime, panChartByTime, restoreChartLeft } from './viewportPan';
+import { centerChartOnTime, restoreChartLeft } from './viewportPan';
 import { fitSavedWorkspaceTracks } from './trackSizing';
 
 /**
@@ -325,18 +325,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // 按时间窗口一刀切会把源格子自己的连续拖动事件一起吞掉，表现为"拖了半天只跟一下"。
   const programmaticUntilRef = useRef<Map<string, number>>(new Map());
   const gestureUntilRef = useRef<Map<string, number>>(new Map());
-  const panOthers = (exceptId: string, delta: number) => {
-    if (!delta) return;
-    const until = Date.now() + 250;
-    for (const other of wsRef.current?.cells?.() ?? []) {
-      if (other.id === exceptId) continue;
-      const range = other.chart?.getVisibleRange?.();
-      if (!range || !(range.to > range.from)) continue;
-      programmaticUntilRef.current.set(other.id, until);
-      // 原生 panBy 保持实际蜡烛宽度；setVisibleRange 跨缺口会重新缩放。
-      try { panChartByTime(other.chart, delta); } catch { /* ignore */ }
-    }
-  };
   const alignDateRanges = (exceptId: string, range: { from: number; to: number }) => {
     if (!Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return;
     for (const other of wsRef.current?.cells?.() ?? []) {
@@ -921,14 +909,11 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
               if (Date.now() < (seriesUpdateUntilRef.current.get(cell.id) ?? 0)) return;
               const programmaticUntil = programmaticUntilRef.current.get(cell.id) ?? 0;
               const gesturing = Date.now() < (gestureUntilRef.current.get(cell.id) ?? 0);
-              if (gesturing && ws.active?.id === cell.id && Date.now() > programmaticUntil && previous && span > 0 && dateRangeSyncRef.current) {
+              // 任何一格在动都要联动（不再要求它是 active 格）：鼠标落在哪格就以哪格为准。
+              // 拖动和缩放统一处理：把这一格的可见时间窗口原样套给其他格，
+              // 各自按自己的周期显示（1m 显示 60 根、15m 显示 4 根，但左右边界完全对齐）。
+              if (gesturing && Date.now() > programmaticUntil && previous && span > 0 && (timeSyncRef.current || dateRangeSyncRef.current)) {
                 alignDateRanges(cell.id, range);
-              } else if (timeSyncRef.current && gesturing && ws.active?.id === cell.id && Date.now() > programmaticUntil && previous && span > 0) {
-                const previousSpan = previous.to - previous.from;
-                if (Math.abs(previousSpan - span) < 1) {
-                  const delta = range.from - previous.from;
-                  if (Math.abs(delta) > 500) panOthers(cell.id, delta);
-                }
               }
               const tick = Date.now();
               if (tick - lastViewport < 320) return;

@@ -42,7 +42,7 @@ export type SyncKindId = 'symbol' | 'timeframe' | 'crosshair' | 'viewport' | 'da
 const SYNC_ROWS: { kind: SyncKindId; label: string; title?: string }[] = [
   { kind: 'timeframe', label: '周期' },
   { kind: 'crosshair', label: '十字线' },
-  { kind: 'viewport', label: '时间定位', title: '点击或拖动时对齐时间，保持各窗口的 K 线宽度；日期范围关闭时生效。' },
+  { kind: 'viewport', label: '时间定位', title: '拖动、缩放或点击时，其他窗口对齐同一段时间（各自按自己的周期显示）。' },
   { kind: 'dateRange', label: '日期范围', title: '同步拖动与缩放，所有窗口显示同一段日期。高周期可能只显示少量 K 线；默认关闭。' },
   { kind: 'drawings', label: '绘图同步到所有图表' },
 ];
