@@ -1969,3 +1969,12 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .review-notes-jump { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 12px; text-decoration: none; }
 .review-notes-jump:hover { border-color: var(--accent-line); color: var(--accent-ink); }
 .review-notes-jump-arrow { margin-left: auto; color: var(--dim); }
+
+/* 标题旁的「＋」：直接手输条目 */
+.notebook-inline-toggle { margin-left: auto; min-width: 30px; justify-content: center; }
+.notebook-inline-add { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
+.notebook-inline-add > input { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; font-size: 12px; }
+.notebook-inline-add > input:focus { outline: none; border-color: var(--accent-line); }
+.notebook-inline-add > button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel-2); color: var(--text); font-size: 12px; cursor: pointer; }
+.notebook-inline-add > button[type='submit'] { border-color: var(--accent-line); color: var(--accent-ink); }
+.notebook-inline-add > button:disabled { opacity: .5; cursor: default; }

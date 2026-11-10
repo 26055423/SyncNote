@@ -57,6 +57,9 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   const [quickOpen, setQuickOpen] = useState(false);
   const [libraryExpanded, setLibraryExpanded] = useState(false);
   const [chapterDraft, setChapterDraft] = useState('');
+  /** 标题旁「＋」：不打开弹窗，直接手输条目名称。 */
+  const [inlineOpen, setInlineOpen] = useState(false);
+  const [inlineTitle, setInlineTitle] = useState('');
   const quickDialog = useRef<HTMLDialogElement>(null);
   const [selected, setSelected] = useState<string | null>('body');
   const [templateName, setTemplateName] = useState('');
@@ -351,7 +354,21 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       <div className="notebook-toolbar">
         <button type="button" aria-haspopup="dialog" onClick={openQuickAdd}>＋ 条目 / 模板</button>
         <button type="button" aria-expanded={summaryOpen} onClick={() => (summaryOpen ? setSummaryOpen(false) : openSummary())}>复盘摘要</button>
+        <button type="button" className="notebook-inline-toggle" aria-label="直接输入新条目" aria-expanded={inlineOpen} title="直接输入条目名称，回车添加" onClick={() => setInlineOpen(open => !open)}>＋</button>
       </div>
+      {inlineOpen && <form className="notebook-inline-add" onSubmit={event => {
+        event.preventDefault();
+        const title = inlineTitle.trim();
+        if (!title) return;
+        addChapter(title);
+        setInlineTitle('');
+      }}>
+        <input autoFocus maxLength={80} value={inlineTitle} placeholder="输入条目名称，回车添加" aria-label="新条目名称"
+          onChange={event => setInlineTitle(event.target.value)}
+          onKeyDown={event => { if (event.key === 'Escape') { setInlineOpen(false); setInlineTitle(''); } }} />
+        <button type="submit" disabled={!inlineTitle.trim()}>添加</button>
+        <button type="button" onClick={() => { setInlineOpen(false); setInlineTitle(''); }}>取消</button>
+      </form>}
     </>}
 
     <div className="notebook-blocks">
