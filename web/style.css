@@ -204,3 +204,13 @@ html[data-theme='light'] .avatar-choice.selected{background:#fbf3e3;border-color
  .header-profile{flex:1;min-width:0;padding:10px}
  .header-profile .profile-entry{display:none}
 }
+
+/* 交易日历：马后炮笔记 */
+.calendar-day.has-notes { border-color: var(--accent-line); }
+.calendar-note-count { display: block; margin-top: 2px; color: var(--accent-ink); font-size: 10px; }
+.selected-day-summary .note-count { color: var(--accent-ink); }
+.history-note-list { display: flex; flex-direction: column; gap: 8px; padding: 4px; }
+.history-note { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.history-note:hover { border-color: var(--accent-line); }
+.history-note.is-target { border-color: var(--accent-line); box-shadow: 0 0 0 2px var(--accent-line); }
+.history-note small { color: var(--dim); font-size: 11px; }

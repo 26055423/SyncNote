@@ -1959,3 +1959,8 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .review-notes-list > button { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 8px; background: var(--panel); border: 0; border-bottom: 1px solid var(--line); color: var(--text); cursor: pointer; }
 .review-notes-list small { color: var(--muted); }
 .notebook-section-foot { flex-wrap: wrap; }
+
+/* 「我的复盘」列表：右上角跳交易日历 */
+.review-notes-list summary { display: flex; align-items: center; gap: 8px; }
+.review-notes-history { margin-left: auto; color: var(--accent-ink); font-size: 11px; text-decoration: none; white-space: nowrap; }
+.review-notes-history:hover { text-decoration: underline; }

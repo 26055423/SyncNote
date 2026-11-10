@@ -1497,7 +1497,7 @@ export default function App() {
 
               {tab === 'review' ? (
                 <div className="pane">
-                  <ReviewNotesList revision={notesRevision} open={openNote} />
+                  <ReviewNotesList revision={notesRevision} current={entry?.note_id ?? null} open={openNote} />
                   <h3>
                     复盘
                     {trade.ticket ? <small> #{trade.ticket} · {sideText(trade.side)}</small> : null}

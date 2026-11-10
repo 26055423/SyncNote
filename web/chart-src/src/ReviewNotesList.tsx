@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, stamp } from './api';
 
-export function ReviewNotesList({ revision, open }: { revision: number; open(id: string): void }) {
+export function ReviewNotesList({ revision, current = null, open }: { revision: number; current?: string | null; open(id: string): void }) {
   const [query, setQuery] = useState('');
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState<{ items: Array<{ id: string; ticket: string | null; title: string; updated: number; scene: { symbol: string; anchor_ms: number } }>; has_more: boolean }>({ items: [], has_more: false });
@@ -14,9 +14,10 @@ export function ReviewNotesList({ revision, open }: { revision: number; open(id:
     }, 200);
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [query, offset, revision]);
+  const historyHref = '/history' + (current ? `?note=${encodeURIComponent(current)}` : '');
   return <details className="review-notes-list">
-    <summary>我的笔记</summary>
-    <input aria-label="搜索我的笔记" type="search" value={query} placeholder="搜索内容或品种" onChange={event => { setQuery(event.target.value); setOffset(0); }} />
+    <summary><span>我的复盘</span><a className="review-notes-history" href={historyHref} title="在交易日历里定位这条复盘" onClick={event => event.stopPropagation()}>交易日历 ↗</a></summary>
+    <input aria-label="搜索我的复盘" type="search" value={query} placeholder="搜索内容或品种" onChange={event => { setQuery(event.target.value); setOffset(0); }} />
     {error && <p role="alert">{error}</p>}
     {data.items.map(item => <button type="button" key={item.id} onClick={() => open(item.id)}><b>{item.title || '图表笔记'}</b><small>{item.scene.symbol} · {stamp(item.scene.anchor_ms / 1000)}{item.ticket ? ` · #${item.ticket}` : ''}</small></button>)}
     {!data.items.length && !error && <p className="dim">还没有匹配的笔记</p>}
