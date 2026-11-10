@@ -317,8 +317,8 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
           {selected === section.id && palette}
           <div className="notebook-section-foot">
             <button type="button" className="link" onClick={() => setSelected(section.id)}>常用语</button>
-            <button type="button" className="link" aria-pressed={isChecklist(section)} onClick={() => updateSection(section.id, { checklist: !isChecklist(section) })}>{isChecklist(section) ? '转为普通章节' : '设为检查项'}</button>
-            <button type="button" className="link" disabled={full} onClick={() => addChapter('新检查项', section.group || section.title, true)}>＋检查项</button>
+            <button type="button" className="link" title={isChecklist(section) ? '变回普通条目：只写正文，不参与完成度' : '转成可勾选的检查项：勾选后计入顶部完成度'} aria-pressed={isChecklist(section)} onClick={() => updateSection(section.id, { checklist: !isChecklist(section) })}>{isChecklist(section) ? '转为普通条目' : '转为检查项'}</button>
+            <button type="button" className="link" disabled={full} title="在同一分组下再加一条检查项" onClick={() => addChapter('新检查项', section.group || section.title, true)}>＋ 新检查项</button>
             <div className="notebook-foot-right">
               <button type="button" className="link" disabled={!picked.trim() || busy} title="把选中文字存成常用语" onClick={() => savePhrase(picked)}>存选中为常用语</button>
               <button type="button" className="link" title="最多保存 500 字" disabled={!section.body.trim() || section.body.trim().length > 500 || busy} onClick={() => savePhrase(section.body)}>存为常用语</button>
@@ -397,7 +397,6 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       <form className="notebook-library-form" onSubmit={event => { event.preventDefault(); if (chapterDraft.trim()) addFromCloud(chapterDraft.trim()); }}>
         <input autoFocus aria-label="条目名称" maxLength={80} placeholder="自定义条目名称" value={chapterDraft} onChange={event => setChapterDraft(event.target.value)} />
         <button type="submit" disabled={full || !chapterDraft.trim()}>添加条目</button>
-        <button type="button" disabled={full} onClick={() => { addChapter(chapterDraft.trim() || '新检查项', null, true); closeQuickAdd(); }}>添加检查项</button>
       </form>
       {full && <p className="dim">每篇笔记最多 {MAX_SECTIONS} 个条目 / 检查项。</p>}
       {message && <p className="notebook-feedback" role="status">{message}</p>}
