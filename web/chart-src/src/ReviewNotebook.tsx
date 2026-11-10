@@ -344,12 +344,12 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   return <div className={`review-notebook${readOnly ? ' is-readonly' : ''}`}>
     <div className="notebook-heading">
       <strong>复盘笔记</strong>
-      <span>{progress.total ? `完成 ${progress.done}/${progress.total}` : '章节与清单都可自由搭配'}</span>
+      <span>{progress.total ? `完成 ${progress.done}/${progress.total}` : '条目与清单都可自由搭配'}</span>
     </div>
     {activeTemplate && <div className="notebook-active-template"><span>模板：{activeTemplate.name}</span><button type="button" onClick={() => setActiveTemplate(null)}>清除</button></div>}
     {!readOnly && <>
       <div className="notebook-toolbar">
-        <button type="button" aria-haspopup="dialog" onClick={openQuickAdd}>＋ 章节 / 模板</button>
+        <button type="button" aria-haspopup="dialog" onClick={openQuickAdd}>＋ 条目 / 模板</button>
         <button type="button" aria-expanded={summaryOpen} onClick={() => (summaryOpen ? setSummaryOpen(false) : openSummary())}>复盘摘要</button>
       </div>
     </>}
@@ -387,19 +387,19 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         <strong id="sn-quick-title">快捷添加</strong>
         <button type="button" aria-label="关闭快捷添加" onClick={closeQuickAdd}>×</button>
       </div>
-      <section aria-label="章节选择">
-        <h5>选择章节</h5>
+      <section aria-label="条目选择">
+        <h5>选择条目</h5>
         <div className="notebook-phrases">{[...new Set([...CHAPTERS, ...library.chapters.map(row => row.title)])].map(title => <span className="notebook-phrase" key={title}>
           <button type="button" disabled={full || chapterExists(title)} onClick={() => addFromCloud(title)}>{title}</button>
-          <button type="button" aria-label={'收藏章节 ' + title} aria-pressed={library.chapters.some(row => row.title === title && row.favorite)} onClick={() => void run(() => favoriteChapter(title))}>{library.chapters.some(row => row.title === title && row.favorite) ? '★' : '☆'}</button>
+          <button type="button" aria-label={'收藏条目 ' + title} aria-pressed={library.chapters.some(row => row.title === title && row.favorite)} onClick={() => void run(() => favoriteChapter(title))}>{library.chapters.some(row => row.title === title && row.favorite) ? '★' : '☆'}</button>
         </span>)}</div>
       </section>
       <form className="notebook-library-form" onSubmit={event => { event.preventDefault(); if (chapterDraft.trim()) addFromCloud(chapterDraft.trim()); }}>
-        <input autoFocus aria-label="章节名称" maxLength={80} placeholder="自定义章节名称" value={chapterDraft} onChange={event => setChapterDraft(event.target.value)} />
-        <button type="submit" disabled={full || !chapterDraft.trim()}>添加章节</button>
+        <input autoFocus aria-label="条目名称" maxLength={80} placeholder="自定义条目名称" value={chapterDraft} onChange={event => setChapterDraft(event.target.value)} />
+        <button type="submit" disabled={full || !chapterDraft.trim()}>添加条目</button>
         <button type="button" disabled={full} onClick={() => { addChapter(chapterDraft.trim() || '新检查项', null, true); closeQuickAdd(); }}>添加检查项</button>
       </form>
-      {full && <p className="dim">每篇笔记最多 {MAX_SECTIONS} 个章节 / 检查项。</p>}
+      {full && <p className="dim">每篇笔记最多 {MAX_SECTIONS} 个条目 / 检查项。</p>}
       {message && <p className="notebook-feedback" role="status">{message}</p>}
       {error && <p className="notebook-error" role="alert">{error}</p>}
       <details className="notebook-library" open={libraryExpanded} onToggle={event => setLibraryExpanded(event.currentTarget.open)}>
