@@ -1,28 +1,56 @@
 #!/usr/bin/env bash
-# 从 GitHub 拉取 SyncNote 更新（公开仓库，HTTPS 匿名拉取），有变化才重启，失败回滚。
-# 用法：sudo syncnote-pull
+# Fetch → stop → database snapshot → fast-forward → migrate/start → health check.
+# Failure restores BOTH code and database. Install this updater before a schema upgrade.
 set -euo pipefail
 
-GIT="git -C /SyncTrade -c core.hooksPath=/dev/null"
-before=$(sudo -u admin $GIT rev-parse --short HEAD)
-echo "当前版本：$before"
-
-sudo -u admin $GIT pull --ff-only
-after=$(sudo -u admin $GIT rev-parse --short HEAD)
-
-if [ "$before" = "$after" ]; then
-  echo "已是最新，无需重启"
-  exit 0
+syncnote_git() { sudo -u admin git -C /SyncTrade -c core.hooksPath=/dev/null "$@"; }
+if [ -n "$(syncnote_git status --porcelain)" ]; then
+  echo '工作树有未提交改动，拒绝自动更新。' >&2
+  exit 2
 fi
+before=$(syncnote_git rev-parse HEAD)
+syncnote_git fetch origin
+after=$(syncnote_git rev-parse '@{upstream}')
+if [ "$before" = "$after" ]; then echo '已是最新，无需重启'; exit 0; fi
+syncnote_git merge-base --is-ancestor "$before" "$after"
 
-systemctl restart syncnote
-sleep 3
-# 直连应用端口，避开 nginx 对 80 的 301 跳转（curl -f 会把 3xx 当成功）。
-if curl -fsS -m 5 http://127.0.0.1:18886/api/health >/dev/null; then
-  echo "已更新：$before -> $after，服务正常"
-else
-  echo "健康检查失败，回滚到 $before" >&2
-  sudo -u admin $GIT reset --hard "$before"
-  systemctl restart syncnote
-  exit 1
-fi
+# Keep the helper outside the checkout so rollback can still use the new helper.
+helper=$(mktemp /tmp/syncnote-backup.XXXXXX.py)
+syncnote_git show "$after:tools/database_backup.py" > "$helper"
+chmod 600 "$helper"
+backup="/var/backups/syncnote/board-$(date -u +%Y%m%dT%H%M%SZ)-$before.sqlite3"
+install -d -m 700 /var/backups/syncnote
+stopped=0
+changed=0
+saved=0
+rollback() {
+  result=$?
+  trap - EXIT
+  if [ "$result" -ne 0 ] && [ "$stopped" -eq 1 ]; then
+    echo '更新失败，恢复代码和升级前数据库。' >&2
+    systemctl stop syncnote || true
+    if [ "$changed" -eq 1 ]; then syncnote_git reset --hard "$before"; fi
+    if [ "$saved" -eq 1 ]; then python3 "$helper" "$backup" /SyncTrade/data/board.sqlite3 --restore; fi
+    systemctl start syncnote || true
+  fi
+  rm -f "$helper"
+  exit "$result"
+}
+trap rollback EXIT
+systemctl stop syncnote
+stopped=1
+python3 "$helper" /SyncTrade/data/board.sqlite3 "$backup"
+saved=1
+changed=1
+syncnote_git merge --ff-only "$after"
+systemctl start syncnote
+for attempt in $(seq 1 30); do
+  if curl -fsS -m 2 http://127.0.0.1:18886/api/health >/dev/null; then
+    stopped=0
+    echo "已更新：$before -> $after；备份：$backup"
+    exit 0
+  fi
+  sleep 1
+done
+echo '健康检查超时。' >&2
+exit 1

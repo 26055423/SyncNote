@@ -22,7 +22,7 @@ class RuntimePackage(unittest.TestCase):
    self.assertFalse((stage/'web/chart-src').exists())
    self.assertFalse((stage/'bridge/gateway.py').exists())
    env={**os.environ,'DATA_DIR':str(stage/'data'),'EA_HUB_ENABLE':'0','PYTHONDONTWRITEBYTECODE':'1'}
-   script="import app_server, journal_templates, local_ea; from pathlib import Path; assert journal_templates.SYSTEM_CHAPTERS; assert app_server.DB.is_file(); [local_ea.source_package(Path.cwd(), product) for product in local_ea.PRODUCTS]"
+   script="import app_server, journal_templates, local_ea; from pathlib import Path; assert journal_templates.SYSTEM_CHAPTERS; assert not app_server.DATA.exists(); app_server.initialize_database(); assert app_server.DB.is_file(); [local_ea.source_package(Path.cwd(), product) for product in local_ea.PRODUCTS]"
    result=subprocess.run([sys.executable,'-c',script],cwd=stage,env=env,capture_output=True,text=True,timeout=30)
    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 

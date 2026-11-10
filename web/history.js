@@ -25,6 +25,7 @@ function render(){
  const pendingTimes=rows.filter(t=>t.closed==null),latestClosed=rows.reduce((latest,t)=>Math.max(latest,Number(t.closed)||0),0);
  const historySynced=typeof entry?.history_synced_at==='number'&&Number.isFinite(entry.history_synced_at)&&entry.history_synced_at>0?entry.history_synced_at:null;
  let notice=demo?'演示模式 · 日历和交易记录均为示例。':rows.length+' 笔云端平仓记录 · 最后历史同步：'+(historySynced?stamp(historySynced):'尚无分页同步确认')+' · 最新平仓：'+(latestClosed?stamp(latestClosed):'暂无');
+ if(rows.some(t=>t.legacy))notice+=' · 旧版成交摘要，待完整历史同步';
  if(own&&state.user.auto_history_sync===false)notice+=' · 网页自动续传未开启';
  if(pendingTimes.length)notice+=' · '+pendingTimes.length+' 笔历史时间待校准，未计入日/月/年统计';
  if(journalUnavailable&&canReview)notice+=' · 复盘分类暂不可用，已复盘状态和交易记录照常显示，正在重试';

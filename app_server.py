@@ -22,21 +22,28 @@ from pathlib import Path
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
-ADMIN_USERNAME=os.environ.get('ADMIN_USERNAME','admin').strip().lower()
-ROOT=Path(__file__).parent
-DATA=Path(os.environ.get('DATA_DIR',str(ROOT/'data'))); DATA.mkdir(parents=True,exist_ok=True)
-DB=DATA/'board.sqlite3'
+from app_config import ADMIN_USERNAME,ROOT,DATA,DB,PUBLIC_ORIGIN,SECURE
+from accounts import digest,pw_hash,pw_ok,invite_normalize,invite_hash,new_invite_code,is_admin,public
+from social import friend_pair,friend_edge,edge_state,are_friends,can_chat,relation,friends_of,blocked_of,friend_requests,visible,review_visible
+from review_service import history_for,history_snapshot,review_market_source,review_bars
+from http_errors import Error
+import database,trade_store,observability
+from routes import reviews as review_routes,market as market_routes,admin as admin_routes
+from migrations import migrate as migrate_database
 AVATAR_VERSIONS={p.stem:hashlib.sha256(p.read_bytes()).hexdigest()[:16] for p in (ROOT/'web'/'avatars').glob('avatar*.svg')}
-PUBLIC_ORIGIN=os.environ.get('PUBLIC_ORIGIN','').rstrip('/')
-SECURE=os.environ.get('COOKIE_SECURE','0')=='1'
+
+def initialize_database():
+ return migrate_database(DB)
+
 def connect():
-    db=sqlite3.connect(DB,timeout=20);db.row_factory=sqlite3.Row;db.execute('PRAGMA foreign_keys=ON');return db
+ return database.connect(DB)
 def hub_trade(user_id,item,offset):
     """EA 直连 hub 时平仓：落交易记录，并从 hub 缓存的 K 线拼复盘图。"""
     with connect() as db:
         trade={k:v for k,v in item.items() if k not in ('time_basis','time_verified')}
         trade['time_basis']='utc';trade['time_verified']=True
-        db.execute('INSERT INTO trades VALUES(?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET payload=excluded.payload',(user_id,str(item['ticket']),json.dumps(trade,allow_nan=False,ensure_ascii=False)))
+        trade_store.store_legacy(db,user_id,trade,'ea-hub')
+        if db.execute('SELECT 1 FROM trades WHERE person=? AND ticket=?',(user_id,str(item['ticket']))).fetchone():return
         row=db.execute('SELECT status FROM trade_reviews WHERE person=? AND ticket=?',(user_id,str(item['ticket']))).fetchone()
         if not row:
             db.execute("INSERT OR IGNORE INTO trade_reviews VALUES(?,?,'pending',NULL,?)",(user_id,str(item['ticket']),time.time()))
@@ -49,226 +56,8 @@ def hub_trade(user_id,item,offset):
 HUB=ea_hub.Hub(connect,on_trade=hub_trade)
 LIVE=live.LiveStore()
 FORMING=live.FormingBars()
-with connect() as db:
-    db.executescript('''
-    PRAGMA journal_mode=WAL;
-    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL,avatar TEXT NOT NULL DEFAULT '',bio TEXT NOT NULL DEFAULT '',password TEXT NOT NULL,allow_follow INTEGER NOT NULL DEFAULT 1,share_data INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS follows(follower TEXT NOT NULL REFERENCES users(id),target TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL,PRIMARY KEY(follower,target),CHECK(follower<>target));
-    CREATE TABLE IF NOT EXISTS friend_edges(a TEXT NOT NULL REFERENCES users(id),b TEXT NOT NULL REFERENCES users(id),status TEXT NOT NULL,requested_by TEXT NOT NULL,created REAL NOT NULL,decided REAL,
-      a_deleted INTEGER NOT NULL DEFAULT 0,b_deleted INTEGER NOT NULL DEFAULT 0,a_blocked INTEGER NOT NULL DEFAULT 0,b_blocked INTEGER NOT NULL DEFAULT 0,
-      a_hide INTEGER NOT NULL DEFAULT 0,b_hide INTEGER NOT NULL DEFAULT 0,a_mute INTEGER NOT NULL DEFAULT 0,b_mute INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY(a,b),CHECK(a<b));
-    CREATE TABLE IF NOT EXISTS mt5_links(user_id TEXT PRIMARY KEY REFERENCES users(id),token_hash TEXT UNIQUE,account_key TEXT,updated REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS snapshots(person TEXT PRIMARY KEY,payload TEXT NOT NULL,updated REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS trades(person TEXT NOT NULL,ticket TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(person,ticket));
-    CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,person TEXT NOT NULL,event_key TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,created REAL NOT NULL,UNIQUE(person,event_key));
-    CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,person TEXT NOT NULL,text TEXT NOT NULL,created REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS mt5_bindings(hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),platform TEXT NOT NULL,expires REAL NOT NULL,used INTEGER NOT NULL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS presence(user_id TEXT PRIMARY KEY,updated REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS social_notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,recipient TEXT NOT NULL,actor TEXT NOT NULL,created REAL NOT NULL,seen INTEGER NOT NULL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS registration_invite(id INTEGER PRIMARY KEY CHECK(id=1),code TEXT NOT NULL,updated REAL NOT NULL);
- CREATE TABLE IF NOT EXISTS invites(id INTEGER PRIMARY KEY AUTOINCREMENT,code_hash TEXT NOT NULL UNIQUE,batch TEXT NOT NULL DEFAULT '',note TEXT NOT NULL DEFAULT '',created REAL NOT NULL,expires REAL NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0,used_by TEXT,used_at REAL);
- CREATE INDEX IF NOT EXISTS idx_invites_hash ON invites(code_hash);
-    CREATE TABLE IF NOT EXISTS broker_clocks(person TEXT PRIMARY KEY,broker TEXT NOT NULL,offset INTEGER,observed_from REAL NOT NULL,observed_to REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS auth_limits(key TEXT PRIMARY KEY,window REAL NOT NULL,attempts INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS idx_follows_target ON follows(target);
-    CREATE INDEX IF NOT EXISTS idx_events_person ON events(person,id);
-    CREATE INDEX IF NOT EXISTS idx_messages_person ON messages(person,id);
-    PRAGMA user_version=2;
-    ''')
-with connect() as db:
-    db.execute('INSERT OR IGNORE INTO registration_invite VALUES(1,?,?)',(secrets.token_hex(6).upper(),time.time()))
-    if 'sudo_until' not in [r[1] for r in db.execute('PRAGMA table_info(sessions)')]:db.execute('ALTER TABLE sessions ADD COLUMN sudo_until REAL NOT NULL DEFAULT 0')
-    if 'code_plain' not in [r[1] for r in db.execute('PRAGMA table_info(invites)')]:db.execute("ALTER TABLE invites ADD COLUMN code_plain TEXT NOT NULL DEFAULT ''")
-    if not db.execute('SELECT 1 FROM invites LIMIT 1').fetchone():
-        legacy=db.execute('SELECT code FROM registration_invite WHERE id=1').fetchone()
-        if legacy:
-            code=''.join(ch for ch in str(legacy[0]).upper() if ch.isalnum())
-            db.execute('INSERT INTO invites(code_hash,batch,note,created,expires) VALUES(?,?,?,?,0)',(hashlib.sha256(code.encode()).hexdigest(),'legacy','迁移前的通用邀请码',time.time()))
-    if 'onboarding_step' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN onboarding_step INTEGER NOT NULL DEFAULT 4')
-    if 'locked' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0')
-with connect() as db:
-    if 'share_reviews' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN share_reviews INTEGER NOT NULL DEFAULT 0')
-    if 'auto_history_sync' not in [r[1] for r in db.execute('PRAGMA table_info(users)')]:db.execute('ALTER TABLE users ADD COLUMN auto_history_sync INTEGER NOT NULL DEFAULT 0')
-    for _col in ('a_deleted','b_deleted','a_blocked','b_blocked','a_hide','b_hide','a_mute','b_mute'):
-        if _col not in [r[1] for r in db.execute('PRAGMA table_info(friend_edges)')]:
-            db.execute('ALTER TABLE friend_edges ADD COLUMN '+_col+' INTEGER NOT NULL DEFAULT 0')
-    auth_security.initialize(db)
-    device_pairing.initialize(db)
-    journal.initialize(db)
-    sync_history.initialize(db)
-    bars.initialize(db)
-    market_symbols.initialize(db)
-    bar_sync_jobs.initialize(db)
-    market.initialize(db)
-    chart.initialize(db)
-    groups.initialize(db)
-    dm.initialize(db)
-    if os.environ.get('EA_HUB_ENABLE','1')!='0':HUB.start()
-    if not db.execute("SELECT 1 FROM security_config WHERE key='sessions-30days'").fetchone():
-        db.execute('UPDATE sessions SET expires=? WHERE expires>?',(time.time()+2592000,time.time()))
-        db.execute("INSERT INTO security_config VALUES('sessions-30days')")
-class Error(Exception):
-    def __init__(self,text,code=400):self.text,self.code=text,code
-def digest(s):return hashlib.sha256(s.encode()).hexdigest()
-
-def history_for(db,person):
- clock=db.execute('SELECT * FROM broker_clocks WHERE person=?',(person,)).fetchone()
- rows=[json.loads(row[0]) for row in db.execute('SELECT payload FROM trades WHERE person=?',(person,))]
- history=[utc_trade(row,clock) for row in rows if row.get('history_status') not in ('invalidated','context_unavailable','context_unverified')]
- return sorted(history,key=lambda row:(row.get('closed') is not None,row.get('closed') or 0),reverse=True)
-
-def history_snapshot(db,person,live_data=None):
- """Account freshness and persisted trade-history acknowledgements are separate clocks."""
- history=history_for(db,person)
- synced=db.execute('SELECT max(updated) FROM mt5_history_batches WHERE person=?',(person,)).fetchone()[0]
- snap=db.execute('SELECT payload,updated FROM snapshots WHERE person=?',(person,)).fetchone()
- if live_data:
-  data=dict(live_data);updated=time.time()
- elif snap:
-  data=json.loads(snap['payload']);updated=snap['updated']
- elif history or synced is not None:
-  data={'source':'history-only','online':False,'positions':[]}
-  updated=synced if synced is not None else max((t.get('closed') or 0 for t in history),default=0)
- else:return None
- # A hub keeps only its latest 500 trades. It must not hide the full persisted journal.
- data['history']=history
- return {'data':data,'updated':updated,'history_synced_at':synced}
-def review_market_source(db,person,trade):
- source=bars.source_of_trade(trade)
- if source:return source
- feed=bars.feed_of(db,person)
- return feed['source'] if feed else None
-
-def review_bars(db,person,trade,data,now):
- """复盘上传顺带回填 K 线（P0 不新增 EA 端点）。回填失败不影响复盘本身。"""
- source=bars.source_of_trade(trade or {})
- symbol=str((trade or {}).get('symbol') or '')
- if not source or not symbol:return None
- series=bars.series_from_review(data.get('charts'),data.get('errors'))
- if not series:return None
- try:return bars.ingest(db,source,str((trade or {}).get('source_account_key') or ''),symbol,series,now)
- except (bars.BarsError,ValueError,TypeError):return None
-def pw_hash(p):
-    if not isinstance(p,str) or not 8<=len(p)<=128:raise Error('密码需为 8–128 个字符')
-    salt=secrets.token_hex(16);return salt+':'+hashlib.pbkdf2_hmac('sha256',p.encode(),salt.encode(),310000).hex()
-def pw_ok(p,stored):
-    if not isinstance(p,str) or len(p)>128:return False
-    salt,expected=stored.split(':');return hmac.compare_digest(expected,hashlib.pbkdf2_hmac('sha256',p.encode(),salt.encode(),310000).hex())
-INVITE_ALPHABET='ABCDEFGHJKMNPQRSTVWXYZ23456789'
 
 
-def invite_normalize(code):
- return ''.join(ch for ch in str(code or '').upper() if ch.isalnum())
-
-
-def invite_hash(code):
- return digest(invite_normalize(code))
-
-
-def new_invite_code():
- return '-'.join(''.join(secrets.choice(INVITE_ALPHABET) for _ in range(4)) for _ in range(3))
-
-
-def is_admin(u):
- return bool(u) and u['username']==ADMIN_USERNAME
-
-
-def public(u):return {**{k:u[k] for k in ('id','username','nickname','avatar','bio','allow_follow','share_data','share_reviews','auto_history_sync','onboarding_step')},'role':'admin' if u['username']==ADMIN_USERNAME else 'user'}
-def friend_pair(x,y):
-    """好友关系用无序对存：字典序小的当 a，保证 (A,B) 只有一行。"""
-    return (x,y) if x<y else (y,x)
-def friend_edge(db,x,y):
-    a,b=friend_pair(x,y)
-    return db.execute('SELECT * FROM friend_edges WHERE a=? AND b=?',(a,b)).fetchone()
-def edge_state(db,uid,target):
-    """从 uid 视角看这条关系：微信式的单向状态位。没有关系返回 None。"""
-    row=friend_edge(db,uid,target)
-    if not row:return None
-    side='a' if row['a']==uid else 'b'
-    other='b' if side=='a' else 'a'
-    return {'status':row['status'],'requested_by':row['requested_by'],
-            'i_deleted':bool(row[side+'_deleted']),'they_deleted':bool(row[other+'_deleted']),
-            'i_blocked':bool(row[side+'_blocked']),'they_blocked':bool(row[other+'_blocked']),
-            'i_hide':bool(row[side+'_hide']),'they_hide':bool(row[other+'_hide']),
-            'i_mute':bool(row[side+'_mute']),'they_mute':bool(row[other+'_mute'])}
-def are_friends(db,x,y):
-    """是否还是「好友」：已通过，且双方都没删、没拉黑。"""
-    if x==y:return True
-    st=edge_state(db,x,y)
-    if not st or st['status']!='accepted':return False
-    return not (st['i_deleted'] or st['they_deleted'] or st['i_blocked'] or st['they_blocked'])
-def can_chat(db,x,y):
-    """能不能收发消息：好友 + 没删 + 没拉黑。"""
-    return are_friends(db,x,y)
-def relation(db,uid,target):
-    """none / friend / incoming / outgoing / blocked（我拉黑）/ blocked_me / self。"""
-    if uid==target:return 'self'
-    st=edge_state(db,uid,target)
-    if not st:return 'none'
-    if st['i_blocked']:return 'blocked'
-    if st['they_blocked']:return 'blocked_me'
-    if st['status']=='pending':
-        return 'outgoing' if st['requested_by']==uid else 'incoming'
-    if st['status']=='accepted':
-        if st['i_deleted']:return 'deleted'
-        if st['they_deleted']:return 'deleted_me'
-        return 'friend'
-    return 'none'
-def friends_of(db,uid):
-    """我的好友列表：微信式——只按「我这侧」的删除/拉黑过滤。
-
-    对方删了我，我这一侧还看得到他（和他的头像），但内容与消息都不可用；
-    我删了对方，我自己列表里就没了。
-    """
-    return db.execute("SELECT u.* FROM friend_edges f JOIN users u ON u.id=CASE WHEN f.a=? THEN f.b ELSE f.a END WHERE (f.a=? OR f.b=?) AND f.status='accepted' AND (CASE WHEN f.a=? THEN f.a_deleted ELSE f.b_deleted END)=0 AND (CASE WHEN f.a=? THEN f.a_blocked ELSE f.b_blocked END)=0 ORDER BY f.decided DESC",(uid,uid,uid,uid,uid)).fetchall()
-def blocked_of(db,uid):
-    """我拉黑的人。"""
-    return db.execute("SELECT u.* FROM friend_edges f JOIN users u ON u.id=CASE WHEN f.a=? THEN f.b ELSE f.a END WHERE (f.a=? OR f.b=?) AND ((f.a=? AND f.a_blocked=1) OR (f.b=? AND f.b_blocked=1)) ORDER BY f.decided DESC",(uid,uid,uid,uid,uid)).fetchall()
-def friend_requests(db,uid):
-    """待通过的申请：(incoming, outgoing)。被对方拉黑/申请方已删的不再展示。"""
-    incoming=[];outgoing=[]
-    rows=db.execute("SELECT f.*,CASE WHEN f.a=? THEN f.b ELSE f.a END AS other FROM friend_edges f WHERE f.status='pending' AND (f.a=? OR f.b=?)",(uid,uid,uid)).fetchall()
-    for r in rows:
-        other=r['other']
-        st=edge_state(db,uid,other)
-        if not st:continue
-        if st['i_blocked'] or st['they_blocked']:continue
-        u=db.execute('SELECT * FROM users WHERE id=?',(other,)).fetchone()
-        if not u:continue
-        item={k:u[k] for k in u.keys()};item['asked']=r['created']
-        if r['requested_by']==uid:outgoing.append(item)
-        else:incoming.append(item)
-    return incoming,outgoing
-def migrate_friends(db):
-    """老 follows 关系搬进 friend_edges：互关→好友，单向→待对方通过。幂等。"""
-    rows=db.execute('SELECT follower,target,created FROM follows').fetchall()
-    pairs={}
-    for r in rows:pairs.setdefault(friend_pair(r['follower'],r['target']),[]).append((r['follower'],r['created']))
-    moved=0
-    for (a,b),edges in pairs.items():
-        if db.execute('SELECT 1 FROM friend_edges WHERE a=? AND b=?',(a,b)).fetchone():continue
-        mutual=len(edges)>=2
-        stamp=min(e[1] for e in edges)
-        db.execute('INSERT INTO friend_edges(a,b,status,requested_by,created,decided) VALUES(?,?,?,?,?,?)',
-                   (a,b,'accepted' if mutual else 'pending',edges[0][0],stamp,stamp if mutual else None))
-        moved+=1
-    return moved
-def visible(db,uid,target):
-    """能不能看对方的交易数据：本人，或好友且没删没拉黑、对方开了分享、且对方没对我隐藏。"""
-    if uid==target:return True
-    if not are_friends(db,uid,target):return False
-    st=edge_state(db,uid,target)
-    if st['they_hide']:return False
-    row=db.execute('SELECT share_data FROM users WHERE id=?',(target,)).fetchone()
-    return bool(row and row['share_data'])
-def review_visible(db,uid,target):
-    """复盘可见性：在 visible 的基础上再加对方「分享复盘」开关。"""
-    if uid==target:return True
-    if not visible(db,uid,target):return False
-    row=db.execute('SELECT share_reviews FROM users WHERE id=?',(target,)).fetchone()
-    return bool(row and row['share_reviews'])
 def numeric(v):
     if isinstance(v,bool) or not isinstance(v,(float,int)) or not math.isfinite(v):raise Error('数值格式不正确')
 def validate(data):
@@ -307,26 +96,13 @@ def decode_request(raw,path):
         repaired,count=re.subn(pattern,fix,text)
         if not count:raise
         return json.loads(repaired)
-def assistant_zip(platform,binding):
-    base=ROOT/'web'/'assistant';config=json.dumps(binding,ensure_ascii=False).encode()
-    if platform=='windows':
-        binary=(base/'TongpinConnect.exe').read_bytes();ea=(ROOT/'web'/'TongpinSync.ex5').read_bytes()
-        return binary+config+ea+struct.pack('<II8s',len(config),len(ea),b'TONGPIN4')
-    image=(base/'TongpinConnect-template.dmg').read_bytes()
-    marker=b'TONGPIN_BINDING_SLOT_V1'+b' '*(4096-len(b'TONGPIN_BINDING_SLOT_V1'))
-    if image.count(marker)!=1 or len(config)>4096:raise Error('安装镜像暂时不可用，请稍后重试',503)
-    return image.replace(marker,config+b' '*(4096-len(config)),1)
-
-# 好友迁移：老的 follows → friend_edges。放在所有 helper 定义之后，
-# 否则启动时 migrate_friends 还没定义会被 except 吞掉。
-try:
-    with connect() as _migrate_db:
-        migrate_friends(_migrate_db)
-except Exception:
-    pass
 
 
 class Handler(BaseHTTPRequestHandler):
+    forming=FORMING
+    def send_response(self,code,message=None):
+        self.response_status=code
+        return super().send_response(code,message)
     def log_message(self,*_):pass
     def redirect(self,location,code=302):
         self.send_response(code);self.send_header('Location',location);self.send_header('Cache-Control','no-store');self.send_header('Content-Length','0');self.end_headers()
@@ -376,6 +152,7 @@ class Handler(BaseHTTPRequestHandler):
         if not owner or owner['locked']:raise Error('账号已被停用，请联系管理员',403)
         return link
 
+    @observability.http('http.get')
     def do_GET(self):
         try:
             path=urlparse(self.path).path;q=parse_qs(urlparse(self.path).query)
@@ -403,6 +180,8 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/api/'):
                 with connect() as db:
                     u=self.user(db);uid=u['id']
+                    endpoint=review_routes.GET.get(path) or market_routes.GET.get(path) or admin_routes.GET.get(path)
+                    if endpoint:return endpoint(self,db,u,q)
                     if path=='/api/mt5/history-job':return self.reply({'ok':True,'website_user_id':uid,'review_job':sync_history.review_job(db,uid)})
                     if path=='/api/live':
                         try:limit=int(q.get('limit',['500'])[0])
@@ -417,183 +196,6 @@ class Handler(BaseHTTPRequestHandler):
                                     if row and isinstance(row[0],(int,float)):row[0]=int(row[0])-shift
                             live_payload['offset_sec']=shift
                         return self.reply(live_payload)
-                    if path=='/api/chart/entry':
-                        ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
-                        row=None
-                        if share:
-                            if not share.isdigit():raise Error('消息不存在，或不是发给你的',404)
-                            row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
-                        owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
-                        if not owner:raise Error('用户不存在',404)
-                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
-                        review=journal.review(db,target,ticket,db.execute('SELECT * FROM broker_clocks WHERE person=?',(target,)).fetchone(),utc_trade)
-                        note=journal.notes(db,target)['notes'].get(str(ticket)) if (target==uid or row or owner['share_reviews']) else None
-                        # 分享切片优先：收件人看到的是分享人当时那个窗口，而不是他后来改过的存档。
-                        view=chart.share_view(row) if row else None
-                        # 分享时冻结的笔记优先：收件人看到的是分享当时的内容。
-                        if view and isinstance(view.get('note'),dict):note=view['note']
-                        stored=chart.state(db,target,str(ticket))
-                        if view and view.get('document'):
-                            stored={'document':view['document'],'updated':row['created'],'source':'share'}
-                        share_info=({'id':row['id'],'message':row['message'],'created':row['created'],'seen':bool(row['seen']),
-                                     'anchor_ms':(view or {}).get('anchor_ms'),'timeframe':(view or {}).get('timeframe'),'layout':(view or {}).get('layout')} if row else None)
-                        # bars 里存的是券商墙钟，交易/复盘时间戳是 UTC：把偏移一起给前端，标注才能压准 K 线。
-                        clock_row=db.execute('SELECT offset FROM broker_clocks WHERE person=?',(target,)).fetchone()
-                        bar_offset=int(clock_row['offset']) if clock_row and isinstance(clock_row['offset'],(int,float)) else 0
-                        review['market_source']=review_market_source(db,target,review['trade'])
-                        return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored,'bar_offset':bar_offset})
-                    if path=='/api/chart/bars':
-                        # 一笔交易 = 一个 feed = 一个 source；只返回该 source 的 K 线，
-                        # 缺口原样返回（前端留白/提示），绝不拿别的 source 补。
-                        ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
-                        row=None
-                        if share:
-                            if not share.isdigit():raise Error('消息不存在，或不是发给你的',404)
-                            row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
-                        owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
-                        if not owner:raise Error('用户不存在',404)
-                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
-                        trade=journal.trade(db,target,ticket)
-                        source=review_market_source(db,target,trade)
-                        if not source:raise Error('这笔交易没有行情来源，暂时只能看复盘快照',404)
-                        symbol=str(trade.get('symbol') or '');tf=q.get('tf',['M15'])[0]
-                        counted=bool(q.get('limit'))
-                        if q.get('before') and q.get('after'):raise Error('只能指定一个翻页方向')
-                        if (q.get('before') or q.get('after')) and not counted:raise Error('翻页需指定 limit')
-                        if counted:
-                            try:
-                                limit=int(q['limit'][0]);before=int(q['before'][0]) if q.get('before') else None;after=int(q['after'][0]) if q.get('after') else None
-                            except ValueError:raise Error('根数或翻页时间不正确')
-                            if limit<1 or any(cursor is not None and not 1<=cursor<=32535215999 for cursor in (before,after)):raise Error('根数或翻页时间不正确')
-                            try:
-                                payload=bars.following_utc(db,source,symbol,tf,after,limit,time.time()) if after is not None else bars.latest_utc(db,source,symbol,tf,limit,time.time(),before)
-                            except bars.BarsError as error:raise Error(error.text,error.code)
-                        else:
-                            try:
-                                start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
-                            except ValueError:raise Error('时间范围不正确')
-                            if end<=start:raise Error('时间范围不正确')
-                            try:payload=bars.read_utc(db,source,symbol,tf,start,end,time.time())
-                            except bars.BarsError as error:raise Error(error.text,error.code)
-                        feed=db.execute('SELECT server,account FROM feeds WHERE source=? LIMIT 1',(source,)).fetchone()
-                        payload['feed']={'source':source,'server':(feed['server'] if feed else ''),'account':(feed['account'] if feed else '')}
-                        payload['symbol_label']=str(trade.get('symbol') or '')
-                        return self.reply(payload)
-                    if path=='/api/chart/tracks':
-                        # 视频编辑软件式的“轨道”：一个券商服务器一条轨。
-                        ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
-                        row=None
-                        if share:
-                            if not share.isdigit():raise Error('消息不存在，或不是发给你的',404)
-                            row=chart.share_row(db,uid,int(share));target=row['owner'];ticket=row['ticket']
-                        owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
-                        if not owner:raise Error('用户不存在',404)
-                        if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
-                        trade=journal.trade(db,target,ticket)
-                        source=bars.source_of_trade(trade)
-                        if not source:
-                            feed=bars.feed_of(db,target)
-                            source=feed['source'] if feed else None
-                        try:
-                            start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
-                        except ValueError:raise Error('时间范围不正确')
-                        if end<=start:raise Error('时间范围不正确')
-                        payload=bars.tracks_utc(db,str(trade.get('symbol') or ''),source,start,end)
-                        payload['active_source']=source
-                        return self.reply(payload)
-                    if path=='/api/market/symbols':
-                        # 与行情读取共用登录权限和 source 范围；只返回原始代码，不暴露账户。
-                        feed=bars.feed_of(db,uid)
-                        source=str(q.get('source',[''])[0]) or (feed['source'] if feed else '')
-                        if not source:source=bars.public_source(db) or ''
-                        return self.reply({'source':source,**market_symbols.read(db,uid,source),'public':not feed or source!=feed['source']})
-                    if path=='/api/market/sync-jobs':return self.reply(bar_sync_jobs.status(db,uid,str(q.get('symbol',[''])[0]) or None,str(q.get('transport',['syncnote'])[0]),str(q.get('account_key',[''])[0]) or None))
-                    if path=='/api/market/forming-bars':
-                        source=q.get('source',[''])[0];symbol=q.get('symbol',[''])[0]
-                        feed=bars.feed_of(db,uid)
-                        link=db.execute('SELECT token_hash FROM mt5_links WHERE user_id=?',(uid,)).fetchone()
-                        rows={}
-                        if feed and feed['source']==source and link and link['token_hash']:
-                            rows=FORMING.read((uid,feed['account_key'],link['token_hash']),symbol,time.time())
-                        return self.reply({'source':source,'symbol':symbol,'bars':rows})
-                    if path=='/api/market/bars':
-                        # 「行情」页 / 没有 MT5 的用户：优先自己那条券商轨，其次公共轨（只读）。
-                        # `limit=N&before=UTC秒`：同轨道向前按根数分页，不按日历窗口切。
-                        symbol=str(q.get('symbol',['XAUUSD'])[0] or 'XAUUSD')[:64]
-                        tf=str(q.get('tf',['M15'])[0])
-                        requested=str(q.get('source',[''])[0])
-                        feed=bars.feed_of(db,uid)
-                        source=requested or (feed['source'] if feed else '')
-                        if not source:source=bars.public_source(db,symbol) or ''
-                        if not source:raise Error('服务器上还没有这个品种的 K 线数据',404)
-                        is_public=not feed or source!=feed['source']
-                        counted=bool(q.get('limit'))
-                        if q.get('before') and not counted:raise Error('向前翻页需指定 limit')
-                        if counted:
-                            try:
-                                limit=int(q['limit'][0]);before=int(q['before'][0]) if q.get('before') else None
-                            except ValueError:raise Error('根数或翻页时间不正确')
-                            if limit<1 or (before is not None and not 1<=before<=32535215999):raise Error('根数或翻页时间不正确')
-                            try:payload=bars.latest_utc(db,source,symbol,tf,limit,time.time(),before)
-                            except bars.BarsError as error:raise Error(error.text,error.code)
-                        else:
-                            try:
-                                start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
-                            except ValueError:raise Error('时间范围不正确')
-                            if end<=start:raise Error('时间范围不正确')
-                            try:payload=bars.read_utc(db,source,symbol,tf,start,end,time.time())
-                            except bars.BarsError as error:raise Error(error.text,error.code)
-                        last=db.execute('SELECT max(t) FROM bars WHERE source=? AND symbol=? AND tf=?',(source,symbol,payload['tf'])).fetchone()[0]
-                        entry=bars.catalog_entry(db,source,symbol) or {}
-                        payload['feed']={'source':source,'server':entry.get('server',''),'account':'' if is_public else feed['account']}
-                        payload['public']=is_public
-                        shift=bars.source_offset(db,source)
-                        payload['last_bar']=(int(last)-shift) if last else last
-                        return self.reply(payload)
-                    if path=='/api/market/coverage':
-                        # 回填调度器查：这条券商轨某周期在 [from,to] 里还有哪些段没填（have/empty 都算已扫）。
-                        # 墙钟进墙钟出；前端按券商墙钟切窗口，不在这里换 UTC。
-                        feed=bars.feed_of(db,uid)
-                        source=feed['source'] if feed else ''
-                        if not source:raise Error('请先连接本机 MT5 绑定账户',409)
-                        if q.get('source') and q['source'][0]!=source:raise Error('当前绑定券商轨道已改变',409)
-                        symbol=str(q.get('symbol',['XAUUSD'])[0] or 'XAUUSD')[:64]
-                        tf=bars.normalize_tf(str(q.get('tf',['M1'])[0]))
-                        if not tf:raise Error('周期不正确')
-                        try:start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
-                        except ValueError:raise Error('时间范围不正确')
-                        if start<=0 or end<start:raise Error('时间范围不正确')
-                        holes=bars.backfill_missing(db,source,feed['account_key'],symbol,tf,start,end)
-                        return self.reply({'source':source,'symbol':symbol,'tf':tf,'missing':[{'from':h[0],'to':h[1]} for h in holes]})
-                    if path=='/api/market/earliest':
-                        # 回填起点：本账户最早一笔交易的开仓墙钟。前端据此退 100 根、再夹 5 年上限。
-                        earliest=None
-                        for r in db.execute('SELECT payload FROM trades WHERE person=?',(uid,)):
-                            try:t=json.loads(r['payload']).get('opened_server')
-                            except (ValueError,TypeError):t=None
-                            if isinstance(t,(int,float)) and t>0 and (earliest is None or t<earliest):earliest=int(t)
-                        return self.reply({'earliest_server':earliest})
-                    if path=='/api/data/sources':
-                        # 数据源目录：公共轨 + 自己那条轨，附带每个周期的覆盖/根数。
-                        # 第三类用户（没有 MT5）靠它选数据、自己复盘。
-                        feed=bars.feed_of(db,uid)
-                        mine=feed['source'] if feed else None
-                        rows=[]
-                        for entry in bars.catalog(db):
-                            rows.append({
-                                'id':entry['source'],
-                                'kind':'personal' if entry['source']==mine else 'public',
-                                'server':entry['server'],
-                                'symbol':entry['symbol'],
-                                'bars':entry['bars'],
-                                'last_bar':entry['last_bar']-bars.source_offset(db,entry['source']),
-                                'tfs':{tf:{'from':info['from']-bars.source_offset(db,entry['source']),
-                                           'to':info['to']-bars.source_offset(db,entry['source']),
-                                           'bars':info['bars']} for tf,info in entry['tfs'].items()},
-                                'can_draw':True,
-                                'can_review':True,
-                            })
-                        return self.reply({'sources':rows,'personal':mine})
                     if path=='/api/groups':
                         return self.reply({'groups':groups.groups_of(db,uid)})
                     if path=='/api/groups/messages':
@@ -614,38 +216,11 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'peer':{'id':owner['id'],'nickname':owner['nickname'],'avatar':owner['avatar']},'messages':dm.thread(db,uid,peer)})
                     if path=='/api/groups/members':
                         return self.reply({'members':groups.members(db,str(q.get('group',[''])[0]),uid)})
-                    if path=='/api/reviews/inbox':return self.reply(chart.inbox(db,uid))
-                    if path=='/api/journal':
-                        target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone();can=bool(owner and visible(db,uid,target) and (target==uid or owner['share_reviews']))
-                        return self.reply({**(journal.notes(db,target) if can else {'categories':journal.DEFAULT_TAGS,'notes':{}}),'can_view':can,'editable':target==uid})
-                    if path=='/api/journal/library':return self.reply(journal.journal_templates.library(db,uid))
-                    if path=='/api/journal/chapters':return self.reply(journal.journal_templates.public_chapters(db,q.get('limit',['60'])[0]))
-                    if path=='/api/journal/stats':return self.reply(journal.journal_templates.stats(db,uid))
-                    if path=='/api/trade-review':
-                        target=q.get('person',[uid])[0];owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
-                        if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
-                        return self.reply(journal.review(db,target,q.get('ticket',[''])[0],db.execute('SELECT * FROM broker_clocks WHERE person=?',(target,)).fetchone(),utc_trade))
                     if path=='/api/sessions':
                         cookies=SimpleCookie();cookies.load(self.headers.get('Cookie',''));current=digest(cookies['tongpin_session'].value)
                         rows=db.execute('SELECT hash,expires FROM sessions WHERE user_id=? AND expires>?',(uid,time.time())).fetchall()
                         mfa=db.execute('SELECT enabled FROM account_mfa WHERE user_id=?',(uid,)).fetchone()
                         return self.reply({'sessions':[{'id':r['hash'],'expires':r['expires'],'current':r['hash']==current} for r in rows],'mfa_enabled':bool(mfa and mfa[0])})
-                    if path=='/api/admin/users':
-                        if u['username']!=ADMIN_USERNAME:raise Error('仅管理员可访问',403)
-                        rows=db.execute('SELECT u.id,u.username,u.nickname,u.created,u.locked,s.updated AS synced,(SELECT COUNT(*) FROM trade_reviews r WHERE r.person=u.id AND r.status=\'ready\') AS reviews FROM users u LEFT JOIN snapshots s ON s.person=u.id ORDER BY u.created').fetchall()
-                        return self.reply({'users':[dict(r,role='admin' if r['username']==ADMIN_USERNAME else 'user') for r in rows]})
-                    if path=='/api/invite':
-                        if u['username']!=ADMIN_USERNAME:raise Error('只有管理员可以查看邀请码',403)
-                        return self.reply(dict(db.execute('SELECT code,updated FROM registration_invite WHERE id=1').fetchone()))
-                    if path=='/api/admin/invites':
-                        self.require_admin(u,db)
-                        rows=db.execute('SELECT i.*,u.nickname AS used_name FROM invites i LEFT JOIN users u ON u.id=i.used_by ORDER BY i.id DESC LIMIT 500').fetchall()
-                        now=time.time()
-                        items=[]
-                        for r in rows:
-                            state='used' if r['used_by'] else 'revoked' if r['revoked'] else 'expired' if r['expires'] and r['expires']<now else 'unused'
-                            items.append({'id':r['id'],'batch':r['batch'],'note':r['note'],'created':r['created'],'expires':r['expires'] or 0,'state':state,'used_by':r['used_by'],'used_name':r['used_name'],'used_at':r['used_at'],'code':r['code_plain'] or ''})
-                        return self.reply({'invites':items,'sudo_until':self.sudo_until(db)})
                     if path=='/api/me':return self.reply({'user':public(u)})
                     if path=='/api/profile':
                         # following / followers 保留旧字段名给老页面用，语义统一成「好友」。
@@ -744,6 +319,7 @@ class Handler(BaseHTTPRequestHandler):
         except dm.DmError as e:self.reply({'error':e.text},e.code)
         except Error as e:self.reply({'error':e.text},e.code)
         except Exception:self.reply({'error':'服务暂时不可用'},500)
+    @observability.http('http.post')
     def do_POST(self):
         try:
             origin=self.headers.get('Origin');host=self.headers.get('Host','')
@@ -793,18 +369,6 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=='/api/mt5/assistant':
                     self.user(db)
                     raise Error('独立源码版请下载MQ5源码手动安装采集程序',501)
-                    u=self.user(db);platform=data.get('platform')
-                    if platform not in ('mac','windows'):raise Error('请选择 Mac 或 Windows')
-                    code=secrets.token_urlsafe(36);expires=now+1800
-                    binding={'website':PUBLIC_ORIGIN or 'https://your-domain.example','code':code,'username':u['username'],'expires':expires}
-                    body=assistant_zip(platform,binding)
-                    db.execute('DELETE FROM mt5_bindings WHERE expires<?',(now,))
-                    db.execute('INSERT INTO mt5_bindings VALUES(?,?,?,?,0)',(digest(code),u['id'],platform,expires));db.commit()
-                    self.send_response(200)
-                    extension='dmg' if platform=='mac' else 'exe'
-                    mimetype='application/x-apple-diskimage' if platform=='mac' else 'application/vnd.microsoft.portable-executable'
-                    for k,v in [('Content-Type',mimetype),('Content-Length',str(len(body))),('Cache-Control','no-store'),('Content-Disposition','attachment; filename="SyncNoteConnect.'+extension+'"; filename*=UTF-8\'\'%E5%90%8C%E9%A2%91%E8%BF%9E%E6%8E%A5%E5%8A%A9%E6%89%8B.'+extension),('X-Content-Type-Options','nosniff')]:self.send_header(k,v)
-                    self.end_headers();self.wfile.write(body);return
                 elif path=='/api/mt5/redeem':
                     code=data.get('code');platform=data.get('platform')
                     if not isinstance(code,str) or not 20<=len(code)<=100:raise Error('绑定码无效',401)
@@ -952,66 +516,13 @@ class Handler(BaseHTTPRequestHandler):
                     hs=[normalize(t) for t in hs]
                     s={k:s[k] for k in ('balance','equity','currency','online','positions') if k in s};s['history']=[]
                     db.execute('INSERT INTO snapshots VALUES(?,?,?) ON CONFLICT(person) DO UPDATE SET payload=excluded.payload,updated=excluded.updated',(uid,json.dumps(s,allow_nan=False),now))
-                    for t in hs:db.execute('INSERT INTO trades VALUES(?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET payload=excluded.payload',(uid,str(t['ticket']),json.dumps(t,allow_nan=False)))
+                    for t in hs:trade_store.store_legacy(db,uid,t,'snapshot')
                     for e in es:db.execute('INSERT OR IGNORE INTO events(person,event_key,kind,text,created) VALUES(?,?,?,?,?)',(uid,e['key'],e['kind'],e['text'],now))
                     journal.queue_missing(db,uid)
                     result={'ok':True,'review_ticket':journal.job(db,uid)}
                 else:
                     u=self.user(db);uid=u['id'];result={'ok':True}
-                    if path=='/api/admin/sudo':
-                        if not is_admin(u):raise Error('页面不存在',404)
-                        if not auth_security.limit(db,'sudo:'+self.client_ip(),10,300):raise Error('尝试过于频繁，请稍后再试',429)
-                        if not pw_ok(data.get('password'),u['password']):raise Error('密码不正确',403)
-                        until=time.time()+900
-                        cookies=SimpleCookie()
-                        try:cookies.load(self.headers.get('Cookie',''))
-                        except Exception:raise Error('请重新登录',401)
-                        token=cookies.get('tongpin_session')
-                        if not token:raise Error('请重新登录',401)
-                        db.execute('UPDATE sessions SET sudo_until=? WHERE hash=?',(until,digest(token.value)))
-                        return self.reply({'ok':True,'sudo_until':until})
-                    if path=='/api/admin/invites':
-                        self.require_admin(u,db)
-                        try:count=int(data.get('count',20))
-                        except (TypeError,ValueError):count=20
-                        count=max(1,min(100,count))
-                        try:days=int(data.get('expires_days',7))
-                        except (TypeError,ValueError):days=7
-                        days=max(0,min(365,days))
-                        note=str(data.get('note','')).strip()[:60]
-                        batch=str(data.get('batch','')).strip()[:32] or time.strftime('%Y-%m-%d')
-                        now=time.time();expires=now+days*86400 if days else 0
-                        codes=[]
-                        for _ in range(count):
-                            for attempt in range(6):
-                                code=new_invite_code()
-                                try:
-                                    db.execute('INSERT INTO invites(code_hash,code_plain,batch,note,created,expires) VALUES(?,?,?,?,?,?)',(invite_hash(code),code,batch,note,now,expires))
-                                    codes.append(code);break
-                                except sqlite3.IntegrityError:
-                                    continue
-                        return self.reply({'ok':True,'codes':codes,'batch':batch,'note':note,'expires':expires})
-                    if path=='/api/admin/users/lock':
-                        self.require_admin(u,db)
-                        try:ident=str(data.get('id','')).strip()
-                        except (TypeError,ValueError):raise Error('参数不正确',400)
-                        if not ident:raise Error('参数不正确',400)
-                        target=db.execute('SELECT id,username FROM users WHERE id=?',(ident,)).fetchone()
-                        if not target:raise Error('用户不存在',404)
-                        if target['username']==ADMIN_USERNAME:raise Error('不能锁定管理员自己',409)
-                        locked=1 if data.get('locked') else 0
-                        db.execute('UPDATE users SET locked=? WHERE id=?',(locked,target['id']))
-                        if locked:db.execute('DELETE FROM sessions WHERE user_id=?',(target['id'],))
-                        return self.reply({'ok':True,'id':target['id'],'locked':bool(locked)})
-                    if path=='/api/admin/invites/revoke':
-                        self.require_admin(u,db)
-                        try:ident=int(data.get('id',0))
-                        except (TypeError,ValueError):raise Error('参数不正确',400)
-                        row=db.execute('SELECT id,used_by FROM invites WHERE id=?',(ident,)).fetchone()
-                        if not row:raise Error('邀请码不存在',404)
-                        if row['used_by']:raise Error('这个邀请码已经被使用，无法作废',409)
-                        db.execute("UPDATE invites SET revoked=1,code_plain='' WHERE id=?",(ident,))
-                        return self.reply({'ok':True})
+                    if path in admin_routes.POST:return admin_routes.POST[path](self,db,u,data)
                     if path=='/api/journal':result=journal.save(db,uid,data)
                     elif path=='/api/journal/templates':result=journal.journal_templates.save_template(db,uid,data)
                     elif path=='/api/journal/chapters/favorite':result=journal.journal_templates.favorite_chapter(db,uid,data)
@@ -1077,7 +588,7 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/notifications/read':
                         db.execute('UPDATE social_notifications SET seen=1 WHERE recipient=?',(uid,))
                     elif path=='/api/invite/rotate':
-                        if u['username']!=ADMIN_USERNAME:raise Error('只有管理员可以更换邀请码',403)
+                        self.require_admin(u,db)
                         code=secrets.token_hex(6).upper();db.execute('UPDATE registration_invite SET code=?,updated=? WHERE id=1',(code,now));result['code']=code
                     elif path=='/api/password':
                         if not pw_ok(data.get('current_password'),u['password']):raise Error('当前密码不正确',403)
@@ -1234,20 +745,22 @@ class Handler(BaseHTTPRequestHandler):
             if urlparse(self.path).path=='/api/snapshot':print('Snapshot parse rejected:',type(e).__name__,flush=True)
             self.reply({'error':'请求数据不正确'},400)
         except Exception:self.reply({'error':'服务暂时不可用'},500)
-def catalog_loop():
-    """后台重建数据源目录：全量 GROUP BY 要 2.5 秒，不能放在请求线程里。"""
-    import threading
-    time.sleep(5)
-    while True:
-        try:
-            with connect() as fresh:
-                bars.refresh_catalog(fresh)
-        except Exception as e:
-            print('catalog refresh failed:',type(e).__name__,flush=True)
-        time.sleep(120)
+def main():
+ import argparse,signal
+ from app_runtime import Runtime
+ parser=argparse.ArgumentParser()
+ parser.add_argument('--migrate',action='store_true',help='Apply database migrations and exit')
+ args=parser.parse_args()
+ version=initialize_database()
+ if args.migrate:
+  print('Database schema:',version);return
+ host=os.environ.get('HOST','127.0.0.1');port=int(os.environ.get('PORT','18886'))
+ def stop(signum,frame):raise KeyboardInterrupt
+ signal.signal(signal.SIGTERM,stop)
+ with ThreadingHTTPServer((host,port),Handler) as server, Runtime(connect,HUB):
+  server.daemon_threads=False
+  print(f'SyncNote: http://{host}:{port}',flush=True)
+  try:server.serve_forever()
+  except KeyboardInterrupt:pass
 
-if __name__=='__main__':
-    host=os.environ.get('HOST','127.0.0.1');port=int(os.environ.get('PORT','18886'));print(f'SyncNote v2: http://{host}:{port}',flush=True)
-    import threading
-    threading.Thread(target=catalog_loop,daemon=True).start()
-    ThreadingHTTPServer((host,port),Handler).serve_forever()
+if __name__=='__main__':main()

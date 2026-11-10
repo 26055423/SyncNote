@@ -16,6 +16,7 @@ import time
 import chart
 import dm
 import journal
+import trade_store
 
 MAX_NAME = 40
 MAX_TEXT = 1000
@@ -80,6 +81,9 @@ def initialize(db):
         db.execute('ALTER TABLE group_messages ADD COLUMN snapshot TEXT')
     if 'note_snapshot' not in message_cols:
         db.execute("ALTER TABLE group_messages ADD COLUMN note_snapshot TEXT NOT NULL DEFAULT ''")
+    if 'review_snapshot_id' not in message_cols:
+        db.execute('ALTER TABLE group_messages ADD COLUMN review_snapshot_id INTEGER REFERENCES review_snapshots(id)')
+    db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_group_review_snapshot ON group_messages(review_snapshot_id) WHERE review_snapshot_id IS NOT NULL')
     if 'reply_to' not in message_cols:
         db.execute('ALTER TABLE group_messages ADD COLUMN reply_to INTEGER REFERENCES group_messages(id) ON DELETE SET NULL')
     if 'mentions' not in message_cols:
@@ -240,7 +244,7 @@ def share_trade(db, uid, gid, ticket, snapshot=None, message=''):
         raise GroupError('分享留言最多 %d 字' % chart.MAX_MESSAGE)
     message = message.strip()
     ticket = str(ticket or '')
-    trade = db.execute('SELECT * FROM trades WHERE person=? AND ticket=?', (uid, ticket)).fetchone()
+    trade = trade_store.lookup(db,uid,ticket)
     if not trade:
         raise GroupError('只能分享自己的成交', 403)
     members = [r['user_id'] for r in db.execute('SELECT user_id FROM group_members WHERE group_id=?', (gid,))]
@@ -248,10 +252,10 @@ def share_trade(db, uid, gid, ticket, snapshot=None, message=''):
     now = time.time()
     saved_snapshot = chart.clean_snapshot(snapshot)
     note = journal.notes(db, uid)['notes'].get(ticket)
-    db.execute("INSERT INTO group_messages(group_id,person,kind,text,ticket,created,snapshot,note_snapshot) VALUES(?,?,'trade',?,?,?,?,?)", (gid, uid, message, ticket, now, saved_snapshot, json.dumps(note, ensure_ascii=False)))
+    snapshot_id=chart.create_snapshot(db,uid,ticket,message,saved_snapshot,json.dumps(note,ensure_ascii=False),gid,now)
+    db.execute("INSERT INTO group_messages(group_id,person,kind,text,ticket,created,snapshot,note_snapshot,review_snapshot_id) VALUES(?,?,'trade',?,?,?,?,?,?)", (gid, uid, message, ticket, now, saved_snapshot, json.dumps(note, ensure_ascii=False),snapshot_id))
     message_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
-    for start in range(0, len(recipients), chart.MAX_RECIPIENTS):
-        chart.share(db, uid, ticket, recipients[start:start + chart.MAX_RECIPIENTS], message, snapshot, note)
+    for recipient in recipients:chart.deliver(db,snapshot_id,recipient)
     _touch(db, gid, uid, now)
     return {'id': message_id, 'created': now, 'sent': len(recipients)}
 
@@ -336,8 +340,8 @@ def messages(db, gid, uid, limit=100):
         }
         if not row['recalled'] and row['kind'] == 'trade' and row['ticket']:
             share = db.execute(
-                'SELECT id FROM review_shares WHERE owner=? AND ticket=? AND recipient=?',
-                (row['person'], row['ticket'], uid),
+                'SELECT id FROM review_shares WHERE snapshot_id=? AND recipient=?',
+                (row['review_snapshot_id'], uid),
             ).fetchone()
             item['share'] = share['id'] if share else None
         out.append(item)
@@ -351,15 +355,8 @@ def open_trade(db, gid, uid, message_id):
     row = db.execute('SELECT * FROM group_messages WHERE id=? AND group_id=?', (message_id, gid)).fetchone()
     if not row or row['recalled'] or row['kind'] != 'trade' or not row['ticket']:
         raise GroupError('这条消息不是交易', 404)
-    share = db.execute('SELECT id FROM review_shares WHERE owner=? AND ticket=? AND recipient=?', (row['person'], row['ticket'], uid)).fetchone()
-    if share:
-        return {'share': share['id']}
-    note = json.loads(row['note_snapshot']) if row['note_snapshot'] else journal.notes(db, row['person'])['notes'].get(row['ticket'])
-    chart.share(db, row['person'], row['ticket'], [uid], row['text'] or '', json.loads(row['snapshot']) if row['snapshot'] else None, note)
-    share = db.execute('SELECT id FROM review_shares WHERE owner=? AND ticket=? AND recipient=?', (row['person'], row['ticket'], uid)).fetchone()
-    if not share:
-        raise GroupError('这笔交易暂时无法打开', 404)
-    return {'share': share['id']}
+    if not row['review_snapshot_id']:raise GroupError('这笔交易暂时无法打开',404)
+    return {'share':chart.deliver(db,row['review_snapshot_id'],uid)}
 
 
 def _message(db, gid, message_id, allow_recalled=False):

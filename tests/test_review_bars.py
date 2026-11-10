@@ -94,6 +94,7 @@ class ReviewBarHTTP(unittest.TestCase):
   cls.folder=tempfile.TemporaryDirectory(prefix='syncnote-review-bars-',ignore_cleanup_errors=True)
   with patch.dict(os.environ,{'DATA_DIR':cls.folder.name,'EA_HUB_ENABLE':'0','COOKIE_SECURE':'0'}):
    import app_server
+   app_server.initialize_database()
   cls.app=app_server
   with app_server.connect() as db:
    for person in ('owner','recipient','outsider'):
@@ -101,7 +102,9 @@ class ReviewBarHTTP(unittest.TestCase):
     db.execute('INSERT INTO sessions(hash,user_id,expires) VALUES(?,?,?)',(hashlib.sha256(person.encode()).hexdigest(),person,time.time()+3600))
    trade={'ticket':'review-one','symbol':'XAUUSD','server':'Review-Paging-A','closed':TIMES[0],'time_basis':'utc'}
    db.execute('INSERT INTO trades VALUES(?,?,?)',('owner','review-one',json.dumps(trade)))
-   cls.share=db.execute('INSERT INTO review_shares(owner,ticket,recipient,message,created,snapshot) VALUES(?,?,?,?,?,?)',('owner','review-one','recipient','fixture',time.time(),json.dumps({'anchor_ms':TIMES[0]*1000,'timeframe':'1m'}))).lastrowid
+   import chart
+   chart.share(db,'owner','review-one',['recipient'],'fixture',{'anchor_ms':TIMES[0]*1000,'timeframe':'1m'})
+   cls.share=db.execute('SELECT id FROM review_shares').fetchone()[0]
    seed_bars(db)
    bars.mark_coverage(db,SOURCE,'XAUUSD','M1',TIMES[0]+SHIFT,TIMES[0]+60+SHIFT,'have',0)
   class QuietHandler(app_server.Handler):

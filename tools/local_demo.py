@@ -60,6 +60,7 @@ def main():
         create_admin(args.password)
 
     import app_server as app
+    app.initialize_database()
     import market
 
     db = app.connect()
@@ -123,8 +124,8 @@ def main():
         review = db.execute('SELECT payload FROM trade_reviews WHERE person=? AND ticket=?', (admin_id, 'DEMO-1002')).fetchone()
         db.execute("INSERT OR REPLACE INTO trade_reviews VALUES(?,?,'ready',?,?)",
                    (friend_id, 'DEMO-2002', review['payload'], now))
-        db.execute('INSERT INTO review_shares(owner,ticket,recipient,message,created,seen) VALUES(?,?,?,?,?,0)',
-                   (friend_id, 'DEMO-2002', admin_id, '看我 10 月 27 日那笔空单，标一下你觉得可以改进的地方。', now - 3600))
+        import chart
+        chart.share(db,friend_id,'DEMO-2002',[admin_id],'看我 10 月 27 日那笔空单，标一下你觉得可以改进的地方。')
 
         # 看板：两个人的持仓 + 留言，让首页不是空的。
         def snapshot(equity, balance, positions):

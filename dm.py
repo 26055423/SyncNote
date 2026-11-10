@@ -84,8 +84,8 @@ def thread(db, uid, peer, limit=100):
         })
     # 合并两个人之间互相分享的复盘：在聊天里就是一张卡片，和微信分享文章一样。
     shares = db.execute(
-        '''SELECT s.*,u.nickname,u.avatar FROM review_shares s JOIN users u ON u.id=s.owner
-           WHERE (s.owner=? AND s.recipient=?) OR (s.owner=? AND s.recipient=?)
+        '''SELECT s.*,u.nickname,u.avatar FROM review_share_entries s JOIN users u ON u.id=s.owner
+           WHERE s.group_id IS NULL AND ((s.owner=? AND s.recipient=?) OR (s.owner=? AND s.recipient=?))
            ORDER BY s.created DESC LIMIT ?''',
         (uid, peer, peer, uid, max(1, min(limit, 300))),
     ).fetchall()
@@ -122,7 +122,7 @@ def threads(db, uid, allowed=None):
  rows = db.execute(
   """SELECT CASE WHEN sender=? THEN recipient ELSE sender END AS peer,text,created,sender=? AS mine,id FROM direct_messages WHERE sender=? OR recipient=?
   UNION ALL
-  SELECT CASE WHEN owner=? THEN recipient ELSE owner END AS peer,CASE WHEN message='' THEN '交易复盘' ELSE message END AS text,created,owner=? AS mine,id FROM review_shares WHERE owner=? OR recipient=?
+  SELECT CASE WHEN owner=? THEN recipient ELSE owner END AS peer,CASE WHEN message='' THEN '交易复盘' ELSE message END AS text,created,owner=? AS mine,id FROM review_share_entries WHERE group_id IS NULL AND (owner=? OR recipient=?)
   ORDER BY created DESC,id DESC""", (uid, uid, uid, uid, uid, uid, uid, uid)).fetchall()
  out = []
  visited = set()
@@ -134,7 +134,7 @@ def threads(db, uid, allowed=None):
   user = db.execute('SELECT u.id,u.nickname,u.avatar,coalesce(p.updated,0) AS updated FROM users u LEFT JOIN presence p ON p.user_id=u.id WHERE u.id=?', (peer,)).fetchone()
   if not user:
    continue
-  shares = db.execute('SELECT count(*) FROM review_shares WHERE recipient=? AND owner=? AND seen=0', (uid, peer)).fetchone()[0]
+  shares = db.execute('SELECT count(*) FROM review_share_entries WHERE group_id IS NULL AND recipient=? AND owner=? AND seen=0', (uid, peer)).fetchone()[0]
   out.append({
    'peer': {'id': user['id'], 'nickname': user['nickname'], 'avatar': user['avatar'], 'online': user['updated'] > time.time() - 45},
    'text': row['text'], 'created': row['created'], 'mine': bool(row['mine']), 'unread': unread(db, uid, peer) + shares,
@@ -146,9 +146,9 @@ def threads(db, uid, allowed=None):
 
 def total_unread(db, uid, allowed=None):
  if allowed is not None:
-  return sum(unread(db, uid, peer) + db.execute('SELECT count(*) FROM review_shares WHERE recipient=? AND owner=? AND seen=0', (uid, peer)).fetchone()[0] for peer in allowed)
+  return sum(unread(db, uid, peer) + db.execute('SELECT count(*) FROM review_share_entries WHERE group_id IS NULL AND recipient=? AND owner=? AND seen=0', (uid, peer)).fetchone()[0] for peer in allowed)
  messages = db.execute('SELECT count(*) FROM direct_messages WHERE recipient=? AND read_at IS NULL', (uid,)).fetchone()[0]
- shares = db.execute('SELECT count(*) FROM review_shares WHERE recipient=? AND seen=0', (uid,)).fetchone()[0]
+ shares = db.execute('SELECT count(*) FROM review_share_entries WHERE group_id IS NULL AND recipient=? AND seen=0', (uid,)).fetchone()[0]
  return messages + shares
 
 

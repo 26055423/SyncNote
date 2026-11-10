@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import chart
 import dm
 import groups
 
@@ -27,6 +28,7 @@ class ChatMigration(unittest.TestCase):
    INSERT INTO group_messages VALUES(1,'g','a','text','old group message',NULL,1);
   ''')
   for _ in range(2):
+   chart.initialize(db)
    dm.initialize(db)
    groups.initialize(db)
   db.execute("INSERT INTO group_members VALUES('g','a','owner',1,0)")

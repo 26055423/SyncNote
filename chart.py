@@ -9,6 +9,7 @@
 """
 import json
 import time
+import trade_store
 
 MAX_STATE_BYTES = 512 * 1024
 MAX_SNAPSHOT_BYTES = 512 * 1024
@@ -22,7 +23,7 @@ class ChartError(Exception):
         self.text, self.code = text, code
 
 
-def initialize(db):
+def initialize_legacy(db):
     db.executescript('''
     CREATE TABLE IF NOT EXISTS chart_states(person TEXT NOT NULL,ticket TEXT NOT NULL,state TEXT NOT NULL,updated REAL NOT NULL,PRIMARY KEY(person,ticket));
     CREATE TABLE IF NOT EXISTS review_shares(id INTEGER PRIMARY KEY AUTOINCREMENT,owner TEXT NOT NULL,ticket TEXT NOT NULL,recipient TEXT NOT NULL,message TEXT NOT NULL DEFAULT '',created REAL NOT NULL,seen INTEGER NOT NULL DEFAULT 0,CONSTRAINT one_share UNIQUE(owner,ticket,recipient));
@@ -34,6 +35,14 @@ def initialize(db):
         db.execute("ALTER TABLE review_shares ADD COLUMN snapshot TEXT NOT NULL DEFAULT ''")
     if 'note_snapshot' not in columns:
         db.execute("ALTER TABLE review_shares ADD COLUMN note_snapshot TEXT NOT NULL DEFAULT ''")
+
+
+def initialize(db):
+ from share_migrations import initialize_schema,migrate_shares
+ columns={r[1] for r in db.execute('PRAGMA table_info(review_shares)')}
+ if columns and 'snapshot_id' not in columns:
+  initialize_legacy(db);migrate_shares(db)
+ else:initialize_schema(db)
 
 
 def state(db, person, ticket):
@@ -93,7 +102,7 @@ def clean_snapshot(snapshot):
 
 
 def share_view(row):
-    """解析一行的分享切片；旧消息没有切片时返回 None（退回读存档）。"""
+    """解析一行的分享切片；内容与空值均来自冻结快照。"""
     raw = row['snapshot'] if 'snapshot' in row.keys() else ''
     value = {}
     if raw:
@@ -113,7 +122,7 @@ def share_view(row):
 
 
 def share(db, owner, ticket, recipients, message, snapshot=None, note=None):
-    """Send one review chart to other users; re-sending the same ticket updates the message."""
+    """Send one review chart to other users; each send freezes an independent snapshot."""
     if not isinstance(recipients, list) or not recipients:
         raise ChartError('请选择至少一位收件人')
     if len(recipients) > MAX_RECIPIENTS:
@@ -135,20 +144,33 @@ def share(db, owner, ticket, recipients, message, snapshot=None, note=None):
     missing = [i for i in ids if i not in known]
     if missing:
         raise ChartError('收件人不存在')
-    now = time.time()
-    for recipient in ids:
-        db.execute('INSERT INTO review_shares(owner,ticket,recipient,message,created,seen,snapshot,note_snapshot) VALUES(?,?,?,?,?,0,?,?) ON CONFLICT(owner,ticket,recipient) DO UPDATE SET message=excluded.message,created=excluded.created,seen=0,snapshot=excluded.snapshot,note_snapshot=excluded.note_snapshot', (owner, str(ticket), recipient, message.strip(), now, body, note_body))
-    return {'ok': True, 'sent': len(ids), 'created': now, 'has_snapshot': bool(body)}
+    snapshot_id=create_snapshot(db,owner,ticket,message,body,note_body)
+    for recipient in ids:deliver(db,snapshot_id,recipient)
+    return {'ok': True, 'sent': len(ids), 'created': db.execute('SELECT created FROM review_snapshots WHERE id=?',(snapshot_id,)).fetchone()[0], 'has_snapshot': bool(body)}
+
+
+def create_snapshot(db,owner,ticket,message,body,note_body,group_id=None,created=None):
+ # Freeze absence as well as content. A share without an explicit viewport freezes
+ # the currently saved document but leaves anchor/timeframe unspecified.
+ if not body:
+  saved=state(db,owner,ticket)
+  body=json.dumps({'document':saved['document'] if saved else None},ensure_ascii=False)
+ return db.execute('INSERT INTO review_snapshots(owner,ticket,message,created,snapshot,note_snapshot,group_id) VALUES(?,?,?,?,?,?,?)',(owner,str(ticket),message.strip(),time.time() if created is None else created,body,note_body or 'null',group_id)).lastrowid
+
+
+def deliver(db,snapshot_id,recipient):
+ db.execute('INSERT OR IGNORE INTO review_shares(snapshot_id,recipient) VALUES(?,?)',(snapshot_id,recipient))
+ return db.execute('SELECT id FROM review_shares WHERE snapshot_id=? AND recipient=?',(snapshot_id,recipient)).fetchone()[0]
 
 
 def inbox(db, uid, limit=50):
-    rows = db.execute('SELECT s.*,u.nickname,u.avatar FROM review_shares s JOIN users u ON u.id=s.owner WHERE s.recipient=? ORDER BY s.seen ASC,s.created DESC LIMIT ?', (uid, limit)).fetchall()
+    rows = db.execute('SELECT s.*,u.nickname,u.avatar FROM review_share_entries s JOIN users u ON u.id=s.owner WHERE s.recipient=? AND s.group_id IS NULL ORDER BY s.seen ASC,s.created DESC LIMIT ?', (uid, limit)).fetchall()
     tickets = {}
     for row in rows:
         key = (row['owner'], row['ticket'])
         if key in tickets:
             continue
-        trade = db.execute('SELECT payload FROM trades WHERE person=? AND ticket=?', key).fetchone()
+        trade = trade_store.lookup(db,*key)
         tickets[key] = json.loads(trade['payload']) if trade else None
     items = []
     for row in rows:
@@ -164,9 +186,13 @@ def inbox(db, uid, limit=50):
 
 
 def share_row(db, uid, share_id):
-    row = db.execute('SELECT * FROM review_shares WHERE id=?', (share_id,)).fetchone()
+    row = db.execute('SELECT * FROM review_share_entries WHERE id=?', (share_id,)).fetchone()
     if not row or uid not in (row['recipient'], row['owner']):
         raise ChartError('消息不存在，或不是发给你的', 404)
+    if row['group_id'] is not None:
+        member=db.execute('SELECT 1 FROM group_members WHERE group_id=? AND user_id=?',(row['group_id'],uid)).fetchone()
+        message=db.execute('SELECT 1 FROM group_messages WHERE review_snapshot_id=? AND recalled=0',(row['snapshot_id'],)).fetchone()
+        if not member or not message:raise ChartError('群分享已撤回，或你已不在群内',404)
     return row
 
 

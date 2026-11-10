@@ -13,7 +13,7 @@
 - 交易台「设置」：深色/浅色主题、显示时区（10 个时区，默认北京）、图表语言，存在本机浏览器，即时生效。
 - 交易台主导航从上到下为「交易、复盘、聊天」。聊天统一提供私信、群聊、引用回复、表情回应，以及创建 / 加入群和群资料管理；未读数显示在聊天角标。
 - 复盘分享：在自己的复盘面板点「分享复盘给好友或群聊」，搜索并勾选一个或多个对象，可附带 500 字留言。从聊天输入栏分享会预选当前会话，仍可调整对象。分享携带打开选择窗口时的复盘切片（激活窗口中点时间、周期、布局和画线文档），对方点开后只读回放。
-- 两款本机 EA 按需选一个：**SyncNote**（只读历史，无 DLL、关掉浏览器也继续同步）或 **SyncTrade / SyncNote Pro**（多一个本机 WebSocket，可在网页看盘、模拟账户下单）。下载与安装见 `/local-ea`。
+- 两款本机 EA 按需选一个：**SyncNote**（只读历史，无 DLL、关掉浏览器也继续同步）或 **SyncTrade / SyncNote Pro**（多一个本机 WebSocket，可在网页看盘、实盘/模拟账户下单）。下载与安装见 `/local-ea`。
 - 管理员验证器二次验证、设备信任、会话撤销与密码修改。
 
 源码版提供 MQ5 采集源码；**不附带 EXE、DMG、EX5 或绑定凭据**。网页使用手动采集安装流程。
@@ -49,10 +49,10 @@ npm run build
 ### 本机 EA 直连网页（新增预览版）
 
 交易台右侧提供「连接本机 MT5」，安装说明在网站 `/local-ea`，源码包在 `/downloads/syncnote.zip` 与 `/downloads/synctrade.zip`。
-用户自行审阅和编译 `bridge/SyncNoteLocal.mq5`，在同一台 Windows 电脑上运行 MT5 和浏览器，通过配对码及 MT5 图表本地确认授权。
+用户自行审阅和编译 `bridge/SyncTrade.mq5`，在同一台 Windows 电脑上运行 MT5 和浏览器，通过配对码及 MT5 图表本地确认授权。
 不需要 Python 网关或自定义 DLL；需要允许源码中列明的 Windows 系统 DLL 调用。网页不收集 MT5 密码。
 
-EA 默认只读。旧 SyncNoteLocal 保持模拟对冲账户边界；SyncTrade 1.102 支持明确授权下的市价/挂单，实盘另需独立本地开关、单笔与持久每日次数限制，净额管理也需要额外同意。详见 `bridge/SyncTrade_README.md`；编译通过不代替终端订单验收。
+旧 SyncNoteLocal 保持模拟账户边界；当前 SyncTrade 1.112 支持实盘/模拟、市价/挂单。源码 `LOCAL_NO_QUOTAS=true`，不能把旧文档中的默认只读或强制限额当作当前行为；账户稳定、命令日志、风险账本和动作能力仍由 EA 校验，净额管理需要额外同意。编译通过不代替终端订单验收。
 公网网页连接本机必须部署 HTTPS，并处理浏览器的本机网络权限；使用服务器 HTTP IP 地址时连接按钮会提示 HTTPS 要求。
 新增本机数据默认不上传，不经网站服务器转发下单，也不自动重试结果未知的交易。原有用户已启用的上传配置仍需自行管理。
 
@@ -62,7 +62,7 @@ EA 默认只读。旧 SyncNoteLocal 保持模拟对冲账户边界；SyncTrade 1
 
 在个人中心点「生成连接码」，然后二选一：
 
-- **EA 直连服务器（推荐，架构已跑通）**：`ea_hub.py` 在服务器上监听 `8788`，EA 用同频的连接码握手后长期保持连接，网页直接读它的实时状态。WebBridge.mq5 里把 `InpHost` 改成本站地址、`InpPort` 改 `8788`、`InpToken` 填连接码即可；协议（NDJSON v1）一行不用改。需要在安全组放行 TCP 8788，正式使用前还要加 TLS（等域名）。
+- **旧 EA 直连服务器（兼容）**：`ea_hub.py` 在服务器上监听 `8788`，EA 用同频的连接码握手后长期保持连接，网页直接读它的实时状态。WebBridge.mq5 里把 `InpHost` 改成本站地址、`InpPort` 改 `8788`、`InpToken` 填连接码即可；协议（NDJSON v1）一行不用改。需要在安全组放行 TCP 8788，正式使用前还要加 TLS（目前仍为明文 TCP）。
 - **已经有 WebBridge 且想保留本地面板**：在运行 MT5 的机器上跑 `python tools/bridge_push.py --token <连接码> --syncnote https://自己的域名`，它只读 bridge 的数据再推给同频。
 
 没有 bridge 时请改用 `bridge/SyncNote.mq5`（只读历史，本站下载页可取得源码包）。
@@ -127,3 +127,7 @@ git push -u origin feature/my-change
 | `tests/` | 使用全新临时数据的后端、HTTP、EA 测试；`python3 tests/run.py` 为统一入口 |
 
 [本机 EA 交易架构设计](docs/本机EA交易架构设计.md) · [架构说明](docs/架构说明.md) · [Agent 入口](AGENTS.md) · [交接范围与数据排除](docs/交接范围.md) · [部署说明](docs/部署说明.md)
+
+## 架构与数据库升级
+
+导入 `app_server` 不会启动服务或创建数据库；普通启动自动迁移，也可先运行 `python3 app_server.py --migrate`。旧摘要与权威成交分开保存，重复分享不覆盖旧卡片。见 [架构说明](docs/架构说明.md) 和 [迁移、回滚与容量验证](docs/架构迁移与容量验证.md)。

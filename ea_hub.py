@@ -5,7 +5,7 @@
 
 和本地 gateway.py 的区别只有两点：
   * 监听在服务器上，按连接码把会话绑定到同频用户，一个用户一条连接；
-  * 状态只留在内存，按周期落一次快照到同频的 SQLite（成交单独落 trades）。
+  * 状态只留在内存，按周期落一次快照到同频的 SQLite（旧版成交摘要单独落 legacy_trades）。
 
 TLS 还没接（等域名）：现在先用明文 TCP + 连接码，仅用于打通链路。
 """
@@ -96,32 +96,77 @@ class Hub:
         self.thread = None
         self._stop = None
         self._persist_task = None
+        self._writers = set()
 
     # ---------------------------------------------------------------- 生命周期
     def start(self):
-        self.thread = threading.Thread(target=self._run, name='ea-hub', daemon=True)
+        if self.thread and self.thread.is_alive():return self
+        self._ready=threading.Event();self._failure=None
+        self.thread=threading.Thread(target=self._run,name='ea-hub',daemon=True)
         self.thread.start()
+        self._ready.wait()
+        if self._failure:
+            self.thread.join()
+            raise RuntimeError('EA hub failed to start') from self._failure
         return self
 
+    def stop(self):
+        if self.loop and self.thread and self.thread.is_alive():
+            self.loop.call_soon_threadsafe(self._stop.set)
+            self.thread.join()
+        with self.lock:self.sessions.clear()
+
     def _run(self):
-        self.loop = asyncio.new_event_loop()
+        self.loop=asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self._stop = asyncio.Event()
-        self.loop.run_until_complete(self._serve())
+        self._stop=asyncio.Event()
+        try:self.loop.run_until_complete(self._serve())
+        except Exception as error:self._failure=error
+        finally:
+            self._ready.set()
+            pending=asyncio.all_tasks(self.loop)
+            for task in pending:task.cancel()
+            if pending:self.loop.run_until_complete(asyncio.gather(*pending,return_exceptions=True))
+            self.loop.run_until_complete(self.loop.shutdown_asyncgens())
+            self.loop.close()
 
     async def _serve(self):
-        try:
-            self.server = await asyncio.start_server(self._handle, HUB_HOST, HUB_PORT, limit=4 * 1024 * 1024)
-        except OSError as error:
-            print('ea hub: cannot bind %s:%s (%s)' % (HUB_HOST, HUB_PORT, error), flush=True)
-            return
-        print('ea hub: listening on %s:%s' % (HUB_HOST, HUB_PORT), flush=True)
-        self._persist_task = asyncio.create_task(self._persist_loop())
+        self.server=await asyncio.start_server(self._accept,HUB_HOST,HUB_PORT,limit=4*1024*1024)
+        self._persist_task=asyncio.create_task(self._persist_loop())
         async with self.server:
+            self._ready.set()
             await self._stop.wait()
+            # Stop accepting before closing the listener. Selector loops may
+            # already have queued accept tasks whose transport is not attached
+            # yet; closing first can leak that socket in Python 3.13.
+            if isinstance(self.loop,asyncio.SelectorEventLoop):
+                for sock in self.server.sockets:self.loop.remove_reader(sock.fileno())
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            self.server.close()
+            close_clients=getattr(self.server,'close_clients',None)
+            if close_clients:close_clients()
+            writers=list(self._writers)
+            for writer in writers:writer.close()
+            if writers:await asyncio.gather(*(writer.wait_closed() for writer in writers),return_exceptions=True)
+        self.persist_once()
 
     # ------------------------------------------------------------------ 会话
+    def _accept(self, reader, writer):
+        if self._stop.is_set():
+            writer.close();return
+        self._writers.add(writer)
+        asyncio.create_task(self._handle(reader,writer))
+
     async def _handle(self, reader, writer):
+        try:await self._handle_session(reader,writer)
+        finally:
+            writer.close()
+            try:await writer.wait_closed()
+            except (ConnectionError, asyncio.CancelledError):pass
+            self._writers.discard(writer)
+
+    async def _handle_session(self, reader, writer):
         peer = writer.get_extra_info('peername')
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=5.0)

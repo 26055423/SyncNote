@@ -31,7 +31,7 @@ class GroupShare(unittest.TestCase):
   snapshot = {'anchor_ms': 1700000000000, 'timeframe': '15m', 'layout': '1'}
   result = groups.share_trade(db, 'owner', group['id'], 'fixture', snapshot, 'Review this structure')
   self.assertEqual(result['sent'], chart.MAX_RECIPIENTS + 1)
-  shares = db.execute('SELECT recipient,message,snapshot FROM review_shares').fetchall()
+  shares = db.execute('SELECT recipient,message,snapshot FROM review_share_entries').fetchall()
   self.assertEqual(len(shares), chart.MAX_RECIPIENTS + 1)
   self.assertEqual(len({row['recipient'] for row in shares}), len(shares))
   self.assertTrue(all(row['message'] == 'Review this structure' for row in shares))

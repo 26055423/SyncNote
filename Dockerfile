@@ -14,13 +14,14 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY *.py ./
 COPY resources ./resources
+COPY routes ./routes
 COPY web ./web
 # 复制 MQL 源码及文档；具体产品的 include 闭包仍由 local_ea.py 校验并打包。
 # bridge/gateway.py 是独立本机组件，不进入服务器镜像。
 COPY bridge/*.mq5 bridge/*.mqh bridge/*.md ./bridge/
 RUN rm -rf /app/web/chart-src /app/web/chart
 COPY --from=chart /src/web/chart ./web/chart
-RUN python -c "import os, tempfile; from pathlib import Path; check = tempfile.TemporaryDirectory(); os.environ['DATA_DIR'] = check.name; import app_server, local_ea; [local_ea.source_package(Path.cwd(), product) for product in local_ea.PRODUCTS]; check.cleanup()"
+RUN python -c "import os, tempfile; from pathlib import Path; check = tempfile.TemporaryDirectory(); os.environ['DATA_DIR'] = check.name; import app_server, local_ea; app_server.initialize_database(); [local_ea.source_package(Path.cwd(), product) for product in local_ea.PRODUCTS]; check.cleanup()"
 ENV HOST=0.0.0.0 PORT=8080 DATA_DIR=/data PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN chmod -R a+rX /app && mkdir /data && chown 10001:10001 /data
 USER 10001:10001

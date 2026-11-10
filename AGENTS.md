@@ -15,9 +15,17 @@
 | 文件 | 作用 |
 |---|---|
 | `docs/架构说明.md` | 数据流、模块职责、API、数据库、部署 |
-| `docs/K线数据与复盘覆盖方案.md` | K 线怎么按 feed 累积、覆盖与缺口怎么记（实施方案，待落地） |
-| `docs/本机EA交易架构设计.md` | 网站 UI 直连本机开源 EA 的目标、配对、权限、故障恢复和验收；首版仅模拟账户交易 |
-| `app_server.py` | 唯一的 HTTP 服务入口（路由全在这个文件里） |
+| `docs/K线数据与复盘覆盖方案.md` | K 线怎么按 feed 累积、覆盖与缺口怎么记（核心已落地，保留设计决策） |
+| `docs/本机EA交易架构设计.md` | 网站 UI 直连本机开源 EA 的目标、配对、权限、故障恢复和验收；区分旧首版边界与当前 SyncTrade 能力 |
+| `app_server.py` | HTTP 入口：会话、事务、静态分发与路由注册 |
+| `app_config.py` / `database.py` | 无副作用配置；提交/回滚后关闭连接 |
+| `migrations.py` / `app_bootstrap.py` | 显式数据库升级，版本 3–5 |
+| `app_runtime.py` | hub 和目录刷新线程的启动、停止 |
+| `routes/` | 复盘、行情、管理 HTTP 适配 |
+| `accounts.py` / `social.py` / `review_service.py` | 账户策略、社交权限、历史与复盘读模型 |
+| `trade_store.py` | 权威成交/旧摘要读策略、稳定交易身份 |
+| `share_migrations.py` | 独立分享快照迁移，保留旧链接 |
+| `observability.py` / `tools/capacity_probe.py` | 有界耗时指标、合成数据容量测量 |
 | `ea_hub.py` | MT5 EA 直连的多用户 hub（TCP 8788 / NDJSON v1） |
 | `live.py` | 实时行情内存缓存（tick + 4 个周期的最近 K 线） |
 | `journal.py` | 笔记、复盘读写；`reviewed()` 判断哪些成交真的复盘过 |
@@ -28,9 +36,10 @@
 | `local_ea.py` | 把 `bridge/` 打成 SyncNote / SyncTrade 两个源码包 |
 | `resources/` | 前后端共用的公开静态资源，必须随后端部署 |
 | `web/local-ea.html` | 下载页：两款 EA 的对比、安装、权限与「关网页之后」说明 |
+| `web/chart-src/src/features/` | 看板、EA 同步、社交通知、品种目录、行情缓存 hook |
 | `web/chart-src/src/App.tsx` | 交易台（顶栏 / K 线 / 右侧五面板 / 底部持仓历史） |
 | `web/chart-src/src/LocalTradePanel.tsx` | 本机 MT5 连接 + 下单面板 |
-| `web/chart-src/src/trade/OrderTicket.tsx` | 市价单票：手数、SL/TP、风险预览、解锁与确认 |
+| `web/chart-src/src/trade/OrderTicket.tsx` | 市价/挂单票：手数、SL/TP、风险预览、解锁与确认 |
 | `web/chart-src/src/BottomDock.tsx` | 底部「持仓 / 挂单 / 历史」 |
 | `web/chart-src/src/DrawingFavs.tsx` | 顶部画图收藏栏（镜像 Vela 左侧工具栏的收藏） |
 | `web/chart-src/src/SettingsMenu.tsx` | 顶部「设置」：深/浅主题、显示时区、图表语言 |
@@ -60,7 +69,7 @@ python tools/local_demo.py            # 本地演示实例（127.0.0.1:18900，�
 cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/chart
 ```
 
-服务器更新（在 43.103.49.141 上）：`sudo syncnote-pull`（git pull → 重启 → 健康检查，失败自动回滚）。
+服务器更新：`sudo syncnote-pull`。数据库升级前必须先安装新版 `tools/syncnote-pull.sh`；失败同时恢复代码和数据库。步骤见 `docs/架构迁移与容量验证.md`。
 
 ## 硬性约定（改动前务必遵守）
 
@@ -102,8 +111,8 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 
 - 正式地址 `https://sync-trade.top`；EA 的 `InpAllowedOrigin` 用这个，不要用 IP。
 - 服务已改名：`syncnote.service`、`syncnote-pull`、`nginx/syncnote.conf`；Cookie 仍是 `tongpin_session`（兼容保留）。
-- **云端不提供下单通道**：`ea_hub` 只收行情/账户。本机 EA（`bridge/SyncNoteLocal.mq5`）默认只读、仅模拟对冲账户允许交易，协议 `tongpin-local.v1`。
-- **本机 EA 首版只支持市价单**：协议没有挂单创建，网页的「限价 / 止损」按钮是禁用状态。
+- **云端不提供下单通道**：hub 只收行情/账户与旧摘要。旧 SyncNoteLocal 保持模拟账户边界；当前 SyncTrade 1.112 支持实盘/模拟账户，协议 `tongpin-local.v1`。
+- **当前 SyncTrade 支持市价及限价/止损挂单**，动作以 EA capabilities 为准。`LOCAL_NO_QUOTAS=true`，不能再宣称默认只读或强制限额；账户稳定、命令日志、风险账本仍需健康，净额管理有独立授权。本次重构不更改 EA 权限。
 - 上述首版边界指旧 `SyncNoteLocal`。当前 `SyncTrade` 1.106 支持市价与限价/止损挂单，本机配对授权后固定取消账户类型及本地手数/敞口/每日额度门槛，身份字段为 `quota_unrestricted:true`；不授予净额管理权限，日志、券商规则、点差/偏离、配对和未知结果不重试继续保留。`SyncNote` 仍保持只读。详见 `bridge/SyncTrade_README.md`。
 - 顶栏价格：有实时行情时用 tick 中间价，否则取最后一根 K 线收盘。
 - 8788（EA hub）仍是明文 TCP；上 TLS 需要 EA 改用 `SocketTLSHandshake`。
@@ -115,8 +124,14 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 - 主导航从上到下为「交易、复盘、聊天」；私信、群聊与群管理统一在聊天内，群未读数合并到聊天角标。
 - 复盘面板与聊天输入栏共用分享选择窗口，可搜索、多选好友及群聊、附带 500 字留言；聊天入口预选当前会话。
   打开选择窗口时冻结激活格子的可见窗口中点、周期与画线文档，收件人按切片只读回放。
-  群分享留言和切片保存在群消息中；为全部现有成员在同一事务中分批生成分享，新成员打开卡片时按权限补建。
-- 分享兼容限制：`review_shares` 仍按 `(owner,ticket,recipient)` 唯一，重复分享同一交易会更新共用记录，旧卡片可能打开最新分享切片；尚未迁移为每条消息独立快照。
+  群消息绑定独立快照；在同一事务中为全部现有成员生成投递，新成员按权限补建。群投递不计入私信，退群或撤回后原群链接不可读。
+- 分享内容写入不可更新的 `review_snapshots`；`review_shares` 只记 snapshot_id、收件人和已读。重复发送产生新快照，群卡片/后加入成员都指向原快照。旧链接 id 保留；升级前被覆盖的内容无法恢复，缺失快照按迁移时状态冻结。
 - **两款 EA 的差别只在"要不要交易"**：SyncNote 只读历史（关浏览器也继续传）；SyncTrade 多了本机 WS，
   历史由浏览器代传（关网页暂停，下次补齐）。旧的单文件采集程序已下线，不再提供下载。
 - 历史重建要证据：缺开仓上下文时宁可标记「无法完整重建」，也不猜开仓价；券商改数据后旧派生交易标 `invalidated` 而不删除。
+
+## 生命周期与兼容历史
+
+`import app_server` 不创建数据库、不迁移、不启动线程。嵌入式调用先 `initialize_database()`；普通启动自动迁移，`python3 app_server.py --migrate` 只升级后退出。`with connect()` 退出会关闭连接。
+
+新成交只由 `sync_history.ingest` 重建到 `trades`。旧 snapshot/hub 只进 `legacy_trades`。有权威记录时主历史只显示权威记录；旧深链仍通过 `trade_records` 读取，笔记/复盘外键指向 `trade_keys`。

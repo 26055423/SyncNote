@@ -3,6 +3,7 @@ import getpass,os,re,secrets,time
 
 def create_admin(password):
  import app_server as app
+ app.initialize_database()
  name=app.ADMIN_USERNAME
  if not re.fullmatch(r'[a-z0-9_]{2,24}',name):raise ValueError('ADMIN_USERNAME需为2到24位字母、数字或下划线')
  hashed=app.pw_hash(password)

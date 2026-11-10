@@ -123,7 +123,7 @@ export function BottomDock({ connected, localPositions, localOrders, cloudPositi
           ))}
         </nav>
         <span className="dim">
-          {tab === 'history' ? '云端成交 · 5 秒刷新' : connected ? '本机 EA · 实时' : '云端 · 5 秒刷新'}
+          {tab === 'history' ? (history.some((trade) => trade.legacy) ? '旧版成交摘要 · 待完整历史同步' : '云端成交 · 5 秒刷新') : connected ? '本机 EA · 实时' : '云端 · 5 秒刷新'}
           {tab === 'positions' && !connected ? '（本机 EA 未连接，持仓来自云端快照）' : ''}
         </span>
         <button type="button" className="icon" onClick={() => setOpenPersist(!open)} title={open ? '收起' : '展开'} aria-label={open ? '收起底部面板' : '展开底部面板'} aria-expanded={open}>

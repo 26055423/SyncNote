@@ -10,6 +10,7 @@ class HistoryView(unittest.TestCase):
   cls.folder=tempfile.TemporaryDirectory(prefix='syncnote-history-view-',ignore_cleanup_errors=True)
   with patch.dict(os.environ,{'DATA_DIR':cls.folder.name,'EA_HUB_ENABLE':'0','COOKIE_SECURE':'0'}):
    import app_server
+   app_server.initialize_database()
   cls.app=app_server
   cls.token='synthetic-history-view-session'
   with app_server.connect() as db:

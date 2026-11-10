@@ -1,17 +1,18 @@
 """Private trade notes and on-demand broker chart collection."""
 import json,math,time
-import journal_templates
+import journal_templates,trade_store
 DEFAULT_TAGS=['止损管理','资金管理','方向判断','入场时机','出场管理','冲动交易','未按计划','执行良好']
 JournalError=journal_templates.JournalError
 
 def initialize(db):
- db.executescript('''CREATE TABLE IF NOT EXISTS trade_notes(person TEXT NOT NULL,ticket TEXT NOT NULL,body TEXT NOT NULL,tags TEXT NOT NULL,updated REAL NOT NULL,PRIMARY KEY(person,ticket),FOREIGN KEY(person,ticket) REFERENCES trades(person,ticket));
- CREATE TABLE IF NOT EXISTS trade_reviews(person TEXT NOT NULL,ticket TEXT NOT NULL,status TEXT NOT NULL,payload TEXT,updated REAL NOT NULL,PRIMARY KEY(person,ticket),FOREIGN KEY(person,ticket) REFERENCES trades(person,ticket));''')
+ trade_store.initialize(db)
+ db.executescript('''CREATE TABLE IF NOT EXISTS trade_notes(person TEXT NOT NULL,ticket TEXT NOT NULL,body TEXT NOT NULL,tags TEXT NOT NULL,updated REAL NOT NULL,PRIMARY KEY(person,ticket),FOREIGN KEY(person,ticket) REFERENCES trade_keys(person,ticket));
+ CREATE TABLE IF NOT EXISTS trade_reviews(person TEXT NOT NULL,ticket TEXT NOT NULL,status TEXT NOT NULL,payload TEXT,updated REAL NOT NULL,PRIMARY KEY(person,ticket),FOREIGN KEY(person,ticket) REFERENCES trade_keys(person,ticket));''')
  db.execute("UPDATE trade_reviews SET status='pending' WHERE status IN ('reference_pending','reference_error')")
  journal_templates.initialize(db)
 
 def trade(db,person,ticket):
- r=db.execute('SELECT payload FROM trades WHERE person=? AND ticket=?',(person,str(ticket))).fetchone()
+ r=trade_store.lookup(db,person,ticket)
  if not r:raise JournalError('这笔交易不属于你，或尚未同步',404)
  return json.loads(r[0])
 
@@ -96,7 +97,7 @@ def queue_missing(db,person):
  available=max(0,20-count)
  if not available:return
  # Prefer recent trades, then progressively fill older history.
- rows=db.execute("SELECT t.ticket,t.payload FROM trades t LEFT JOIN trade_reviews r ON r.person=t.person AND r.ticket=t.ticket WHERE t.person=? AND r.ticket IS NULL",(person,)).fetchall()
+ rows=db.execute("SELECT t.ticket,t.payload FROM trade_records t LEFT JOIN trade_reviews r ON r.person=t.person AND r.ticket=t.ticket WHERE t.person=? AND r.ticket IS NULL",(person,)).fetchall()
  rows=sorted(rows,key=lambda r:json.loads(r['payload']).get('closed_server') or 0,reverse=True)[:available]
  db.executemany("INSERT OR IGNORE INTO trade_reviews VALUES(?,?,'pending',NULL,?)",[(person,r['ticket'],time.time()+i*.001) for i,r in enumerate(rows)])
 

@@ -1,3 +1,10 @@
+import { useMarketHistory } from './features/market/useMarketHistory';
+import { REVIEW_BASE_TFS, MARKET_LIMIT, MARKET_HEAD_POLL_MS, toChartBars } from './features/market/model';
+import { useSocialNotifications } from './features/social/useSocialNotifications';
+import { useSymbolCatalog } from './features/market/useSymbolCatalog';
+import { useTerminalSync } from './features/local/useTerminalSync';
+import { useBoard } from './features/board/useBoard';
+import type { Board, Entry, ShareRow, Tab } from './features/workspace/types';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, money, stamp } from './api';
 import { ChartWorkspace, TIMEFRAME_OPTIONS, type ChartHandle, type SyncKind } from './vela/ChartWorkspace';
@@ -8,7 +15,7 @@ import { LayoutMenu } from './vela/LayoutMenu';
 import { TfMenu } from './vela/TfMenu';
 import { LiveProvider, TIMEFRAMES, type BaseTimeframe, type ReviewCharts } from './vela/provider';
 import { BASE_SECONDS as TF_SECONDS, mergeLiveHistory, prependLiveHistory } from './liveHistory';
-import { readTrackPage, readTrackHead, selectTrackSource, trackProviderName, type TrackCatalog, type TrackPage } from './trackHistory';
+import { readTrackPage, trackProviderName, type TrackPage } from './trackHistory';
 import { readReviewPage, readReviewRange, mergeReviewBars, visibleReviewGap, type ReviewDirection, type ReviewScope } from './reviewHistory';
 import { readIndicatorMinutes } from './indicatorHistory';
 import { LocalTradePanel } from './LocalTradePanel';
@@ -27,86 +34,13 @@ import { localTerminal, useLocalTerminal } from './localTerminal';
 import { localHistorySync, historyAccountKey, useLocalHistorySync } from './localHistorySync';
 import { localRangeSync, useLocalRangeSync } from './localRangeSync';
 import { backfillBars, useBackfillBars } from './backfillBars';
-import { SymbolPicker, type MarketSymbol } from './SymbolPicker';
+import { SymbolPicker } from './SymbolPicker';
 import { MarketRangeSync } from './MarketRangeSync';
 import type { MarketSyncGateJob } from './marketSyncGate';
 
 /* ------------------------------------------------------------------ 类型 */
 
-interface Review {
-  status: string;
-  charts: Record<string, number[][]>;
-  errors: Record<string, string>;
-  trade: any;
-  opened: number | null;
-  source?: string;
-  market_source?: string | null;
-  error?: string;
-}
-
-interface Entry {
-  mode: 'owner' | 'viewer' | 'shared';
-  owner: { id: string; name: string; avatar: string };
-  read_only: boolean;
-  share: { id: number; message: string; created: number; seen: boolean; anchor_ms?: number | null; timeframe?: string | null; layout?: string | null } | null;
-  review: Review;
-  note: { body: string; tags: string[]; sections?: NoteSection[]; updated: number } | null;
-  chart: { document: unknown; updated: number; source?: string } | null;
-  /** 券商服务器墙钟 − UTC 的秒数；标注对齐用。 */
-  bar_offset?: number;
-}
-
-interface Member {
-  id: string;
-  name: string;
-  username: string;
-  avatar: string;
-  can_view: boolean;
-  /** 对方是否开放复盘（交易数据开放不等于复盘开放）。 */
-  can_review?: boolean;
-  /** 这位成员真正复盘过的成交，和看板里的 reviewed 不同。 */
-  reviewed?: string[];
-}
-
-interface Board {
-  market_source?: string | null;
-  user: { id: string; nickname: string; username: string; avatar: string; onboarding_step: number; auto_history_sync?: boolean };
-  members: Member[];
-  snapshots: Record<string, { data: any; updated: number }>;
-  events: Array<{ id: number; person: string; kind: string; text: string; created: number }>;
-  messages: Array<{ id: number; person: string; name?: string; text: string; created: number }>;
-  now: number;
-  /** 真正复盘过的成交（写过笔记或在图上画过），否则算未复盘。 */
-  reviewed?: string[];
-}
-
-interface ShareRow {
-  id: number;
-  ticket: string;
-  owner: { id: string; name: string; avatar: string };
-  message: string;
-  created: number;
-  seen: boolean;
-  /** 分享人点击分享那一刻：激活格子的可见窗口中点（毫秒）与周期。 */
-  anchor_ms?: number | null;
-  timeframe?: string | null;
-  layout?: string | null;
-  trade: any;
-}
-
-type Tab = 'trade' | 'friends' | 'review' | 'inbox';
-
 /* 复盘图一次抓多宽的行情：按锚点往前/往后取多少天（每个基础周期各自独立）。 */
-const REVIEW_BASE_TFS = ['M1', 'M5', 'M15', 'H1'] as const;
-const MARKET_HEAD_POLL_MS = 5000;
-/* 行情页一次取多少根（最新 N 根）：这条轨有多少就给多少，按根数而不是按天数。 */
-const MARKET_LIMIT: Record<(typeof REVIEW_BASE_TFS)[number], number> = {
-  M1: 6000,
-  M5: 6000,
-  M15: 6000,
-  H1: 6000,
-};
-
 const REVIEW_WINDOW: Record<(typeof REVIEW_BASE_TFS)[number], [number, number]> = {
   M1: [2, 0.5],
   M5: [10, 2],
@@ -118,18 +52,6 @@ const REVIEW_WINDOW: Record<(typeof REVIEW_BASE_TFS)[number], [number, number]> 
 
 const sideText = (side: string) => (side === 'sell' ? '做空' : '做多');
 
-const LIVE_KEYS: Record<string, 'M1' | 'M5' | 'M15' | 'H1'> = { '1m': 'M1', '5m': 'M5', '15m': 'M15', '1h': 'H1' };
-
-/** 服务端按 1m/5m/15m/1h 返回，图表用 M1/M5/M15/H1。 */
-function toChartBars(bars: Record<string, number[][]> | undefined): ReviewCharts {
-  const out: ReviewCharts = {};
-  for (const [key, rows] of Object.entries(bars || {})) {
-    const mapped = LIVE_KEYS[key];
-    if (mapped && Array.isArray(rows)) out[mapped] = rows;
-  }
-  return out;
-}
-
 /* ------------------------------------------------------------------ 页面 */
 
 export default function App() {
@@ -140,7 +62,6 @@ export default function App() {
   const params = useMemo(() => new URLSearchParams(location.search), []);
   const [mt5ConnectionOpen, setMT5ConnectionOpen] = useState(params.get('connect') === '1');
 
-  const [board, setBoard] = useState<Board | null>(null);
   const [entry, setEntry] = useState<Entry | null>(null);
   const [target, setTarget] = useState<{ person: string; ticket: string; t?: number } | null>(null);
   /** 正在看某条消息里的复盘切片时，入口按 share id 取（拿分享人当时的窗口）。 */
@@ -151,6 +72,9 @@ export default function App() {
   const initialReview = params.get('view') !== 'live' && Boolean(params.get('ticket') || shareId || params.get('view') === 'review');
   const [tab, setTab] = useState<Tab>(() => (params.get('panel') !== 'sync' && initialReview ? 'review' : 'trade'));
   const [error, setError] = useState('');
+  const { board, setBoard } = useBoard(setError);
+  useTerminalSync(board, local, backfill, historySync);
+  const { inbox, dmUnread, groupUnread, friendReq, setFriendReq } = useSocialNotifications(board, tab);
   const [railOpen, setRailOpen] = useState(() => params.get('panel') === 'sync' || window.innerWidth > 900);
   const [feedFilter, setFeedFilter] = useState<'all' | 'share' | 'chat' | 'unread'>('all');
   const [feedLimit, setFeedLimit] = useState(80);
@@ -165,13 +89,9 @@ export default function App() {
   const [noteState, setNoteState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [nativeToolbarHost, setNativeToolbarHost] = useState<HTMLDivElement | null>(null);
-  const [inbox, setInbox] = useState<ShareRow[]>([]);
   // 好友申请：别人申请我的（可通过对）/ 我申请的（可取消）。
   const [friendManager, setFriendManager] = useState(false);
-  const [dmUnread, setDmUnread] = useState<Record<string, number>>({});
-  const [groupUnread, setGroupUnread] = useState(0);
   const [chatGroup, setChatGroup] = useState<{ id: string; name: string; avatar?: string } | null>(null);
-  const [friendReq, setFriendReq] = useState<{ incoming: Array<{ id: string; nickname: string; username: string }>; outgoing: Array<{ id: string; nickname: string; username: string }> }>({ incoming: [], outgoing: [] });
   const [shareRequest, setShareRequest] = useState<{ ticket: string; snapshot: unknown; initialRecipient?: { kind: 'dm' | 'group'; id: string } } | null>(null);
   const [chat, setChat] = useState('');
   const [tf, setTf] = useState('15');
@@ -200,30 +120,15 @@ export default function App() {
   const [mode, setMode] = useState<'review' | 'live'>(() => initialReview ? 'review' : 'live');
   const tradeReview = mode === 'review' && (target !== null || shareId !== null);
   const marketView = !tradeReview;
-  const [liveBars, setLiveBars] = useState<ReviewCharts | null>(null);
   const [forming, setForming] = useState<{ source: string; symbol: string; bars: ReviewCharts } | null>(null);
   /** 图上画的是哪套数据：server = bars 表（券商墙钟），utc = 交易快照（journal.review 已转 UTC）。 */
 
   /** 没有本机推送时的兜底：用自己那条券商轨的最新历史 K 线，别让「行情」页空着。 */
-  const [marketSeries, setMarketSeries] = useState<ReviewCharts | null>(null);
-  const [marketLoadError, setMarketLoadError] = useState('');
-  const [marketInfo, setMarketInfo] = useState<{ source: string; server: string; last: number | null; tfs?: TrackCatalog['sources'][number]['tfs'] } | null>(null);
-  const trackSourceRef = useRef<string | null>(null);
-  const storedTipsRef = useRef<Partial<Record<BaseTimeframe, number>>>({});
-  const liveRef = useRef<ReviewCharts>({});
-  const liveListeners = useRef(new Set<() => void>());
-  const [storedSymbol, setStoredSymbol] = useState('XAUUSD');
-  const [symbolOptions, setSymbolOptions] = useState<MarketSymbol[]>([]);
-  const [symbolsLoading, setSymbolsLoading] = useState(false);
-  const [symbolsError, setSymbolsError] = useState('');
-  const [catalogSource, setCatalogSource] = useState<string | null>(null);
-  const [catalogAvailable, setCatalogAvailable] = useState(false);
-  const [catalogRevision, setCatalogRevision] = useState(0);
-  const [marketRetry, setMarketRetry] = useState(0);
+  const { storedSymbol, setStoredSymbol, symbolOptions, symbolsLoading, symbolsError, catalogSource, catalogAvailable, setCatalogRevision } = useSymbolCatalog(board, local);
   const liveSymbol = localConnected ? local.symbol : storedSymbol;
   const connectedTrack = localConnected ? (local.server.trim() ? 'srv:' + local.server.trim() : null) : board?.market_source;
-  const cacheScope = `${board?.user.id ?? ''}:${liveSymbol}:${localConnected ? local.server + ':' + local.epoch : 'cloud'}:${connectedTrack ?? catalogSource ?? ''}`;
-  const [loadedCacheScope, setLoadedCacheScope] = useState(cacheScope);
+  const chartRef = useRef<ChartHandle>(null);
+  const { liveBars, setLiveBars, marketSeries, marketInfo, marketLoadError, trackSourceRef, storedTipsRef, liveRef, liveListeners, setMarketRetry, cacheScope, loadedCacheScope, refreshTrackRef } = useMarketHistory({ board, local, backfill, marketView, liveSymbol, connectedTrack, catalogSource, chartRef, forming });
   const [syncProgress, setSyncProgress] = useState<{ scope: string; job: MarketSyncGateJob | null }>({ scope: '', job: null });
   const rangeSync = useLocalRangeSync();
   const syncScope = `${cacheScope}:${localConnected ? 'synctrade' : 'syncnote'}`;
@@ -238,32 +143,6 @@ export default function App() {
     return { website_user_id: user, account: terminal.account_id, server: terminal.server, account_key, clock_sample: current.clock_sample,
       quote_symbol: current.symbol, quote_sessions: current.quote_sessions };
   };
-  useEffect(() => {
-    if (localConnected) setStoredSymbol(local.symbol);
-  }, [localConnected, local.symbol]);
-  useEffect(() => {
-    if (!board?.user.id) return;
-    const controller = new AbortController();
-    setSymbolsLoading(true); setSymbolsError('');
-    void (async () => {
-      try {
-        if (localConnected) {
-          if (!local.features.includes('symbols')) throw new Error('更新 SyncTrade EA 后即可在网页切换品种。');
-          const symbols = await localTerminal.requestSymbols(controller.signal);
-          if (!controller.signal.aborted) setSymbolOptions(symbols);
-        } else {
-          const result = await api<{ source: string | null; symbols: MarketSymbol[]; catalog_available?: boolean }>('/api/market/symbols', undefined, { signal: controller.signal });
-          if (controller.signal.aborted) return;
-          setSymbolOptions(result.symbols); setCatalogSource(result.source);
-          setCatalogAvailable(result.catalog_available === true);
-          setStoredSymbol((current) => result.symbols.some((item) => item.symbol === current) ? current : result.symbols.find((item) => item.has_bars)?.symbol ?? result.symbols[0]?.symbol ?? current);
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) setSymbolsError(error instanceof Error ? error.message : '品种列表读取失败');
-      } finally { if (!controller.signal.aborted) setSymbolsLoading(false); }
-    })();
-    return () => controller.abort();
-  }, [board?.user.id, board?.market_source, localConnected, local.instance_id, local.epoch, local.features.includes('symbols'), catalogRevision]);
   const chooseSymbol = async (symbol: string) => {
     if (localConnected) await localTerminal.selectSymbol(symbol);
     else setStoredSymbol(symbol);
@@ -278,7 +157,6 @@ export default function App() {
     [liveSymbol],
   );
 
-  const chartRef = useRef<ChartHandle>(null);
   const [replayActive, setReplayActive] = useState(false);
   /** 右栏停靠时给工具条算出的宽度：让它的右边界和图表右边界严格对齐。 */
   const [toolbarWidth, setToolbarWidth] = useState<number | null>(null);
@@ -312,32 +190,6 @@ export default function App() {
   const edgeBlockRef = useRef<Record<string, number>>({});
   /** 补段要知道“现在看的是哪笔/哪个品种”，放 ref 避免回调拿到旧值。 */
   const ctxRef = useRef<ReviewScope & { symbol: string }>({ shareId: null, symbol: 'XAUUSD' });
-
-  /* ---------------------------------------------------------- 看板轮询 */
-
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const data = await api<Board>('/api/state?view=board');
-        if (!alive) return;
-        if (data.user.onboarding_step < 4) {
-          location.replace('/welcome');
-          return;
-        }
-        setBoard(data);
-        setError('');
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : String(err));
-      }
-    };
-    void load();
-    const timer = window.setInterval(load, 5000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, []);
 
   /* ------------------------------------------------- 仅在显式打开复盘时定位交易 */
 
@@ -387,65 +239,6 @@ export default function App() {
     };
   }, [target, shareId]);
 
-  /* ------------------------------------------------------------ 实时行情 */
-
-  useEffect(() => {
-    for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as keyof ReviewCharts];
-    setLiveBars(null);
-    setMarketSeries(null);
-    trackSourceRef.current = null;
-    storedTipsRef.current = {};
-    setMarketInfo(null);
-    setMarketLoadError('');
-    setLoadedCacheScope(cacheScope);
-  }, [cacheScope]);
-
-  useEffect(() => {
-    if (!connectedTrack || (marketInfo?.source && marketInfo.source !== connectedTrack)) return;
-    const cloud = marketView && forming?.source === connectedTrack && forming.symbol === liveSymbol ? forming.bars : null;
-    if (!localConnected && !cloud) return;
-    // 蜡烛直接使用 MT5 的 OHLC；买卖报价由独立的 tick 消息更新。
-    const incoming = localConnected ? toChartBars(local.bars) : { ...cloud };
-    const previousTips: Partial<Record<BaseTimeframe, number>> = {};
-    for (const base of REVIEW_BASE_TFS) {
-      const rows = incoming[base];
-      if (!rows) continue;
-      const current = liveRef.current[base]?.at(-1);
-      const candidates = current ? rows.slice(-1) : rows;
-      incoming[base] = candidates.filter(row => row[0] > (storedTipsRef.current[base] ?? 0) && row !== current);
-      const latest = incoming[base]?.at(-1);
-      if (current && latest && latest[0] > current[0]) previousTips[base] = current[0];
-    }
-    if (!Object.values(incoming).some(rows => rows?.length)) return;
-    // 只有追加新蜡烛才需要保存可见范围，盘中价格变化直接更新图表。
-    const keepRanges = marketView && Object.keys(previousTips).length ? chartRef.current?.captureRanges() : undefined;
-    mergeLiveHistory(liveRef.current, incoming);
-    setLiveBars(liveRef.current);
-    for (const listener of liveListeners.current) listener();
-    if (!keepRanges) return;
-    // 用更新前的尾部判断用户是否在翻历史，避免跨休市或补齐大段数据时冻结在旧尾部。
-    const frozen: Record<string, { from: number; to: number }> = {};
-    for (const [id, range] of Object.entries(keepRanges)) {
-      const previous = previousTips[range.base];
-      const tfSec = TF_SECONDS[range.base];
-      if (previous !== undefined && range.to < (previous - 8 * tfSec) * 1000) frozen[id] = { from: range.from, to: range.to };
-    }
-    if (Object.keys(frozen).length) requestAnimationFrame(() => chartRef.current?.restoreRanges(frozen));
-  }, [marketView, localConnected, connectedTrack, marketInfo?.source, liveSymbol, forming, local.bars, local.history_ready]);
-
-  useEffect(() => () => localTerminal.disconnect(), []);
-
-  /* 本机已连接时离开页面会丢配对令牌：先给一次浏览器级确认。 */
-  useEffect(() => {
-    if (!localConnected) return;
-    const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [localConnected]);
-
   /* 刷新/后退/forward 时从 URL 还原视图，而不是只认第一次的 location.search。 */
   useEffect(() => {
     const onPop = () => {
@@ -482,181 +275,6 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, [board?.user.id]);
 
-  useEffect(() => {
-    localHistorySync.bindUser(board?.user.id || '');
-    backfillBars.bindUser(board?.user.id || '');
-    localRangeSync.bindUser(board?.user.id || '');
-  }, [board?.user.id]);
-
-  // 有续传授权时先确认最近成交，再让 K 线补齐争用同一个本机历史通道。
-  const waitForRecentDeals = board?.user.auto_history_sync && !historySync.recent_ready && historySync.status !== 'error';
-  // 连上 EA 后只在后台补近7天缺口，不锁轨道图，也不恢复旧的多年回溯。
-  // error 态不在此自动重试(否则 error→initializing→error 无退避空转);重连会话变化会被
-  // backfillBars 内部 stop 回 idle,那时再由本 effect 重启。
-  useEffect(() => {
-    if (!board?.user.id || !localConnected || !local.history_ready || !local.features.includes('history')) return;
-    if (backfill.phase !== 'idle' || waitForRecentDeals) return;
-    void backfillBars.start();
-  }, [board?.user.id, localConnected, local.history_ready, local.features, backfill.phase, waitForRecentDeals]);
-
-  // 个人中心勾了「自动续传」后，连接一旦可读就先上传近期成交。
-  useEffect(() => {
-    if (!board?.user.id) return;
-    if (!board.user.auto_history_sync) {
-      if (localHistorySync.getSnapshot().enabled) localHistorySync.stop();
-      return;
-    }
-    if (!localConnected || !local.history_ready) return;
-    if (!local.features.includes('history')) return;
-    if (localHistorySync.getSnapshot().enabled) return;
-    void localHistorySync.start().catch(() => undefined);
-  }, [board?.user.id, board?.user.auto_history_sync, localConnected, local.history_ready, local.features, local.epoch, local.account_id, local.server]);
-
-  useEffect(() => {
-    const pause = () => { localHistorySync.stop('网页已关闭，笔记同步已暂停。'); backfillBars.stop('网页已关闭，行情回填已暂停。'); localRangeSync.stop('网页已关闭，SyncTrade 区间同步已暂停。'); };
-    window.addEventListener('pagehide', pause);
-    return () => { window.removeEventListener('pagehide', pause); pause(); };
-  }, []);
-
-  // 旧 /api/live 内存缓存没有原生 source/symbol 身份，不能拿来给轨道补历史。
-  // 未连接本机时直接读取已入库轨道，避免换绑账户或品种后混入旧缓存。
-
-  useEffect(() => {
-    // 历史首屏始终读当前数据轨道，不受 EA 是否在线或首批缓存深度限制。
-    if (!marketView || !board?.user.id) return;
-    let alive = true;
-    void (async () => {
-      try {
-        const catalogRequest = api<TrackCatalog>('/api/data/sources').catch(() => null);
-        const knownSource = connectedTrack ?? (localConnected ? null : catalogSource);
-        const catalog = knownSource ? null : await catalogRequest;
-        if (!alive) return;
-        const source = knownSource ?? (!localConnected && catalog ? selectTrackSource(catalog, liveSymbol) : null);
-        if (!source) {
-          if (!localConnected) {
-            for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as BaseTimeframe];
-            setLiveBars(null);
-          }
-          trackSourceRef.current = null; setMarketSeries(null); setMarketInfo(null);
-          if (!localConnected) setMarketLoadError(catalog ? '当前轨道尚未入库这个品种的行情。' : '暂时无法读取行情数据源，稍后重试。');
-          return;
-        }
-        if (trackSourceRef.current && trackSourceRef.current !== source) {
-          for (const key of Object.keys(liveRef.current)) delete liveRef.current[key as BaseTimeframe];
-          setLiveBars(null);
-          setMarketSeries(null);
-          setMarketInfo(null);
-          storedTipsRef.current = {};
-        }
-        trackSourceRef.current = source;
-        const results = await Promise.allSettled(REVIEW_BASE_TFS.map((base) => readTrackPage((path) => api<TrackPage>(path), {
-          source, symbol: liveSymbol, base, limit: MARKET_LIMIT[base],
-        })));
-        if (!alive || trackSourceRef.current !== source) return;
-        const pages = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
-        const out: ReviewCharts = {};
-        for (const page of pages) if (page.bars.length) {
-          const base = page.tf as BaseTimeframe;
-          out[base] = page.bars;
-          storedTipsRef.current[base] = page.bars.at(-1)![0];
-        }
-        mergeLiveHistory(liveRef.current, out);
-        setMarketSeries(Object.keys(out).length ? out : null);
-        setMarketInfo({ source, server: pages[0]?.feed?.server ?? '', last: Math.max(0, ...pages.map((page) => page.last_bar ?? 0)) || null });
-        setMarketLoadError(pages.length < results.length ? '暂时无法读取部分轨道行情，后台会重试。' : '');
-        if (Object.keys(liveRef.current).length) { setLiveBars(liveRef.current); }
-        void catalogRequest.then(data => {
-          if (!alive || trackSourceRef.current !== source) return;
-          const tfs = data?.sources.find(track => track.id === source && track.symbol === liveSymbol)?.tfs;
-          if (tfs) setMarketInfo(info => info?.source === source ? { ...info, tfs } : info);
-        });
-        await Promise.all(REVIEW_BASE_TFS.map((base) => out[base]?.length ? chartRef.current?.applySeries(base, liveRef.current[base]!) : undefined));
-      } catch (error) {
-        if (alive) setMarketLoadError(`轨道历史读取失败：${error instanceof Error ? error.message : String(error)}`);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [marketView, localConnected, local.server, local.epoch, liveSymbol, board?.user.id, connectedTrack, catalogSource, marketRetry]);
-  useEffect(() => {
-    if (!marketView || !board?.user.id || marketInfo?.source) return;
-    const timer = window.setInterval(() => setMarketRetry((revision) => revision + 1), 15000);
-    return () => window.clearInterval(timer);
-  }, [marketView, board?.user.id, marketInfo?.source]);
-
-  // 补采入库后刷新轨道尾部。通常每周期只取两根，发现落后一段才拉近期窗口补齐。
-  const refreshTrackRef = useRef<((forceRecent?: boolean) => void) | null>(null);
-  useEffect(() => {
-    const source = marketInfo?.source;
-    if (!marketView || !source) return;
-    let alive = true;
-    let refreshing = false, pendingRecent = false;
-    let catalogAt = 0;
-    const refresh = async (forceRecent = false) => {
-      if (refreshing) { pendingRecent ||= forceRecent; return; }
-      refreshing = true;
-      try {
-        const results = await Promise.allSettled(REVIEW_BASE_TFS.map((base) => readTrackHead((path) => api<TrackPage>(path), {
-          source, symbol: liveSymbol, base, period: TF_SECONDS[base], storedTip: storedTipsRef.current[base],
-          forceRecent: forceRecent || (!liveRef.current[base]?.length && storedTipsRef.current[base] === undefined),
-        })));
-        if (!alive || trackSourceRef.current !== source) return;
-        const pages = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
-        const changed: BaseTimeframe[] = [];
-        for (const page of pages) {
-          if (!page.bars.length) continue;
-          const base = page.tf as BaseTimeframe;
-          const previous = liveRef.current[base] ?? [];
-          const merged = mergeReviewBars(previous, page.bars);
-          storedTipsRef.current[base] = page.bars.at(-1)![0];
-          if (merged !== previous) {
-            liveRef.current[base] = merged;
-            changed.push(base);
-          }
-        }
-        await Promise.all(changed.map((base) => chartRef.current?.applySeries(base, liveRef.current[base]!, undefined, true, true)));
-        if (!alive || trackSourceRef.current !== source) return;
-        setMarketInfo((info) => info?.source === source ? { ...info,
-          last: Math.max(info.last ?? 0, ...pages.map((page) => page.last_bar ?? 0)) || null } : info);
-        if (Object.values(liveRef.current).some((rows) => rows?.length)) setLiveBars(liveRef.current);
-        if (pages.length === results.length) setMarketLoadError('');
-        for (const listener of liveListeners.current) listener();
-        if (forceRecent || Date.now() - catalogAt > 60000) {
-          const catalog = await api<TrackCatalog>('/api/data/sources');
-          if (!alive || trackSourceRef.current !== source) return;
-          catalogAt = Date.now();
-          const entry = catalog.sources.find((track) => track.id === source && track.symbol === liveSymbol);
-          if (entry) setMarketInfo((info) => info?.source === source ? { ...info, tfs: entry.tfs } : info);
-        }
-      } catch (error) { console.warn('[track-head] 轨道近期数据刷新失败，稍后重试', error); }
-      finally {
-        refreshing = false;
-        if (pendingRecent && alive) { pendingRecent = false; void refresh(true); }
-      }
-    };
-    refreshTrackRef.current = (forceRecent) => { void refresh(forceRecent); };
-    const initial = window.setTimeout(() => void refresh(), 700);
-    const timer = window.setInterval(() => void refresh(), MARKET_HEAD_POLL_MS);
-    return () => { alive = false; refreshTrackRef.current = null; window.clearTimeout(initial); window.clearInterval(timer); };
-  }, [marketView, marketInfo?.source, liveSymbol]);
-  const previousBackfillPhase = useRef(backfill.phase);
-  const previousRepairUpdated = useRef(backfill.repairUpdated);
-  const forceTrackRefreshRef = useRef(false);
-  useEffect(() => {
-    const completed = previousBackfillPhase.current === 'initializing' && (backfill.phase === 'ready' || backfill.phase === 'partial_ready');
-    const repaired = backfill.repairUpdated !== null && backfill.repairUpdated !== previousRepairUpdated.current;
-    previousBackfillPhase.current = backfill.phase;
-    previousRepairUpdated.current = backfill.repairUpdated;
-    forceTrackRefreshRef.current ||= completed || repaired;
-    const timer = window.setTimeout(() => {
-      const forceRecent = forceTrackRefreshRef.current;
-      forceTrackRefreshRef.current = false;
-      refreshTrackRef.current?.(forceRecent);
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [backfill.phase, backfill.lastUpdated, backfill.repairUpdated]);
-
   // 邀请链接沿用旧地址，入群后直接进入聊天中的对应群会话。
   useEffect(() => {
     const code = params.get('group');
@@ -673,67 +291,6 @@ export default function App() {
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [board?.user.id]);
-
-  /* ------------------------------------------------- 会话：消息 / 关注 */
-
-  useEffect(() => {
-    if (!board?.user.id) return;
-    let alive = true;
-    const loadInbox = async () => {
-      try {
-        const r = await api<{ items: ShareRow[] }>('/api/reviews/inbox');
-        if (alive) setInbox(r.items);
-      } catch {
-        /* 下一轮再试 */
-      }
-    };
-    void loadInbox();
-    const loadProfile = () => {
-      void api<{ incoming?: any[]; outgoing?: any[] }>('/api/profile')
-        .then((r) => {
-          if (!alive) return;
-          setFriendReq({ incoming: r.incoming ?? [], outgoing: r.outgoing ?? [] });
-          void api<{ unread: Record<string, number> | number; threads: Array<{ peer: { id: string }; unread: number }> }>('/api/dm/threads')
-            .then((dm) => {
-              const map: Record<string, number> = {};
-              for (const row of dm.threads ?? []) if (row.unread) map[row.peer.id] = row.unread;
-              if (!alive) return;
-              setDmUnread(map);
-              void api<{ groups: Array<{ unread: number; mentions: number }> }>('/api/groups')
-                .then((gs) => { if (alive) setGroupUnread((gs.groups ?? []).reduce((n, g) => n + (g.unread || 0), 0)); })
-                .catch(() => undefined);
-            })
-            .catch(() => undefined);
-        })
-        .catch(() => undefined);
-    };
-    loadProfile();
-    const profileTimer = window.setInterval(loadProfile, 15000);
-    // 分享是社交入口：交易台开着时也要能看到新消息，不能只在刷新页面时更新。
-    const timer = window.setInterval(loadInbox, 15000);
-    const onVisible = () => { if (document.visibilityState === 'visible') void loadInbox(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-      window.clearInterval(profileTimer);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [board?.user.id]);
-
-  /** 打开「消息」就把未读标成已读：角标和小铃不再闪，下次刷新也不会再算未读。 */
-  useEffect(() => {
-    if (tab !== 'inbox') return;
-    const unread = inbox.filter((row) => !row.seen).map((row) => row.id);
-    if (!unread.length) return;
-    let alive = true;
-    void Promise.all(unread.map((id) => api('/api/reviews/share/seen', { id }).catch(() => undefined))).then(() => {
-      if (alive) setInbox((rows) => rows.map((row) => (unread.includes(row.id) ? { ...row, seen: true } : row)));
-    });
-    return () => {
-      alive = false;
-    };
-  }, [tab, inbox]);
 
   /* 聊天没有服务端 seen：用本机「最后阅读时间」算未读，至少别让信封只统计分享。 */
   useEffect(() => {
@@ -1889,6 +1446,7 @@ export default function App() {
                     复盘
                     {trade.ticket ? <small> #{trade.ticket} · {sideText(trade.side)}</small> : null}
                   </h3>
+                  {trade.legacy ? <p className="dim">旧版成交摘要，尚未经原始成交完整重建。</p> : null}
                   {entry ? (
                     <>
                       <p className="dim">

@@ -55,7 +55,10 @@ def main():
    anon.request('/api/mt5/assistant',{'platform':'mac'},status=401)
    admin.request('/api/mt5/assistant',{'platform':'mac'},status=501)
    admin.request('/api/profile',{},status=403,origin='https://untrusted.invalid')
+   admin.request('/api/admin/users',status=403)
+   admin.request('/api/admin/metrics',status=403)
    admin.request('/api/admin/sudo',{'password':password})
+   ensure('metrics' in admin.request('/api/admin/metrics'),'admin timing metrics available after sudo')
    def new_code(days=7):
     return admin.request('/api/admin/invites',{'count':1,'expires_days':days})['codes'][0]
    def register(client,name,invitation=None):
@@ -67,7 +70,7 @@ def main():
    ensure(alice.request('/api/me')['user']['username']=='aa','session A');ensure(bob.request('/api/me')['user']['username']=='bb','session B')
    alice.request('/api/profile',{'nickname':'Synthetic Alpha','avatar':'avatar1','bio':'fixture-only'})
    ensure(bob.request('/api/profile')['user']['nickname']=='bb','profile ownership')
-   alice.request('/api/admin/users',status=403);alice.request('/api/invite',status=403)
+   alice.request('/api/admin/users',status=404);alice.request('/api/invite',status=404);alice.request('/api/admin/metrics',status=404)
    alice.request('/api/admin/invites',status=404);alice.request('/api/admin/sudo',{'password':password},status=404)
    used=new_code();cc=Client(base);register(cc,'cc',used)
    reused=Client(base);challenge=anon.request('/api/login-challenge');rt=challenge['challenge_id']
