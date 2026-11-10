@@ -251,6 +251,9 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* 交易台是固定视口应用：桌面端只允许面板内部滚动，页面本身不要出现第二条滚动条。
+   窄屏保留默认滚动，避免小窗口内容被裁掉。 */
+@media (min-width: 901px) { html, body { overflow: hidden; } }
 body {
   background: var(--bg);
   color: var(--text);
