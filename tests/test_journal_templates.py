@@ -56,6 +56,10 @@ class JournalTemplates(unittest.TestCase):
   self.note(sections=[self.section(title,checked=True)])
   rows=library.library(self.db,'alice')['chapters']
   self.assertEqual([(row['title'],row['favorite'],row['uses']) for row in rows],[(title,True,1)])
+  library.favorite_chapter(self.db,'bob',{'title':title,'favorite':False})
+  self.assertTrue(library.library(self.db,'alice')['chapters'][0]['favorite'])
+  library.favorite_chapter(self.db,'alice',{'title':title,'favorite':False})
+  self.assertFalse(library.library(self.db,'alice')['chapters'][0].get('favorite',False))
 
  def test_templates_strip_trade_content_and_checks_but_keep_custom_order(self):
   created=library.save_template(self.db,'alice',{'name':'我的开单前五问','sections':[self.section('先问自己',body='私人交易细节',checked=True),self.section('再看位置',id='b')]})['template']
@@ -161,16 +165,16 @@ class JournalTemplates(unittest.TestCase):
 
  def test_stats_count_blank_unchecked_items_in_completed_notes(self):
   for ticket in ('1','2'):
-   self.note(ticket,sections=[self.section('方向',checked=True,verdict='yes'),self.section('风险',id='risk')])
+   self.note(ticket,sections=[self.section('方向',checked=True,verdict='yes'),self.section('风险',id='risk',checklist=True)])
   result=library.stats(self.db,'alice')
   self.assertEqual(result['notes'],2)
   self.assertEqual([(row['title'],row['total'],row['checked'],row['rate']) for row in result['skipped']],[('风险',2,0,0)])
   self.assertEqual(result['verdicts'],{'yes':2,'no':0,'unclear':0,'na':0})
-  self.note('2',sections=[self.section('方向'),self.section('风险',id='risk')])
+  self.note('2',sections=[self.section('方向'),self.section('风险',id='risk',checklist=True)])
   self.assertEqual(library.stats(self.db,'alice')['notes'],1)
   self.assertEqual(library.stats(self.db,'alice')['skipped'],[])
 
- def test_public_chapter_cloud_counts_people_not_clicks_and_needs_meaningful_content(self):
+ def test_public_vocabulary_never_publishes_private_chapters(self):
   self.db.executescript("CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,nickname TEXT); INSERT OR IGNORE INTO users VALUES('alice','A'),('bob','B');")
   for ticket,person in (('1','alice'),('2','alice'),('1','bob')):
    self.db.execute('INSERT OR IGNORE INTO trades(person,ticket,payload) VALUES(?,?,?)',(person,ticket,'{}'))
@@ -179,14 +183,10 @@ class JournalTemplates(unittest.TestCase):
   journal.save(self.db,'bob',{'ticket':'1','body':'','tags':[],'sections':[{'id':'b1','title':'扫低后 Flip','group':'结构','checked':True,'body':'z'}]})
   cloud=library.public_chapters(self.db)
   titles={row['title']:row for row in cloud['chapters']}
-  self.assertEqual(titles['扫低后 Flip']['users'],2)
-  self.assertEqual(titles['扫低后 Flip']['uses'],3)
-  self.assertEqual(titles['扫低后 Flip']['group'],'结构')
+  self.assertNotIn('扫低后 Flip',titles)
   self.assertNotIn('空章节',titles)
-  cloud_rows=library.public_chapters(self.db)['chapters']
-  self.assertTrue(cloud_rows[0]['users']>=1 and cloud_rows[0]['title']=='扫低后 Flip')
-  self.assertTrue(any(row.get('system') and row['title']=='订单块（OB）' for row in cloud_rows))
-  self.assertTrue(all(row['users']>=0 for row in cloud_rows))
+  self.assertTrue(all(row.get('system') and row['users']==0 for row in cloud['chapters']))
+  self.assertTrue(any(row['title']=='订单块（OB）' for row in cloud['chapters']))
 
  def test_template_pin_sorts_first_and_rejects_other_owners(self):
   first=library.save_template(self.db,'alice',{'name':'常用','sections':[self.section()]})['template']

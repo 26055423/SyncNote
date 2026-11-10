@@ -1,3 +1,4 @@
+import type { NoteScene } from '../features/workspace/types';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { DrawingsControl } from '@luxalgo/vela';
 import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type BaseTimeframe, type ReviewCharts } from './provider';
@@ -58,6 +59,7 @@ export interface ChartHandle {
   /** 当前图的画线（笔记证据挑选用）。 */
   drawingCandidates(): Array<{ id: string; type: string; text: string; timeframe: string; anchorMs: number | null; snapshot: unknown }>;
   selectDrawings(ids: string[] | null): void;
+  insertDrawingText(id: string, text: string): boolean;
   /** 重画持仓线（改单失败时把拖走的止损/止盈线拉回真实值）。 */
   syncPositionLevels(): void;
   replayStatus(): ReplayUiState;
@@ -83,7 +85,7 @@ export interface ChartHandle {
   snapshot(): unknown;
   flush(): void;
   /** 分享用：激活格子的周期、可见窗口中点（毫秒）、布局，以及当时的画线文档（已去掉开平仓标注）。 */
-  view(): { anchor_ms: number; timeframe: string; layout: string; document: unknown } | null;
+  view(): { anchor_ms: number; timeframe: string; layout: string; document: unknown; replay_ms: number | null; replay_cursor_ms: number | null; range: { from: number; to: number } | null } | null;
   /** 激活某个画图工具（再点一次取消）。 */
   useTool(type: string | null): void;
   /** 当前激活的工具类型。 */
@@ -107,6 +109,7 @@ interface Props {
   symbol: string;
   anchorMs: number;
   savedState: unknown;
+  initialScene?: NoteScene;
   readOnly: boolean;
   timeframes?: string[];
   /** 收藏的画图工具（同步给原生工具栏，显示在顶部）。 */
@@ -409,6 +412,17 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     selectDrawings(ids: string[] | null) {
       try { (wsRef.current?.active?.chart as any)?.drawings?.select?.(ids && ids.length ? ids : null); } catch { /* 忽略 */ }
     },
+    insertDrawingText(id, text) {
+      if (readOnly) return false;
+      const api = wsRef.current?.active?.chart?.drawings as any;
+      const row = api?.toJSON?.()?.drawings?.find((row: any) => row.id === id);
+      if (!row) return false;
+      const value = String(row.text?.value || '');
+      if (value.length + text.length > 3000) return false;
+      api.update(id, { text: { ...row.text, value: value + text } });
+      wsRef.current?.flushPendingState?.();
+      return true;
+    },
     syncPositionLevels() {
       try { positionSyncRef.current?.(); } catch { /* 忽略 */ }
     },
@@ -579,7 +593,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       } catch {
         /* ignore */
       }
-      return { anchor_ms: center, timeframe: cell?.chart?.market?.timeframe ?? '15', layout, document };
+      const replay = ws.replay?.state;
+      const replayClock = replay?.active ? Math.max(0, ...ws.cells().map((item: any) => { const at = item.chart.replay.state.cursorTime; return typeof at === 'number' ? at + (TIMEFRAMES[item.chart.market.timeframe]?.seconds ?? 60) * 1000 : 0; })) || null : null;
+      return { anchor_ms: center, timeframe: cell?.chart?.market?.timeframe ?? '15', layout, document, replay_ms: replayClock, replay_cursor_ms: replay?.active ? replay.cursorTime : null, range: Number.isFinite(from) && Number.isFinite(to) && to > from ? { from, to } : null };
     },
   }));
 
@@ -589,6 +605,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     // A rebuilt workspace owns a new native toolbar; remount it once ready.
     setReady(false);
     let disposed = false;
+    let restoring = true;
     const interactionDisposers: Array<() => void> = [];
 
     (async () => {
@@ -984,7 +1001,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         });
         ws.on?.('state:changed', () => {
           try {
-            if (!replaying()) onStateChange?.(stripMarks(ws.getState()));
+            if (!restoring && !readOnly) onStateChange?.(stripMarks(ws.getState()));
           } catch {
             /* ignore */
           }
@@ -999,10 +1016,21 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         // 首批 K 线落地前 setVisibleRange 会被边界夹住，这里补一次定位。
         // 再补几拍：静态复盘数据没有 load:end 事件，首帧宽度也可能是 0，
         // 早跳会被夹到最左边，看起来就像"没跳到开仓"。
-        focusAll(ws, anchorRef.current, props.tradeMarks);
+        const scene = props.initialScene;
+        if (scene?.layout && !props.forceLayout) ws.setLayout(scene.layout as any);
+        if (scene?.timeframe && TIMEFRAMES[scene.timeframe]) await ws.active.chart.setMarket({ timeframe: scene.timeframe });
+        await Promise.all(ws.cells().map((cell: any) => cell.chart.historyComplete()));
+        if (disposed) return;
+        if (scene?.replay_ms && !readOnly) await startReplay(scene.replay_cursor_ms ?? scene.replay_ms - 1, ws.active.id);
+        const position = () => {
+          if (scene?.range) ws.active.chart.setVisibleRange(scene.range);
+          else if (!replaying()) focusAll(ws, anchorRef.current, props.tradeMarks);
+        };
+        position();
+        restoring = false;
         for (const delay of [80, 240, 600, 1200]) {
           window.setTimeout(() => {
-            if (!disposed && !replaying()) focusAll(ws, anchorRef.current, props.tradeMarks);
+            if (!disposed) position();
           }, delay);
         }
       } catch (error) {
@@ -1108,7 +1136,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // 定位点变化（比如从列表点开另一笔、或时间基对齐后 anchor 被修正）时补一次居中：
   // 图表已经在屏幕上时，初始化那一跳不会重跑，这里兜住。
   useEffect(() => {
-    if (!ready || !(anchorMs > 0) || replaying()) return;
+    if (!ready || !(anchorMs > 0) || replaying() || props.initialScene?.range || props.initialScene?.replay_ms) return;
     try {
       focusAll(wsRef.current, anchorMs, props.tradeMarks);
     } catch {

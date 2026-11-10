@@ -95,7 +95,10 @@ def clean_snapshot(snapshot):
     if document is not None:
         if not isinstance(document, dict) or document.get('version') != 1 or not isinstance(document.get('charts'), list):
             raise ChartError('分享的画线存档格式不正确')
-    body = json.dumps({'anchor_ms': anchor, 'timeframe': timeframe, 'layout': layout, 'document': document}, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+    visible_range = snapshot.get('range')
+    if visible_range is not None and (not isinstance(visible_range, dict) or any(isinstance(visible_range.get(k), bool) or not isinstance(visible_range.get(k), (int,float)) for k in ('from','to')) or not 0 < visible_range['from'] < visible_range['to'] <= MAX_ANCHOR_MS):
+        raise ChartError('分享窗口范围不正确')
+    body = json.dumps({'anchor_ms': anchor, 'timeframe': timeframe, 'layout': layout, 'range': visible_range, 'document': document}, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
     if len(body.encode('utf-8')) > MAX_SNAPSHOT_BYTES:
         raise ChartError('分享的画线内容过大，请减少标注后重试', 413)
     return body

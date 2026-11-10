@@ -42,10 +42,10 @@ class Architecture(unittest.TestCase):
 
  def test_upgrade_preserves_notes_links_and_is_idempotent(self):
   path=self.folder();self.legacy(path)
-  self.assertEqual(migrations.migrate(path),5)
-  self.assertEqual(migrations.migrate(path),5)
+  self.assertEqual(migrations.migrate(path),6)
+  self.assertEqual(migrations.migrate(path),6)
   with database.connect(path) as db:
-   self.assertEqual(db.execute('SELECT count(*) FROM schema_migrations').fetchone()[0],3)
+   self.assertEqual(db.execute('SELECT count(*) FROM schema_migrations').fetchone()[0],4)
    self.assertEqual(db.execute('SELECT count(*) FROM trades').fetchone()[0],0)
    self.assertEqual(db.execute('SELECT count(*) FROM legacy_trades').fetchone()[0],1)
    self.assertTrue(journal.trade(db,'a','old')['legacy'])

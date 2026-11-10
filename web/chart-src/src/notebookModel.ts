@@ -14,6 +14,7 @@ export interface NoteSection {
   id: string;
   title: string;
   checked: boolean;
+  checklist?: boolean;
   body: string;
   /** 分组名（检查项）。空 = 自由条目，不计入完成度。 */
   group?: string | null;
@@ -63,8 +64,8 @@ export const DEFAULT_CHECKLIST: Array<{ group: string; items: string[] }> = [
 
 export const MAX_SECTIONS = 30;
 
-export function newSection(title = '', group: string | null = null): NoteSection {
-  return { id: crypto.randomUUID(), title, checked: false, body: '', group, verdict: null };
+export function newSection(title = '', group: string | null = null, checklist = false): NoteSection {
+  return { id: crypto.randomUUID(), title, checked: false, body: '', group, checklist, verdict: null };
 }
 
 /** 整套通用清单：作为建议插入，不自动套用、不覆盖已有条目。 */
@@ -74,7 +75,7 @@ export function appendChecklist(current: NoteSection[]): NoteSection[] {
   for (const group of DEFAULT_CHECKLIST) {
     for (const title of group.items) {
       if (added.length >= room) break;
-      added.push(newSection(title, group.group));
+      added.push(newSection(title, group.group, true));
     }
   }
   return [...current, ...added];
@@ -84,7 +85,7 @@ export function appendChecklist(current: NoteSection[]): NoteSection[] {
 export function appendTemplate(current: NoteSection[], template: Pick<NotebookTemplate, 'sections'>): NoteSection[] {
   return [
     ...current,
-    ...template.sections.slice(0, Math.max(0, MAX_SECTIONS - current.length)).map(section => newSection(section.title, section.group ?? null)),
+    ...template.sections.slice(0, Math.max(0, MAX_SECTIONS - current.length)).map(section => newSection(section.title, section.group ?? null, isChecklist(section))),
   ];
 }
 
@@ -108,8 +109,8 @@ export function appendPhrase(body: string, text: string): string {
 }
 
 /** Recommendations never reorder the actual notebook, only explicitly selected candidates. */
-export function frequentFirst<T extends { uses: number; last_used: number }>(items: T[]): T[] {
-  return [...items].sort((a, b) => b.uses - a.uses || b.last_used - a.last_used);
+export function frequentFirst<T extends { uses: number; last_used: number; pinned?: boolean }>(items: T[]): T[] {
+  return [...items].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.uses - a.uses || b.last_used - a.last_used);
 }
 
 const VERDICT_TEXT: Record<string, string> = { yes: '符合', no: '不符合', unclear: '不确定', na: '不适用' };
@@ -123,7 +124,7 @@ export function summarizeNote(value: NotebookValue): string {
   const tally: Record<string, number> = { yes: 0, no: 0, unclear: 0, na: 0 };
   for (const section of value.sections) {
     const verdict = section.verdict ?? '';
-    if (verdict in tally) tally[verdict] += 1;
+    if (isChecklist(section) && verdict in tally) tally[verdict] += 1;
   }
   const scored = Object.entries(tally).filter(([, count]) => count > 0).map(([key, count]) => `${VERDICT_TEXT[key]} ${count}`);
   if (scored.length) lines.push(scored.join(' · '));
@@ -134,7 +135,7 @@ export function summarizeNote(value: NotebookValue): string {
       section = row.group;
       lines.push('', `【${row.group}】`);
     }
-    lines.push(`- [${label}] ${row.title || '未命名'}`);
+    lines.push(`- ${isChecklist(row) ? '[' + label + '] ' : ''}${row.title || '未命名'}`);
     if (row.body.trim()) lines.push(`  ${row.body.trim()}`);
     for (const item of row.evidence ?? []) lines.push(`  证据：${item.caption}`);
   }
@@ -144,6 +145,17 @@ export function summarizeNote(value: NotebookValue): string {
 
 /** 完成度：分母只算检查项，且排除「不适用」——自由条目不拉低完成度。 */
 export function checklistProgress(sections: NoteSection[]): { done: number; total: number } {
-  const items = sections.filter(section => section.group && section.verdict !== 'na');
+  const items = sections.filter(section => isChecklist(section) && section.verdict !== 'na');
   return { done: items.filter(section => section.checked).length, total: items.length };
+}
+
+export function isChecklist(section: NoteSection): boolean {
+  return section.checklist ?? Boolean(section.group || section.checked || section.verdict);
+}
+export const CHAPTERS = ['方向判断', '结构', '关键位', '入场模型', '订单管理', '结果与改进'];
+export function insertAt(body: string, text: string, caret?: { start: number; end: number }) {
+  if (!caret) { const next = appendPhrase(body, text); return { body: next, position: next.length }; }
+  const start = Math.max(0, Math.min(caret.start, body.length));
+  const end = Math.max(start, Math.min(caret.end, body.length));
+  return { body: body.slice(0, start) + text + body.slice(end), position: start + text.length };
 }

@@ -26,6 +26,7 @@ import { SettingsMenu } from './SettingsMenu';
 import { TrackStrip } from './TrackStrip';
 import { ChatDock } from './ChatDock';
 import { ReviewShareDialog } from './ReviewShareDialog';
+import { ReviewNotesList } from './ReviewNotesList';
 import { ReviewNotebook, type NoteSection } from './ReviewNotebook';
 import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { ToolbarIcon } from './ui/ToolbarIcon';
@@ -63,13 +64,13 @@ export default function App() {
   const [mt5ConnectionOpen, setMT5ConnectionOpen] = useState(params.get('connect') === '1');
 
   const [entry, setEntry] = useState<Entry | null>(null);
-  const [target, setTarget] = useState<{ person: string; ticket: string; t?: number } | null>(null);
+  const [target, setTarget] = useState<{ person: string; ticket: string; note?: string; t?: number } | null>(null);
   /** 正在看某条消息里的复盘切片时，入口按 share id 取（拿分享人当时的窗口）。 */
   const [shareId, setShareId] = useState<number | null>(() => {
     const raw = params.get('share');
     return params.get('view') !== 'live' && raw && /^\d+$/.test(raw) ? Number(raw) : null;
   });
-  const initialReview = params.get('view') !== 'live' && Boolean(params.get('ticket') || shareId || params.get('view') === 'review');
+  const initialReview = params.get('view') !== 'live' && Boolean(params.get('note') || params.get('ticket') || shareId || params.get('view') === 'review');
   const [tab, setTab] = useState<Tab>(() => (params.get('panel') !== 'sync' && initialReview ? 'review' : 'trade'));
   const [error, setError] = useState('');
   const { board, setBoard } = useBoard(setError);
@@ -92,7 +93,9 @@ export default function App() {
   // 好友申请：别人申请我的（可通过对）/ 我申请的（可取消）。
   const [friendManager, setFriendManager] = useState(false);
   const [chatGroup, setChatGroup] = useState<{ id: string; name: string; avatar?: string } | null>(null);
-  const [shareRequest, setShareRequest] = useState<{ ticket: string; snapshot: unknown; initialRecipient?: { kind: 'dm' | 'group'; id: string } } | null>(null);
+  const [shareRequest, setShareRequest] = useState<{ ticket: string; note_id?: string; note?: unknown; snapshot: unknown; initialRecipient?: { kind: 'dm' | 'group'; id: string } } | null>(null);
+  const [notesRevision, setNotesRevision] = useState(0);
+  const [creatingNote, setCreatingNote] = useState(false);
   const [chat, setChat] = useState('');
   const [tf, setTf] = useState('15');
   const [layout, setLayout] = useState(() => (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches ? '1' : '4'));
@@ -189,7 +192,7 @@ export default function App() {
   /** 某一边已经没有更早/更新的数据时，60 秒内不再追问（避免拖到尽头后每次事件都发请求）。 */
   const edgeBlockRef = useRef<Record<string, number>>({});
   /** 补段要知道“现在看的是哪笔/哪个品种”，放 ref 避免回调拿到旧值。 */
-  const ctxRef = useRef<ReviewScope & { symbol: string }>({ shareId: null, symbol: 'XAUUSD' });
+  const ctxRef = useRef<ReviewScope & { symbol: string; cutoff?: number | null }>({ shareId: null, symbol: 'XAUUSD' });
 
   /* ------------------------------------------------- 仅在显式打开复盘时定位交易 */
 
@@ -205,7 +208,8 @@ export default function App() {
       setMode('review');
       setTab('review');
     };
-    if (ticketParam) open(personParam, ticketParam, tParam);
+    if (route.get('note')) { setTarget({ person: personParam, ticket: '', note: route.get('note')! }); setMode('review'); setTab('review'); }
+    else if (ticketParam) open(personParam, ticketParam, tParam);
   }, [board, target, shareId]);
 
   /* --------------------------------------------------------- 复盘数据加载 */
@@ -214,19 +218,26 @@ export default function App() {
     if (!target && shareId == null) return;
     let alive = true;
     let timer: number | null = null;
+    let hydrated = false;
     const url = shareId != null
       ? `/api/chart/entry?share=${shareId}`
+      : target?.note ? '/api/chart/entry?note=' + encodeURIComponent(target.note)
       : `/api/chart/entry?person=${encodeURIComponent(target!.person)}&ticket=${encodeURIComponent(target!.ticket)}`;
     const run = async () => {
       try {
         const data = await api<Entry>(url);
         if (!alive) return;
         setEntry(data);
-        setNote(data.note ? { body: data.note.body, tags: [...data.note.tags], sections: data.note.sections ?? [] } : { body: '', tags: [], sections: [] });
+        if (!hydrated) setNote(data.note ? { body: data.note.body, tags: [...data.note.tags], sections: data.note.sections ?? [] } : { body: '', tags: [], sections: [] });
+        hydrated = true;
         setError('');
         // 按消息打开时，target 由服务端返回的归属交易补上（用于标题、分享卡片和重挂载 key）。
         const ticket = String(data.review?.trade?.ticket ?? '');
         if (shareId != null && !target && ticket) setTarget({ person: data.owner.id, ticket });
+        if (shareId == null && target?.ticket && data.note_id && !ticket) {
+          setTarget({ person: data.owner.id, ticket: '', note: data.note_id });
+          history.replaceState(null, '', '/chart?view=review&note=' + data.note_id);
+        }
         if (data.review.status !== 'ready') timer = window.setTimeout(run, 5000);
       } catch (err) {
         if (alive) setError(err instanceof Error ? err.message : String(err));
@@ -258,6 +269,7 @@ export default function App() {
         return;
       }
       setShareId(null);
+      if (next.get('note')) { setTarget({ person: board?.user.id || '', ticket: '', note: next.get('note')! }); setMode('review'); setTab('review'); return; }
       const ticket = next.get('ticket');
       if (ticket) {
         setTarget({ person: next.get('person') || board?.user.id || '', ticket, t: Number(next.get('t') || 0) || undefined });
@@ -322,10 +334,14 @@ export default function App() {
     (document: unknown) => {
       if (!entry || entry.read_only || !target) return;
       if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+      const view = chartRef.current?.view();
       saveTimer.current = window.setTimeout(async () => {
         setSaveState('saving');
         try {
-          await api('/api/chart/state', { ticket: target.ticket, state: document });
+          if (entry.note_id) {
+            await api('/api/notes', { id: entry.note_id, document, ...(view && entry.scene ? { scene: { ...entry.scene, ...view } } : {}) });
+          }
+          else await api('/api/chart/state', { ticket: target.ticket, state: document });
           setSaveState('saved');
           window.setTimeout(() => setSaveState('idle'), 1600);
         } catch {
@@ -355,12 +371,15 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [hasUnsavedNote, localConnected]);
 
-  const confirmLeaveNote = () => !noteDirty() || window.confirm('这笔交易的笔记还没保存，确定要离开吗？');
+  const confirmLeaveNote = () => !noteDirty() || window.confirm('笔记还没保存，确定要离开吗？');
 
   const showLatestChart = () => {
+    if (!confirmLeaveNote()) return;
+    chartRef.current?.flush();
+    setEntry(null); setTarget(null); setShareId(null);
     setMode('live');
     const qs = new URLSearchParams(location.search);
-    for (const key of ['share', 'person', 'ticket', 't']) qs.delete(key);
+    for (const key of ['share', 'person', 'ticket', 'note', 't']) qs.delete(key);
     qs.set('view', 'live');
     history.replaceState(null, '', '/chart?' + qs.toString());
   };
@@ -404,31 +423,60 @@ export default function App() {
     history.replaceState(null, '', '/chart?view=review&share=' + row.id);
   };
 
+  const openNote = (id: string) => {
+    if (!confirmLeaveNote()) return;
+    chartRef.current?.flush();
+    setEntry(null); setShareId(null); setTarget({ person: board!.user.id, ticket: '', note: id });
+    setMode('review'); setTab('review'); setRailOpen(true); setNoteState('idle'); setSaveState('idle'); setShareRequest(null);
+    history.replaceState(null, '', '/chart?view=review&note=' + encodeURIComponent(id));
+  };
+  const captureScene = () => {
+    const view = chartRef.current?.view();
+    if (!view) return null;
+    return { ...view, source: tradeReview ? entry?.review.market_source : liveTrack, symbol: tradeReview ? entry?.review.trade.symbol : liveSymbol };
+  };
+  const createNote = async () => {
+    if (creatingNote || !confirmLeaveNote()) return;
+    const scene = captureScene();
+    if (!scene?.source || !scene.symbol) { setError('图表准备好后，即可开始复盘。'); return; }
+    chartRef.current?.replayPause();
+    setCreatingNote(true);
+    try {
+      const result = await api<{ note: { id: string } }>('/api/notes', { scene, document: scene.document, body: '', tags: [], sections: [] });
+      setNote({ body: '', tags: [], sections: [] });
+      setEntry(null); setShareId(null); setTarget({ person: board!.user.id, ticket: '', note: result.note.id });
+      setMode('review'); setTab('review'); setRailOpen(true); setNotesRevision(n => n + 1);
+      history.replaceState(null, '', '/chart?view=review&note=' + result.note.id);
+    } catch (error) { setError(String(error)); }
+    finally { setCreatingNote(false); }
+  };
   const saveNote = async () => {
-    if (!entry || entry.read_only || !target) return;
-    const person = target.person, ticket = target.ticket;
-    const snapshot = { body: note.body, tags: [...note.tags], sections: note.sections.map(section => ({ ...section })) };
+    if (!entry || entry.read_only || !entry.note_id) return;
+    const id = entry.note_id;
+    const snapshot = structuredClone(noteRef.current);
+    const scene = captureScene();
     setNoteState('saving');
     try {
-      const result = await api<{ note: NonNullable<Entry['note']> }>('/api/journal', { ticket, ...snapshot });
-      if (ctxRef.current.person !== person || ctxRef.current.ticket !== ticket) return;
-      const saved = { body: result.note.body, tags: result.note.tags, sections: result.note.sections ?? [] };
-      setEntry(prev => prev ? { ...prev, note: result.note } : prev);
+      const result = await api<{ note: NonNullable<Entry['note']> }>('/api/notes', { id, ...snapshot, ...(scene ? { scene, document: scene.document } : {}) });
+      setEntry(prev => prev?.note_id === id ? { ...prev, note: result.note } : prev);
+      if (ctxRef.current.noteId !== id) return;
       const unchanged = JSON.stringify(noteRef.current) === JSON.stringify(snapshot);
-      if (unchanged) setNote(saved);
+      if (unchanged) setNote({ body: result.note.body, tags: result.note.tags, sections: result.note.sections ?? [] });
       setNoteState(unchanged ? 'saved' : 'idle');
-      window.setTimeout(() => setNoteState(state => state === 'saved' ? 'idle' : state), 1600);
-    } catch (err) {
-      if (ctxRef.current.person !== person || ctxRef.current.ticket !== ticket) return;
-      setNoteState('error');
-      setError(err instanceof Error ? err.message : '笔记保存失败');
-    }
+      setNotesRevision(n => n + 1);
+    } catch (error) { setNoteState('error'); setError(String(error)); }
   };
-
+  useEffect(() => {
+    if (!hasUnsavedNote || noteState === 'saving' || noteState === 'error' || !entry?.note_id || entry.read_only) return;
+    const timer = window.setTimeout(() => void saveNote(), 1200);
+    return () => window.clearTimeout(timer);
+  }, [note, entry?.note_id, hasUnsavedNote, noteState]);
   const openReviewShare = (initialRecipient?: { kind: 'dm' | 'group'; id: string }) => {
-    if (!entry || entry.read_only || !target) return;
-    if (chartRef.current?.replayStatus().active) { setError('请先退出K线回放，再分享复盘切片。'); return; }
-    setShareRequest({ ticket: target.ticket, snapshot: chartRef.current?.view?.() ?? null, initialRecipient });
+    if (!entry || entry.read_only || !entry.note_id) return;
+    const snapshot = captureScene();
+    if (!snapshot) { setError('图表还在加载，请稍后分享'); return; }
+    chartRef.current?.replayPause();
+    setShareRequest({ ticket: String(entry.review.trade.ticket || ''), note_id: entry.note_id, note: structuredClone(noteRef.current), snapshot, initialRecipient });
   };
 
   /** 通过 / 拒绝好友申请：处理完把面板和看板一起刷新。 */
@@ -489,6 +537,7 @@ export default function App() {
     Date.now() - latestChartBar * 1000 > 72 * 3600_000;
   const [series, setSeries] = useState<ReviewCharts | null>(null);
   const [reviewAvailability, setReviewAvailability] = useState(0);
+  const [reviewLoadedKey, setReviewLoadedKey] = useState('');
   const reviewSymbol = entry?.review.trade?.symbol as string | undefined;
   const reviewSource = entry?.review.market_source;
   const formingSource = tradeReview ? reviewSource : connectedTrack;
@@ -523,9 +572,9 @@ export default function App() {
 
   const entryMatchesTarget = entry && (shareId != null
     ? entry.share?.id === shareId
-    : entry.owner.id === target?.person && String(entry.review.trade.ticket) === target.ticket);
+    : entry.owner.id === target?.person && (target.note ? entry.note_id === target.note : String(entry.review.trade.ticket) === target.ticket));
   const reviewKey = entryMatchesTarget && entry && reviewSymbol
-    ? JSON.stringify([board?.user.id, entry.owner.id, entry.review.trade.ticket, shareId, reviewSource, reviewSymbol])
+    ? JSON.stringify([board?.user.id, entry.owner.id, entry.note_id || entry.review.trade.ticket, shareId, reviewSource, reviewSymbol])
     : '';
   activeReviewKey.current = tradeReview ? reviewKey : '';
   const reviewProvider = useMemo(() => series && reviewSymbol ? new LiveProvider(series, reviewSymbol, listener => {
@@ -543,13 +592,15 @@ export default function App() {
       return true;
     });
   }, [entry, marketView, series, reviewAvailability]);
-  const ready = Boolean(reviewKey && reviewCacheKey.current === reviewKey && series && Object.values(series).some(rows => rows?.length));
+  const ready = Boolean(reviewKey && (!entry?.scene?.replay_ms || reviewLoadedKey === reviewKey) && reviewCacheKey.current === reviewKey && series && Object.values(series).some(rows => rows?.length));
   const anchorSeconds = entry?.share?.anchor_ms
     ? Math.round(entry.share.anchor_ms / 1000)
-    : (entry?.review.opened ?? (entry?.review.trade?.closed as number | undefined) ?? null);
+    : (entry?.scene?.anchor_ms ? entry.scene.anchor_ms / 1000 : entry?.review.opened ?? (entry?.review.trade?.closed as number | undefined) ?? null);
 
   ctxRef.current = {
     shareId,
+    noteId: entry?.note_id,
+    cutoff: entry?.read_only ? entry.scene?.replay_ms : null,
     person: target?.person,
     ticket: target?.ticket,
     source: tradeReview ? reviewSource : undefined,
@@ -557,6 +608,8 @@ export default function App() {
   };
 
   const updateReviewSeries = useCallback(async (base: BaseTimeframe, rows: number[][], streaming = false, followTail = false) => {
+    const cutoff = ctxRef.current.cutoff;
+    if (cutoff) rows = rows.filter(row => (row[0] + TF_SECONDS[base]) * 1000 <= cutoff);
     if (!rows.length) return;
     const cache = seriesRef.current;
     const previous = cache[base] ?? [];
@@ -661,7 +714,7 @@ export default function App() {
     });
     let timer: number | undefined;
     void Promise.allSettled(initial).then(() => {
-      if (alive) timer = window.setInterval(refresh, MARKET_HEAD_POLL_MS);
+      if (alive) { setReviewLoadedKey(reviewKey); timer = window.setInterval(refresh, MARKET_HEAD_POLL_MS); }
     });
     // Keep a visible historical window current when the server fills an older gap.
     const historyTimer = window.setInterval(() => {
@@ -933,7 +986,7 @@ export default function App() {
   const trade = entry?.review.trade ?? {};
   const anchorMs = useMemo(() => {
     // 消息里的切片：分享人当时可见窗口中点，优先于开仓时间。
-    const shared = entry?.share?.anchor_ms ?? null;
+    const shared = entry?.share?.anchor_ms ?? entry?.scene?.anchor_ms ?? null;
     if (shared && shared > 0) return shared;
     const opened = openedSeconds;
     const closed = trade?.closed ?? null;
@@ -986,6 +1039,7 @@ export default function App() {
           />
           <span className="toolbar-separator" aria-hidden="true" />
           <span className="chart-view-actions" role="group" aria-label="图表视图">
+            <button type="button" className="tool-btn" disabled={creatingNote} onClick={() => void createNote()}>开始复盘</button>
             {tradeReview && !replayActive ? (
               <button type="button" className="tool-btn" onClick={showLatestChart}><ToolbarIcon name="live" />回到最新</button>
             ) : null}
@@ -1193,6 +1247,7 @@ export default function App() {
                 symbol={trade.symbol || 'XAUUSD'}
                 anchorMs={anchorMs}
                 savedState={entry!.chart?.document ?? null}
+                initialScene={entry!.scene ?? undefined}
           tradeMarks={
                   entry!.review.opened != null && trade?.closed != null
                     ? {
@@ -1431,7 +1486,7 @@ export default function App() {
               <div className="pane pane-wide chat-host" hidden={tab !== 'friends' || friendManager}>
                 <ChatDock
                   visible={railOpen && tab === 'friends' && !friendManager}
-                  current={target?.ticket && target.person === me?.id && entry && !entry.read_only ? { ticket: target.ticket } : null}
+                  current={entry?.note_id && !entry.read_only ? { ticket: String(trade.ticket || '') } : null}
                   onShareCurrent={openReviewShare}
                   onError={setError}
                   onOpenFriendManager={() => setFriendManager(true)}
@@ -1442,25 +1497,35 @@ export default function App() {
 
               {tab === 'review' ? (
                 <div className="pane">
+                  <ReviewNotesList revision={notesRevision} open={openNote} />
                   <h3>
                     复盘
                     {trade.ticket ? <small> #{trade.ticket} · {sideText(trade.side)}</small> : null}
                   </h3>
                   {trade.legacy ? <p className="dim">旧版成交摘要，尚未经原始成交完整重建。</p> : null}
-                  {entry ? (
+                  {entry && tradeReview ? (
                     <>
-                      <p className="dim">
+                      {trade.ticket ? <p className="dim">
                         {money(trade.volume)} 手 · {money(trade.open)} → {money(trade.close)} · 盈亏 <b className={(trade.profit || 0) >= 0 ? 'up' : 'down'}>{money(trade.profit)}</b><br />
                         开仓 {stamp(entry.review.opened)} · 平仓 {stamp(trade.closed)}
-                      </p>
+                      </p> : <p className="dim">{trade.symbol} · {stamp((entry.scene?.anchor_ms ?? 0) / 1000)} · 图表笔记</p>}
+                      {!entry.read_only && entry.note_id && <label className="notebook-target">关联订单（可选）<select value={String(trade.ticket || '')} onChange={async event => {
+                        try {
+                          await api('/api/notes', { id: entry.note_id, ...noteRef.current, ticket: event.target.value || null });
+                          setTarget({ person: entry.owner.id, ticket: '', note: entry.note_id! });
+                          history.replaceState(null, '', '/chart?view=review&note=' + entry.note_id);
+                          setEntry(await api<Entry>('/api/chart/entry?note=' + entry.note_id));
+                        } catch (error) { setError(String(error)); }
+                      }}><option value="">不关联订单</option>{myHistory.filter(item => item.symbol === trade.symbol).map(item => <option key={String(item.ticket)} value={String(item.ticket)}>#{String(item.ticket)} · {item.symbol}</option>)}</select></label>}
                       <ReviewNotebook
-                        key={`${entry.owner.id}:${trade.ticket}`}
+                        key={entry.note_id || `${entry.owner.id}:${trade.ticket}`}
                         value={note}
                         onChange={next => { setNote(next); setNoteState(state => state === 'saving' ? state : 'idle'); }}
                         readOnly={entry.read_only}
                         onError={setError}
                         evidence={{
                           list: () => chartRef.current?.drawingCandidates?.() ?? [],
+                          insertText: (id, text) => chartRef.current?.insertDrawingText(id, text) ?? false,
                           select: (ids) => chartRef.current?.selectDrawings?.(ids),
                           goTo: (tf, anchorMs) => {
                             if (tf) chartRef.current?.setTimeframe(tf);
@@ -1488,7 +1553,7 @@ export default function App() {
                       </div>
                       {!entry.read_only ? (
                         <>
-                          {noteDirty() ? <p className="note-dirty" role="status">笔记有未保存的修改</p> : null}
+                          {noteDirty() ? <p className="note-dirty" role="status">笔记已修改，稍后自动保存</p> : null}
                           <button type="button" className="primary" onClick={() => void saveNote()} disabled={noteState === 'saving'}>
                             {noteState === 'saving' ? '保存中…' : noteState === 'saved' ? '已保存' : '保存笔记'}
                           </button>
@@ -1499,7 +1564,8 @@ export default function App() {
                     </>
                   ) : tradeReview ? <p className="dim">正在加载这笔复盘…</p> : (
                     <div className="rail-empty">
-                      <p className="dim">从底部「历史」选一笔成交，即可定位到交易时间并填写笔记。</p>
+                      <button type="button" className="primary" disabled={creatingNote} onClick={() => void createNote()}>开始复盘当前图表</button>
+                      <p className="dim">在图表上浏览、选日期或随机回放后，点击「开始复盘」。也可以从历史订单进入同一个笔记编辑器。</p>
                       {myHistory[0] ? (
                         <button type="button" className="primary" onClick={() => openTicket(me!.id, String(myHistory[0].ticket))}>
                           打开最近一笔 #{String(myHistory[0].ticket)}
@@ -1526,7 +1592,7 @@ export default function App() {
         onRetryHistorySync={() => localHistorySync.retry()}
         reviewed={board?.reviewed}
         onReview={(ticket) => openTicket(me!.id, ticket)}
-        tracksSlot={tradeReview ? (
+        tracksSlot={tradeReview && target?.ticket ? (
           <TrackStrip
             person={target?.person}
             ticket={target?.ticket}

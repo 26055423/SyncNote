@@ -19,7 +19,7 @@
 | `docs/本机EA交易架构设计.md` | 网站 UI 直连本机开源 EA 的目标、配对、权限、故障恢复和验收；区分旧首版边界与当前 SyncTrade 能力 |
 | `app_server.py` | HTTP 入口：会话、事务、静态分发与路由注册 |
 | `app_config.py` / `database.py` | 无副作用配置；提交/回滚后关闭连接 |
-| `migrations.py` / `app_bootstrap.py` | 显式数据库升级，版本 3–5 |
+| `migrations.py` / `app_bootstrap.py` | 显式数据库升级，版本 3–6 |
 | `app_runtime.py` | hub 和目录刷新线程的启动、停止 |
 | `routes/` | 复盘、行情、管理 HTTP 适配 |
 | `accounts.py` / `social.py` / `review_service.py` | 账户策略、社交权限、历史与复盘读模型 |
@@ -28,6 +28,7 @@
 | `observability.py` / `tools/capacity_probe.py` | 有界耗时指标、合成数据容量测量 |
 | `ea_hub.py` | MT5 EA 直连的多用户 hub（TCP 8788 / NDJSON v1） |
 | `live.py` | 实时行情内存缓存（tick + 4 个周期的最近 K 线） |
+| `review_notes.py` / `docs/统一复盘笔记.md` | 独立笔记、可选订单、场景、词库交互与兼容约定 |
 | `journal.py` | 笔记、复盘读写；`reviewed()` 判断哪些成交真的复盘过 |
 | `chart.py` | 画线存档与消息（复盘分享） |
 | `sync_history.py` | 只读历史入库：原始 deal 保留，交易由服务器重建 |
@@ -135,3 +136,5 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 `import app_server` 不创建数据库、不迁移、不启动线程。嵌入式调用先 `initialize_database()`；普通启动自动迁移，`python3 app_server.py --migrate` 只升级后退出。`with connect()` 退出会关闭连接。
 
 新成交只由 `sync_history.ingest` 重建到 `trades`。旧 snapshot/hub 只进 `legacy_trades`。有权威记录时主历史只显示权威记录；旧深链仍通过 `trade_records` 读取，笔记/复盘外键指向 `trade_keys`。
+
+独立笔记：新写入用 /api/notes，订单关联可空；不要把 note id 放进 ticket 或创建伪交易。primary_ticket 仅供旧 API 映射。章节的 checklist 与分组独立；公共词库不得聚合私人标题或正文。分享需冻结草稿、图表场景和回放截止时间。详见 docs/统一复盘笔记.md。

@@ -1,12 +1,13 @@
 import type { BaseTimeframe } from './vela/provider';
 
-export type ReviewScope = { shareId: number | null; person?: string; ticket?: string; source?: string | null; symbol?: string };
+export type ReviewScope = { shareId: number | null; noteId?: string | null; person?: string; ticket?: string; source?: string | null; symbol?: string };
 export type ReviewPage = { bars: number[][]; has_more?: boolean; source?: string; symbol?: string; tf?: string };
 export type ReviewDirection = 'left' | 'right' | 'latest';
 
 function reviewQuery(scope: ReviewScope, base: BaseTimeframe): URLSearchParams {
   const params = new URLSearchParams({ tf: base });
   if (scope.shareId != null) params.set('share', String(scope.shareId));
+  else if (scope.noteId) params.set('note', scope.noteId);
   else if (scope.person && scope.ticket) {
     params.set('person', scope.person);
     params.set('ticket', scope.ticket);

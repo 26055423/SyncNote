@@ -338,7 +338,7 @@ def messages(db, gid, uid, limit=100):
             'mine': row['person'] == uid,
             'recallable': bool(not row['recalled'] and (group['owner'] == uid or (row['person'] == uid and time.time() - row['created'] <= 120))),
         }
-        if not row['recalled'] and row['kind'] == 'trade' and row['ticket']:
+        if not row['recalled'] and row['kind'] == 'trade' and row['review_snapshot_id']:
             share = db.execute(
                 'SELECT id FROM review_shares WHERE snapshot_id=? AND recipient=?',
                 (row['review_snapshot_id'], uid),
@@ -353,7 +353,7 @@ def open_trade(db, gid, uid, message_id):
     """成员点击交易卡片：确保自己有这条 share，返回 share id。"""
     require_member(db, gid, uid)
     row = db.execute('SELECT * FROM group_messages WHERE id=? AND group_id=?', (message_id, gid)).fetchone()
-    if not row or row['recalled'] or row['kind'] != 'trade' or not row['ticket']:
+    if not row or row['recalled'] or row['kind'] != 'trade' or not row['review_snapshot_id']:
         raise GroupError('这条消息不是交易', 404)
     if not row['review_snapshot_id']:raise GroupError('这笔交易暂时无法打开',404)
     return {'share':chart.deliver(db,row['review_snapshot_id'],uid)}

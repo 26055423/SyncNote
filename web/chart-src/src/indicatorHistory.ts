@@ -15,6 +15,7 @@ export async function readIndicatorMinutes(
     let route: string;
     if ('review' in scope) {
       if (scope.review.shareId != null) params.set('share', String(scope.review.shareId));
+      else if (scope.review.noteId) params.set('note', scope.review.noteId);
       else if (scope.review.person && scope.review.ticket) {
         params.set('person', scope.review.person); params.set('ticket', scope.review.ticket);
       } else throw new Error('请先选择一笔交易');

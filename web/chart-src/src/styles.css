@@ -1948,3 +1948,14 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .account-summary b.down { color: var(--bad-ink); }
 
 /* 复盘视图提示：明确告诉用户当前图表是非实时的历史切片 */
+
+/* Review composition: ordinary chapters, optional checks, inline phrase tools. */
+.phrase-palette { padding: 8px 0; color: var(--text); }
+.phrase-palette details { margin-top: 6px; }
+.phrase-palette summary, .review-notes-list summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
+.phrase-palette input, .review-notes-list input { width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px; }
+.notebook-inline-phrases { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+.review-notes-list { margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+.review-notes-list > button { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 8px; background: var(--panel); border: 0; border-bottom: 1px solid var(--line); color: var(--text); cursor: pointer; }
+.review-notes-list small { color: var(--muted); }
+.notebook-section-foot { flex-wrap: wrap; }

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 const compiled = ts.transpileModule(readFileSync(new URL('../src/notebookModel.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { appendTemplate, templateStructure, moveSection, appendPhrase, frequentFirst, checklistProgress, appendChecklist, DEFAULT_CHECKLIST, summarizeNote } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { appendTemplate, templateStructure, moveSection, appendPhrase, frequentFirst, checklistProgress, appendChecklist, DEFAULT_CHECKLIST, summarizeNote, isChecklist, insertAt } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const a = { id: 'a', title: '先看这里', checked: true, body: '这一笔的判断' };
 const b = { id: 'b', title: '持仓时', checked: false, body: '保留原文' };
 test('applying a template appends independent empty chapters and preserves the original note', () => {
@@ -43,14 +43,14 @@ test('phrases preserve existing prose and add a separator only when necessary', 
   assert.equal(appendPhrase('回到计划位置。', '扫了低点'), '回到计划位置。扫了低点');
 });
 
-test('checklist progress counts only grouped items and drops not-applicable ones', () => {
+test('legacy checkmarks stay checks and not-applicable items do not count', () => {
   const rows = [
     { id: '1', title: '方向', checked: true, body: '', group: '方向' },
     { id: '2', title: '位置', checked: false, body: '', group: '位置' },
     { id: '3', title: '形状', checked: false, body: '', group: '形态', verdict: 'na' },
     { id: '4', title: '自由', checked: true, body: '' },
   ];
-  assert.deepEqual(checklistProgress(rows), { done: 1, total: 2 });
+  assert.deepEqual(checklistProgress(rows), { done: 2, total: 3 });
   assert.deepEqual(checklistProgress([]), { done: 0, total: 0 });
 });
 
@@ -92,4 +92,23 @@ test('summary lists verdicts, groups, evidence and the free note', () => {
   assert.match(text, /\[符合\] 方向/);
   assert.match(text, /证据：15m 需求区/);
   assert.match(text, /自由笔记：/);
+});
+
+test('ordinary grouped chapters are not checklist items and templates preserve their type', () => {
+  const chapter = { ...a, group: '结构', checklist: false, checked: false };
+  assert.equal(isChecklist(chapter), false);
+  assert.deepEqual(checklistProgress([chapter]), { done: 0, total: 0 });
+  assert.equal(appendTemplate([], { sections: [chapter] })[0].checklist, false);
+  assert.ok(!summarizeNote({ body: '', tags: [], sections: [chapter] }).includes('未检查'));
+});
+test('pinned phrases stay ahead of frequently used phrases', () => {
+  const pinned = { uses: 1, last_used: 0, pinned: true };
+  const frequent = { uses: 100, last_used: 100 };
+  assert.deepEqual(frequentFirst([frequent, pinned]), [pinned, frequent]);
+});
+test('insertion replaces the selected text and subsequent clicks continue at the caret', () => {
+  const first = insertAt('方向：空头。', '多头', { start: 3, end: 5 });
+  assert.equal(first.body, '方向：多头。');
+  const second = insertAt(first.body, '确认', { start: first.position, end: first.position });
+  assert.equal(second.body, '方向：多头确认。');
 });

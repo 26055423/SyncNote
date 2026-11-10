@@ -12,6 +12,7 @@ import local_ea
 import sync_history
 import ea_hub
 import journal
+import review_notes
 import market
 import market_symbols
 import bar_sync_jobs
@@ -326,7 +327,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Sec-Fetch-Site')=='cross-site' or (origin and origin.rstrip('/') not in {PUBLIC_ORIGIN,'http://'+host,'https://'+host}):raise Error('请求来源不正确',403)
             if 'application/json' not in self.headers.get('Content-Type',''):raise Error('请使用 JSON 请求',415)
             length=int(self.headers.get('Content-Length','0'))
-            if not 1<=length<=(1048576 if urlparse(self.path).path=='/api/chart/state' else 2097152 if urlparse(self.path).path=='/api/mt5/review' else 524288):raise Error('请求大小不正确')
+            if not 1<=length<=(1048576 if urlparse(self.path).path in ('/api/chart/state','/api/notes','/api/reviews/share','/api/groups/share') else 2097152 if urlparse(self.path).path=='/api/mt5/review' else 524288):raise Error('请求大小不正确')
             data=decode_request(self.rfile.read(length),urlparse(self.path).path)
             if not isinstance(data,dict):raise Error('数据格式不正确')
             path=urlparse(self.path).path;now=time.time();cookie=None;trusted_cookie=None
@@ -523,7 +524,8 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     u=self.user(db);uid=u['id'];result={'ok':True}
                     if path in admin_routes.POST:return admin_routes.POST[path](self,db,u,data)
-                    if path=='/api/journal':result=journal.save(db,uid,data)
+                    if path=='/api/notes':result=review_notes.save(db,uid,data)
+                    elif path=='/api/journal':result=journal.save(db,uid,data)
                     elif path=='/api/journal/templates':result=journal.journal_templates.save_template(db,uid,data)
                     elif path=='/api/journal/chapters/favorite':result=journal.journal_templates.favorite_chapter(db,uid,data)
                     elif path=='/api/journal/phrases':result=journal.journal_templates.save_phrase(db,uid,data)
@@ -534,7 +536,9 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/chart/state':
                         ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
                         result=chart.clear_state(db,uid,ticket) if data.get('clear') is True else chart.save_state(db,uid,ticket,data.get('state'))
+                        review_notes.sync_legacy(db,uid,ticket,document=None if data.get('clear') is True else data.get('state'),write_document=True)
                     elif path=='/api/reviews/share':
+                        if data.get('note_id'):return self.reply(review_notes.share(db,uid,data))
                         ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
                         result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''),data.get('snapshot'),journal.notes(db,uid)['notes'].get(ticket))
                     elif path=='/api/reviews/share/seen':
@@ -620,6 +624,7 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/groups/reaction':
                         result=groups.reaction(db,uid,str(data.get('group','')),data.get('id'),data.get('emoji'),data.get('active'))
                     elif path=='/api/groups/share':
+                        if data.get('note_id'):return self.reply(review_notes.share_group(db,uid,data))
                         try:
                             result=groups.share_trade(db,uid,str(data.get('group','')),str(data.get('ticket','')),data.get('snapshot'),data.get('message',''))
                         except groups.GroupError:

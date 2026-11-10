@@ -11,7 +11,13 @@ export interface Review {
   error?: string;
 }
 
+export interface NoteScene {
+  source: string; symbol: string; anchor_ms: number; timeframe: string; layout: string;
+  replay_ms?: number | null; replay_cursor_ms?: number | null; range?: { from: number; to: number } | null;
+}
 export interface Entry {
+  note_id?: string | null;
+  scene?: NoteScene | null;
   mode: 'owner' | 'viewer' | 'shared';
   owner: { id: string; name: string; avatar: string };
   read_only: boolean;

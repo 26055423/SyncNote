@@ -48,6 +48,8 @@ def sections(value,template=False):
   ident=item.get('id',uuid.uuid4().hex)
   title=item.get('title','');body=item.get('body','');checked=item.get('checked',False)
   group=item.get('group');verdict=item.get('verdict')
+  checklist=item.get('checklist',bool(group or checked or verdict))
+  if not isinstance(checklist,bool):raise JournalError('检查项类型不正确')
   if not isinstance(ident,str) or not 1<=len(ident)<=80 or ident in seen:raise JournalError('条目编号不正确或重复')
   if not isinstance(title,str) or not 1<=len(title.strip())<=80:raise JournalError('条目标题需为 1 至 80 字')
   if not isinstance(body,str) or len(body)>3000:raise JournalError('每个条目内容最多 3000 字')
@@ -61,7 +63,7 @@ def sections(value,template=False):
   total+=len(title)+len(body)
   if total>30000:raise JournalError('条目内容合计最多 30000 字')
   seen.add(ident)
-  out.append({'id':ident,'title':title.strip(),'group':group,'body':'' if template else body.strip(),'checked':False if template else checked,'verdict':None if template else verdict,'evidence':evidence})
+  out.append({'id':ident,'title':title.strip(),'group':group,'body':'' if template else body.strip(),'checked':False if template else checked,'verdict':None if template else verdict,'evidence':evidence,'checklist':checklist})
  return out
 
 MAX_TEMPLATE_PHRASES=20
@@ -80,12 +82,17 @@ def phrase_list(value):
 def note_sections(db,person):
  return {r['ticket']:json.loads(r['sections']) for r in db.execute('SELECT ticket,sections FROM trade_note_sections WHERE person=?',(person,))}
 
+def personal_rows(db,person):
+ import review_notes
+ if review_notes.available(db):return db.execute('SELECT body,sections,updated FROM review_notes WHERE person=?',(person,)).fetchall()
+ return db.execute('SELECT n.body,s.sections,n.updated FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket WHERE s.person=?',(person,)).fetchall()
+
 def library(db,person):
  templates=[{'id':r['id'],'name':r['name'],'sections':json.loads(r['sections']),'phrases':json.loads(r['phrases'] or '[]'),'uses':r['uses'],'last_used':r['last_used'],'pinned':bool(r['pinned'])} for r in db.execute('SELECT * FROM journal_templates WHERE person=? ORDER BY pinned DESC,uses DESC,last_used DESC,updated DESC,id',(person,))]
  phrases=[{'id':r['id'],'text':r['text'],'uses':r['uses'],'last_used':r['last_used'],'pinned':bool(r['pinned'])} for r in db.execute('SELECT * FROM journal_phrases WHERE person=? ORDER BY pinned DESC,uses DESC,last_used DESC,updated DESC,id',(person,))]
  # Each title counts once per meaningful trade note, not once per Save click.
  chapters={}
- for row in db.execute('SELECT s.sections,n.updated FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket WHERE s.person=?',(person,)):
+ for row in personal_rows(db,person):
   titles={section['title']:section.get('group') for section in json.loads(row['sections']) if section.get('checked') or section.get('body','').strip()}
   for title,group in titles.items():
    if not title:continue
@@ -105,6 +112,8 @@ def favorite_chapter(db,person,data):
  if not isinstance(title,str) or not 1<=len(title.strip())<=80:raise JournalError('条目名称须为 1 至 80 字')
  if group is not None and (not isinstance(group,str) or len(group.strip())>40):raise JournalError('分组名称最多 40 字')
  title=title.strip()
+ if data.get('favorite') is False:
+  db.execute('DELETE FROM journal_chapter_favorites WHERE person=? AND title=?',(person,title));return {'ok':True}
  db.execute('INSERT OR IGNORE INTO journal_chapter_favorites SELECT ?,?,?,? WHERE (SELECT count(*) FROM journal_chapter_favorites WHERE person=?)<100',
             (person,title,(group or '').strip() or None,time.time(),person))
  if not db.execute('SELECT 1 FROM journal_chapter_favorites WHERE person=? AND title=?',(person,title)).fetchone():
@@ -163,47 +172,23 @@ def pin_item(db,person,data):
 SYSTEM_CHAPTERS=json.loads((Path(__file__).resolve().parent/'resources/publicChapterPresets.json').read_text(encoding='utf-8'))
 
 def public_chapters(db,limit=60,min_users=1):
- """全服条目词云：只回标题、分组、人数与使用笔数，不带任何用户或交易信息。"""
- rows=db.execute('SELECT s.person,s.ticket,s.sections FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket').fetchall()
- used=set();titles={}
- for row in rows:
-  try:sections=json.loads(row['sections'])
-  except (TypeError,ValueError):continue
-  person=row['person'];ticket=row['ticket']
-  for section in sections:
-   title=str(section.get('title','')).strip()
-   if not title:continue
-   if not (section.get('checked') or str(section.get('body','')).strip()):continue
-   entry=titles.setdefault(title,{'title':title,'users':set(),'uses':0,'groups':{}})
-   entry['users'].add(person)
-   if (person,ticket,title) not in used:
-    used.add((person,ticket,title));entry['uses']+=1
-   group=str(section.get('group') or '').strip()
-   if group:entry['groups'][group]=entry['groups'].get(group,0)+1
- out=[]
- for entry in titles.values():
-  users=len(entry['users'])
-  if users<min_users:continue
-  group=max(entry['groups'],key=entry['groups'].get) if entry['groups'] else None
-  out.append({'title':entry['title'],'users':users,'uses':entry['uses'],'group':group})
- out.sort(key=lambda item:(-item['users'],-item['uses'],item['title']))
- have={item['title'] for item in out}
- for term in SYSTEM_CHAPTERS:
-  if term['title'] in have:continue
-  out.append({'title':term['title'],'users':0,'uses':0,'group':term['group'],'system':True,'weight':term.get('weight',3)})
+ """Only curated vocabulary is public. Personal titles and prose stay private."""
+ out=[{**term,'users':0,'uses':0,'system':True} for term in SYSTEM_CHAPTERS]
  return {'chapters':out[:max(1,min(int(limit or 60),100))],'total':len(out)}
+
 
 def stats(db,person):
  """个人复盘统计：完成率、结论分布、最常跳过的检查项。只算真正保存过的复盘。"""
- rows=db.execute('SELECT s.sections FROM trade_note_sections s JOIN trade_notes n ON n.person=s.person AND n.ticket=s.ticket WHERE s.person=?',(person,)).fetchall()
+ rows=personal_rows(db,person)
  counts={};notes=0;verdicts={'yes':0,'no':0,'unclear':0,'na':0}
  for row in rows:
   try:sections=json.loads(row['sections'])
   except (TypeError,ValueError):continue
   meaningful=[s for s in sections if s.get('checked') or str(s.get('body','')).strip()]
-  if not meaningful:continue
+  if not meaningful and not row['body'].strip():continue
   notes+=1
   for section in sections:
+   if not section.get('checklist',bool(section.get('group') or section.get('checked') or section.get('verdict'))):continue
    title=str(section.get('title','')).strip() or '未命名'
    entry=counts.setdefault(title,{'title':title,'total':0,'checked':0,'yes':0,'no':0,'unclear':0,'na':0})
    entry['total']+=1

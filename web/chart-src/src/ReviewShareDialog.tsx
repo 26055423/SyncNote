@@ -7,6 +7,8 @@ interface Recipient { kind: 'dm' | 'group'; id: string }
 interface Target extends Recipient { name: string; avatar?: string; subtitle: string }
 interface Props {
   ticket: string;
+  note_id?: string;
+  note?: unknown;
   snapshot: unknown;
   initialRecipient?: Recipient;
   onClose: () => void;
@@ -26,7 +28,7 @@ function RecipientAvatar({ target }: { target: Target }) {
 }
 
 /** 分享自己的复盘切片；好友和群聊共用选择、反馈与失败保留逻辑。 */
-export function ReviewShareDialog({ ticket, snapshot, initialRecipient, onClose }: Props) {
+export function ReviewShareDialog({ ticket, note_id, note, snapshot, initialRecipient, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const alive = useRef(true);
@@ -105,7 +107,7 @@ export function ReviewShareDialog({ ticket, snapshot, initialRecipient, onClose 
     const friends = chosen.filter((target) => target.kind === 'dm');
     if (friends.length) {
       try {
-        await api('/api/reviews/share', { ticket, recipients: friends.map((target) => target.id), message, snapshot });
+        await api('/api/reviews/share', { ticket, note_id, note, recipients: friends.map((target) => target.id), message, snapshot });
         complete(friends);
       } catch (error) {
         if (unknownOutcome(error)) ambiguous = friends;
@@ -115,7 +117,7 @@ export function ReviewShareDialog({ ticket, snapshot, initialRecipient, onClose 
     if (!ambiguous.length) {
       for (const group of chosen.filter((target) => target.kind === 'group')) {
         try {
-          await api('/api/groups/share', { group: group.id, ticket, message, snapshot });
+          await api('/api/groups/share', { group: group.id, ticket, note_id, note, message, snapshot });
           complete([group]);
         } catch (error) {
           if (unknownOutcome(error)) { ambiguous = [group]; break; }
@@ -158,7 +160,7 @@ export function ReviewShareDialog({ ticket, snapshot, initialRecipient, onClose 
     const box = event.currentTarget.getBoundingClientRect();
     if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) close();
   }}>
-    <div className="rs-header"><div><h2 id="review-share-title">分享复盘</h2><p>交易 #{ticket}</p></div><button type="button" className="rs-close" disabled={busy} aria-label="关闭分享复盘" onClick={close}>×</button></div>
+    <div className="rs-header"><div><h2 id="review-share-title">分享复盘</h2><p>{ticket ? '关联订单 #' + ticket : '图表笔记'}</p></div><button type="button" className="rs-close" disabled={busy} aria-label="关闭分享复盘" onClick={close}>×</button></div>
     <label className="rs-search"><span>选择好友或群聊</span><input ref={searchInput} type="search" value={query} disabled={busy} placeholder="搜索好友、账号或群名" onChange={(event) => setQuery(event.target.value)} /></label>
     {loading && <p className="rs-loading" role="status">正在加载分享对象…</p>}
     {!!sourceErrors.length && <div className="rs-source-errors" role="alert">{sourceErrors.map((error) => <p key={error}>{error}</p>)}<button type="button" disabled={busy} onClick={() => void load()}>重新加载对象</button></div>}

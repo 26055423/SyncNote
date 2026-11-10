@@ -7,7 +7,8 @@ def steps():
  from app_bootstrap import baseline
  from trade_store import migrate_legacy
  from share_migrations import migrate_shares
- return ((3,'adopt baseline',baseline),(4,'isolate legacy history',migrate_legacy),(5,'immutable review snapshots',migrate_shares))
+ from review_notes import migrate as migrate_notes
+ return ((3,'adopt baseline',baseline),(4,'isolate legacy history',migrate_legacy),(5,'immutable review snapshots',migrate_shares),(6,'independent review notes',migrate_notes))
 
 def migrate(path,plan=None):
  plan=steps() if plan is None else plan

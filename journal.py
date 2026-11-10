@@ -32,7 +32,10 @@ def save(db,person,data):
  tags=list(dict.fromkeys(t.strip() for t in tags));now=time.time()
  db.execute('INSERT INTO trade_notes VALUES(?,?,?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET body=excluded.body,tags=excluded.tags,updated=excluded.updated',(person,ticket,body.strip(),json.dumps(tags,ensure_ascii=False),now))
  if 'sections' in data:db.execute('INSERT INTO trade_note_sections VALUES(?,?,?) ON CONFLICT(person,ticket) DO UPDATE SET sections=excluded.sections',(person,ticket,json.dumps(sections,ensure_ascii=False)))
- return {'ok':True,'note':{'body':body.strip(),'tags':tags,'sections':sections,'updated':now}}
+ note={'body':body.strip(),'tags':tags,'sections':sections,'updated':now}
+ import review_notes
+ review_notes.sync_legacy(db,person,ticket,note)
+ return {'ok':True,'note':note}
 
 def request(db,person,data):
  ticket=str(data.get('ticket',''));trade(db,person,ticket)
@@ -134,4 +137,8 @@ def reviewed(db, person):
    continue
   if _has_marks(document):
    done.add(str(row['ticket']))
+ import review_notes
+ if review_notes.available(db):
+  for row in db.execute('SELECT ticket,body,sections,document FROM review_notes WHERE person=? AND ticket IS NOT NULL',(person,)):
+   if row['body'].strip() or any(s.get('body','').strip() or s.get('checked') for s in json.loads(row['sections'])) or _has_marks(json.loads(row['document'] or 'null')):done.add(row['ticket'])
  return sorted(done)

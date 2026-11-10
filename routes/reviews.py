@@ -1,6 +1,6 @@
 """Reviews HTTP endpoints."""
 import time
-import bars,chart,journal
+import bars,chart,journal,review_notes
 from social import visible
 from review_service import review_market_source
 from trade_time import utc_trade
@@ -8,6 +8,8 @@ from http_errors import Error
 
 def get_chart_entry(self,db,u,q):
  uid=u['id']
+ independent,delivery=review_notes.resolve(db,uid,q)
+ if independent:return self.reply(review_notes.entry(db,uid,independent,delivery))
  ticket=str(q.get('ticket',[''])[0]);target=q.get('person',[uid])[0];share=q.get('share',[''])[0]
  row=None
  if share:
@@ -31,7 +33,9 @@ def get_chart_entry(self,db,u,q):
  clock_row=db.execute('SELECT offset FROM broker_clocks WHERE person=?',(target,)).fetchone()
  bar_offset=int(clock_row['offset']) if clock_row and isinstance(clock_row['offset'],(int,float)) else 0
  review['market_source']=review_market_source(db,target,review['trade'])
- return self.reply({'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored,'bar_offset':bar_offset})
+ independent=review_notes.ensure_trade(db,uid,ticket) if not row and target==uid else None
+ if independent and independent['ticket']!=str(ticket):return self.reply(review_notes.entry(db,uid,independent))
+ return self.reply({'note_id':independent['id'] if independent else None,'scene':independent['scene'] if independent else None,'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored,'bar_offset':bar_offset})
 
 def get_chart_bars(self,db,u,q):
  uid=u['id']
@@ -45,8 +49,10 @@ def get_chart_bars(self,db,u,q):
  owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
  if not owner:raise Error('用户不存在',404)
  if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
- trade=journal.trade(db,target,ticket)
- source=review_market_source(db,target,trade)
+ independent,delivery=review_notes.resolve(db,uid,q)
+ trade=({'symbol':independent['scene']['symbol']} if independent else journal.trade(db,target,ticket))
+ source=independent['scene']['source'] if independent else review_market_source(db,target,trade)
+ read_now=min(time.time(),independent['scene']['replay_ms']/1000) if delivery and independent and independent['scene'].get('replay_ms') else time.time()
  if not source:raise Error('这笔交易没有行情来源，暂时只能看复盘快照',404)
  symbol=str(trade.get('symbol') or '');tf=q.get('tf',['M15'])[0]
  counted=bool(q.get('limit'))
@@ -58,17 +64,17 @@ def get_chart_bars(self,db,u,q):
   except ValueError:raise Error('根数或翻页时间不正确')
   if limit<1 or any(cursor is not None and not 1<=cursor<=32535215999 for cursor in (before,after)):raise Error('根数或翻页时间不正确')
   try:
-   payload=bars.following_utc(db,source,symbol,tf,after,limit,time.time()) if after is not None else bars.latest_utc(db,source,symbol,tf,limit,time.time(),before)
+   payload=bars.following_utc(db,source,symbol,tf,after,limit,read_now) if after is not None else bars.latest_utc(db,source,symbol,tf,limit,read_now,before)
   except bars.BarsError as error:raise Error(error.text,error.code)
  else:
   try:
    start=int(q.get('from',['0'])[0]);end=int(q.get('to',['0'])[0])
   except ValueError:raise Error('时间范围不正确')
   if end<=start:raise Error('时间范围不正确')
-  try:payload=bars.read_utc(db,source,symbol,tf,start,end,time.time())
+  try:payload=bars.read_utc(db,source,symbol,tf,start,end,read_now)
   except bars.BarsError as error:raise Error(error.text,error.code)
  feed=db.execute('SELECT server,account FROM feeds WHERE source=? LIMIT 1',(source,)).fetchone()
- payload['feed']={'source':source,'server':(feed['server'] if feed else ''),'account':(feed['account'] if feed else '')}
+ payload['feed']={'source':source,'server':(feed['server'] if feed else ''),'account':(feed['account'] if feed and not independent else '')}
  payload['symbol_label']=str(trade.get('symbol') or '')
  return self.reply(payload)
 
@@ -83,8 +89,9 @@ def get_chart_tracks(self,db,u,q):
  owner=db.execute('SELECT * FROM users WHERE id=?',(target,)).fetchone()
  if not owner:raise Error('用户不存在',404)
  if not row and target!=uid and not (visible(db,uid,target) and owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
- trade=journal.trade(db,target,ticket)
- source=bars.source_of_trade(trade)
+ independent,delivery=review_notes.resolve(db,uid,q)
+ trade={'symbol':independent['scene']['symbol']} if independent else journal.trade(db,target,ticket)
+ source=independent['scene']['source'] if independent else bars.source_of_trade(trade)
  if not source:
   feed=bars.feed_of(db,target)
   source=feed['source'] if feed else None
@@ -123,4 +130,7 @@ def get_trade_review(self,db,u,q):
  if not owner or not visible(db,uid,target) or (target!=uid and not owner['share_reviews']):raise Error('对方未分享复盘，或你们还不是好友',403)
  return self.reply(journal.review(db,target,q.get('ticket',[''])[0],db.execute('SELECT * FROM broker_clocks WHERE person=?',(target,)).fetchone(),utc_trade))
 
-GET={'/api/chart/entry':get_chart_entry,'/api/chart/bars':get_chart_bars,'/api/chart/tracks':get_chart_tracks,'/api/reviews/inbox':get_reviews_inbox,'/api/journal':get_journal,'/api/journal/library':get_journal_library,'/api/journal/chapters':get_journal_chapters,'/api/journal/stats':get_journal_stats,'/api/trade-review':get_trade_review}
+def get_notes(self,db,u,q):
+ return self.reply(review_notes.listing(db,u['id'],q))
+
+GET={'/api/notes':get_notes,'/api/chart/entry':get_chart_entry,'/api/chart/bars':get_chart_bars,'/api/chart/tracks':get_chart_tracks,'/api/reviews/inbox':get_reviews_inbox,'/api/journal':get_journal,'/api/journal/library':get_journal_library,'/api/journal/chapters':get_journal_chapters,'/api/journal/stats':get_journal_stats,'/api/trade-review':get_trade_review}
