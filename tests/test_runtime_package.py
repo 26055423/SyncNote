@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class RuntimePackage(unittest.TestCase):
  def test_backend_and_both_ea_downloads_work_without_frontend_source(self):
-  docker=(ROOT/'Dockerfile').read_text().replace(chr(92)+chr(10),' ')
+  docker=(ROOT/'Dockerfile').read_text(encoding='utf-8').replace(chr(92)+chr(10),' ')
   runtime=docker.split('FROM python:',1)[1]
   with tempfile.TemporaryDirectory(prefix='syncnote-runtime-') as folder:
    stage=Path(folder)
