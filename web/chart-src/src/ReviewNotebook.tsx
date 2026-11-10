@@ -126,11 +126,21 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   const updateSection = (id: string, patch: Partial<NoteSection>) => {
     onChange({ ...value, sections: value.sections.map(section => section.id === id ? { ...section, ...patch } : section) });
   };
-  const addChapter = (title = '', group: string | null = null, checklist = false) => {
+  /** 自己手输的条目名：直接记进条目收藏，下次在「选择条目」里带星出现。 */
+  const rememberChapter = async (title: string) => {
+    const clean = title.trim();
+    if (!clean) return;
+    try {
+      await api('/api/journal/chapters/favorite', { title: clean, group: null, favorite: true }, { keepalive: true });
+      await refresh();
+    } catch { /* 收藏失败不影响写笔记 */ }
+  };
+  const addChapter = (title = '', group: string | null = null, checklist = false, remember = false) => {
     if (value.sections.length >= MAX_SECTIONS) return;
     const section = newSection(title, group, checklist);
     onChange({ ...value, sections: [...value.sections, section] });
     setSelected(section.id);
+    if (remember && title.trim()) void rememberChapter(title);
   };
   const toggleGroup = (name: string) => setCollapsed(previous => {
     const next = new Set(previous);
@@ -360,7 +370,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         event.preventDefault();
         const title = inlineTitle.trim();
         if (!title) return;
-        addChapter(title);
+        addChapter(title, null, false, true);
         setInlineTitle('');
       }}>
         <input autoFocus maxLength={80} value={inlineTitle} placeholder="输入条目名称，回车添加" aria-label="新条目名称"
@@ -411,7 +421,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
           <button type="button" aria-label={'收藏条目 ' + title} aria-pressed={library.chapters.some(row => row.title === title && row.favorite)} onClick={() => void run(() => favoriteChapter(title))}>{library.chapters.some(row => row.title === title && row.favorite) ? '★' : '☆'}</button>
         </span>)}</div>
       </section>
-      <form className="notebook-library-form" onSubmit={event => { event.preventDefault(); if (chapterDraft.trim()) addFromCloud(chapterDraft.trim()); }}>
+      <form className="notebook-library-form" onSubmit={event => { event.preventDefault(); const title = chapterDraft.trim(); if (!title) return; addChapter(title, null, false, true); closeQuickAdd(); }}>
         <input autoFocus aria-label="条目名称" maxLength={80} placeholder="自定义条目名称" value={chapterDraft} onChange={event => setChapterDraft(event.target.value)} />
         <button type="submit" disabled={full || !chapterDraft.trim()}>添加条目</button>
       </form>
