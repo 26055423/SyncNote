@@ -1959,6 +1959,3 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .review-notes-list > button { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 8px; background: var(--panel); border: 0; border-bottom: 1px solid var(--line); color: var(--text); cursor: pointer; }
 .review-notes-list small { color: var(--muted); }
 .notebook-section-foot { flex-wrap: wrap; }
-
-/* 商品代码不同步时，标明品种选择只影响当前格 */
-.symbol-scope-hint { align-self: center; padding: 2px 6px; border: 1px dashed var(--line-strong); border-radius: 999px; color: var(--dim); font-size: 10px; white-space: nowrap; }

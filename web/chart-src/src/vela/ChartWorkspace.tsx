@@ -7,7 +7,6 @@ import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
 import { centerChartOnTime, restoreChartLeft } from './viewportPan';
 import { fitSavedWorkspaceTracks } from './trackSizing';
-import { CellSymbolProvider } from '../cellSymbolProvider';
 
 /**
  * 指标选择器（指标库）的排位。
@@ -63,10 +62,6 @@ export interface ChartHandle {
   insertDrawingText(id: string, text: string): boolean;
   /** 重画持仓线（改单失败时把拖走的止损/止盈线拉回真实值）。 */
   syncPositionLevels(): void;
-  /** 当前激活格 id（商品代码不同步时，品种选择只作用于它）。 */
-  activeCellId(): string | null;
-  /** 给单个格子换品种，并注册一个只服务这一格的离线数据源。 */
-  setCellSymbol(cellId: string | null, symbol: string): Promise<void>;
   replayStatus(): ReplayUiState;
   replaySelect(): void;
   replayStartFromView(): Promise<void>;
@@ -221,8 +216,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const positionSyncRef = useRef<(() => void) | null>(null);
   const levelMetaRef = useRef(new Map<string, { ticket: string; field: 'entry' | 'sl' | 'tp' }>());
   const positionIdsRef = useRef(new Map<string, string>());
-  /** 每格独立品种时用到的 provider 名（命名必须和 symbol 前缀一致）。 */
-  const cellSymbolProvidersRef = useRef(new Map<string, string>());
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   // 分享时要把开平仓标注剔掉，`stripMarks` 定义在初始化闭包里，用 ref 传出来。
   const stripRef = useRef<((document: unknown) => unknown) | null>(null);
@@ -433,24 +426,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     syncPositionLevels() {
       try { positionSyncRef.current?.(); } catch { /* 忽略 */ }
     },
-    activeCellId() {
-      try { return (wsRef.current?.active?.id as string) ?? (wsRef.current?.cells?.()?.[0]?.id as string) ?? null; }
-      catch { return null; }
-    },
-    async setCellSymbol(cellId, symbol) {
-      const ws = wsRef.current;
-      const cell = ws?.cells?.().find((row: { id: string }) => row.id === cellId) ?? ws?.active;
-      const chart = cell?.chart;
-      if (!chart || !symbol) return;
-      const providerName = `cell${cell.id.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-      try {
-        await chart.data?.registerProvider?.(providerName, new CellSymbolProvider(symbol));
-        cellSymbolProvidersRef.current.set(cell.id, providerName);
-        await chart.setMarket({ symbol: `${providerName}:${symbol.toUpperCase()}` });
-      } catch (error) {
-        onError?.(error instanceof Error ? error.message : String(error));
-      }
-    },
     getTimeframe() {
       return wsRef.current?.active?.chart?.market?.timeframe ?? '15';
     },
@@ -539,14 +514,6 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       const state = ws.sync?.state?.() ?? {};
       const next = !state[kind];
       ws.sync?.set?.(kind, next);
-      // 重新打开「商品代码」同步：把各格换回主品种，避免一格黄金一格纳指后忘了切回来。
-      if (kind === 'symbol' && next) {
-        for (const cell of ws.cells?.() ?? []) {
-          if (!cellSymbolProvidersRef.current.has(cell.id)) continue;
-          cellSymbolProvidersRef.current.delete(cell.id);
-          try { void cell.chart?.setMarket?.({ symbol }); } catch { /* ignore */ }
-        }
-      }
       if (kind === 'crosshair') {
         crosshairSyncRef.current = next;
         try { localStorage.setItem(CROSSHAIR_SYNC_KEY, next ? '1' : '0'); } catch { /* ignore */ }
