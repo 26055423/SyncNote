@@ -63,7 +63,7 @@ void SNPanelPaint()
  ObjectSetInteger(0,bg,OBJPROP_BGCOLOR,C'20,28,38');ObjectSetInteger(0,bg,OBJPROP_COLOR,clrSlateGray);
  ObjectSetInteger(0,bg,OBJPROP_BORDER_TYPE,BORDER_FLAT);ObjectSetInteger(0,bg,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,bg,OBJPROP_HIDDEN,true);
  int y=18,count=0,font=SNPanelFont(),small=MathMax(10,font-2);
- SNPanelText(compact?"SyncNote 1.021":"SyncNote 1.021 · 只读同步",font,clrWhite,y,count);
+ SNPanelText(compact?"SyncNote 1.022":"SyncNote 1.022 · 只读同步",font,clrWhite,y,count);
  if(!short_panel||!waiting_code)SNPanelText("MT5 "+g_sn_account+(compact?"":" @ "+g_sn_server),small,clrSilver,y,count);
  if(!compact)SNPanelText(g_sn_origin,small,clrSilver,y,count);
  if(g_sn_paused)
@@ -117,10 +117,20 @@ string SNPairTokenPath()
 }
 string SNPairLoadToken()
 {
- int f=FileOpen(SNPairTokenPath(),FILE_READ|FILE_TXT|FILE_ANSI,0,CP_UTF8);
+ string path=SNPairTokenPath();bool recover=!FileIsExist(path);
+ // 1.012/1.013 left complete approved records in .next after CRLF expansion.
+ // Never replace an existing canonical record with a leftover temporary file.
+ if(recover)path+=".next";
+ int f=FileOpen(path,FILE_READ|FILE_TXT|FILE_ANSI,0,CP_UTF8);
  if(f==INVALID_HANDLE)return "";
- string magic=FileReadString(f),origin=FileReadString(f),account=FileReadString(f),token=FileReadString(f);FileClose(f);
- if(magic!="SYNCNOTE_PAIR_1"||origin!=g_sn_origin||account!=g_sn_key||!SNPairTokenValid(token))return "";
+ string magic=FileReadString(f),origin=FileReadString(f),account=FileReadString(f),token=FileReadString(f);
+ bool extra=!FileIsEnding(f);FileClose(f);
+ if(extra||magic!="SYNCNOTE_PAIR_1"||origin!=g_sn_origin||account!=g_sn_key||!SNPairTokenValid(token))return "";
+ if(recover)
+ {
+  if(StringLen(token)!=64||!SNPairSaveToken(token))return "";
+  Print("SyncNote: recovered previously approved local authorization; no new pairing needed");
+ }
  return token;
 }
 bool SNPairSaveToken(const string token)

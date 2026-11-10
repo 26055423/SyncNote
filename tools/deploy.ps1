@@ -2,9 +2,9 @@
 # 用法：pwsh -File tools\deploy.ps1
 #       pwsh -File tools\deploy.ps1 -Server 1.2.3.4 -User admin
 param(
-    [string]$Server = '47.79.243.184',
+    [string]$Server = '43.103.49.141',
     [string]$User = 'admin',
-    [string]$PublicUrl = 'http://47.79.243.184'
+    [string]$PublicUrl = 'https://sync-trade.top'
 )
 
 $ErrorActionPreference = 'Stop'

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import ts from 'typescript';
 import { WorkspaceReplay, barClose } from '@luxalgo/vela/workspace';
 
@@ -9,6 +10,48 @@ const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKi
   .replaceAll('@luxalgo/vela/workspace', import.meta.resolve('@luxalgo/vela/workspace'));
 const { replayWindow, safeReplayStart } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 const M = 60000, origin = Date.UTC(2026, 10, 5, 0);
+
+test('armed random and earliest actions pass their selected time instead of the old viewport', async () => {
+  const workspaceSource = readFileSync(new URL('../src/vela/ChartWorkspace.tsx', import.meta.url), 'utf8');
+  const workspaceTree = ts.createSourceFile('ChartWorkspace.tsx', workspaceSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const methods = [];
+  const names = ['replaySelect', 'replayStartAt', 'replayStartFromView'];
+  function visit(node) {
+    if (ts.isMethodDeclaration(node) && names.includes(node.name.getText(workspaceTree))) methods.push(node.getText(workspaceTree));
+    ts.forEachChild(node, visit);
+  }
+  visit(workspaceTree);
+  assert.equal(methods.length, names.length);
+  const f = fixture();
+  const armed = { current: false };
+  const compile = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const handle = vm.runInNewContext(compile('({' + methods.join(',') + '})'), {
+    wsRef: { current: { ...f.workspace, active: { ...f.workspace.active, chart: { ...f.a, drawings: { setTool() {} }, getVisibleRange: () => ({ from: origin + 20 * M, to: origin + 24 * M }) } } } },
+    replayArmedRef: armed,
+    startReplay: async (from, cell) => { await safeReplayStart(f.workspace, { from, cell, masterOpenTimes: f.times }); },
+  });
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const appTree = ts.createSourceFile('App.tsx', appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const actions = new Map();
+  function findAction(node) {
+    if (ts.isJsxAttribute(node) && ['onRandom', 'onEarliest'].includes(node.name.getText(appTree)) && node.initializer?.expression) actions.set(node.name.getText(appTree), node.initializer.expression.getText(appTree));
+    ts.forEachChild(node, findAction);
+  }
+  findAction(appTree);
+  assert.equal(actions.size, 2);
+  const math = Object.create(Math); math.random = () => 0.25;
+  const context = { chartRef: { current: handle }, tf: '1', TIMEFRAMES: { '1': { base: 'M1' } }, TF_SECONDS: { M1: 60 }, marketView: true, liveRef: { current: { M1: f.times.map(time => [time / 1000]) } }, seriesRef: { current: {} }, api: async () => ({ sources: [] }), Math: math };
+  try {
+    handle.replaySelect();
+    await vm.runInNewContext(compile('(' + actions.get('onRandom') + ')()'), context);
+    assert.equal(f.replay.state.cursorTime, origin + 7 * M);
+    handle.replaySelect();
+    await vm.runInNewContext(compile('(' + actions.get('onEarliest') + ')()'), context);
+    assert.equal(f.replay.state.cursorTime, origin + 4 * M, 'earliest respects the first closed coarse bar');
+    await handle.replayStartFromView();
+    assert.equal(f.replay.state.cursorTime, origin + 22 * M, 'view action still uses its midpoint');
+  } finally { f.replay.destroy(); }
+});
 
 // Double only the individual chart ReplayControl port. The actual shipped
 // WorkspaceReplay drives the clock, timers, lifecycle and multi-period syncing.

@@ -17,6 +17,9 @@ struct Peer{bool authenticated=true;std::vector<int> tx;int tx_offset=0;}g_local
 struct HistoryJob{bool active=false;}g_history_job;
 string g_symbol="NAS100",last_error="";std::int64_t g_offset=0,requested_from=0;int count_result=1;
 bool synced=false;
+constexpr int ERR_HISTORY_NOT_FOUND=4401;
+void ResetLastError(){}
+bool SNHistoryRangeEmpty(const string&,int,std::int64_t,std::int64_t){return count_result==0;}
 bool SymbolSelect(const string&,bool){return true;}
 int LocalTf(const string& tf){return tf=="1m"?60:0;}
 int PeriodSeconds(int tf){return tf;}

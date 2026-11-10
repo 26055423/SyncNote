@@ -121,7 +121,7 @@ def share(db, owner, ticket, recipients, message, snapshot=None, note=None):
     if not isinstance(message, str) or len(message) > MAX_MESSAGE:
         raise ChartError('留言最多 %d 字' % MAX_MESSAGE)
     body = clean_snapshot(snapshot)
-    note_body = json.dumps(note, ensure_ascii=False) if isinstance(note, dict) else ''
+    note_body = json.dumps(note if isinstance(note, dict) else None, ensure_ascii=False)
     ids = []
     for value in recipients:
         if not isinstance(value, str) or not value or value == owner:

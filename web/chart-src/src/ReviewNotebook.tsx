@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
-import chapterPresets from './publicChapterPresets.json';
+import chapterPresets from '../../../resources/publicChapterPresets.json';
 import {
   appendChecklist, appendPhrase, appendTemplate, checklistProgress, frequentFirst, MAX_SECTIONS, moveSection,
   newSection, summarizeNote, SYSTEM_PHRASES, templateStructure, VERDICTS,

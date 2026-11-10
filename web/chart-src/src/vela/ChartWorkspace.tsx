@@ -63,6 +63,7 @@ export interface ChartHandle {
   replayStatus(): ReplayUiState;
   replaySelect(): void;
   replayStartFromView(): Promise<void>;
+  replayStartAt(timestampMs: number): Promise<void>;
   replayStep(): void;
   replayPlay(intervalMs: number): void;
   replayPause(): void;
@@ -339,6 +340,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       const cell = wsRef.current?.active;
       const range = cell?.chart?.getVisibleRange();
       if (range) await startReplay((range.from + range.to) / 2, cell.id);
+    },
+    async replayStartAt(timestampMs) {
+      await startReplay(timestampMs, wsRef.current?.active?.id);
     },
     replayStep() { wsRef.current?.replay?.pause(); wsRef.current?.replay?.step(); },
     replayPlay(intervalMs) { wsRef.current?.replay?.play(intervalMs); },

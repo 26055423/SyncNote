@@ -32,7 +32,7 @@ template<class A,class B> auto MathMin(A a,B b){using C=std::common_type_t<A,B>;
 double MathRound(double n){return std::round(n);} string IntegerToString(std::int64_t n){return std::to_string(n);}
 std::uint64_t tick=1000,g_pending_until=0,g_pair_until=121000,g_last_bar=0;
 string g_token="",g_pair_code="12345678",g_account="synthetic",g_server="Demo",g_button_allow="Allow",g_button_revoke="Revoke";
-string InpAllowedOrigin="https://example.test",InpSymbol="XAUUSD";
+string InpAllowedOrigin="https://example.test",InpSymbol="XAUUSD",g_symbol="XAUUSD";
 int InpPanelScale=200,g_panel_button_y=0,g_pending_peer=-1,g_session_peer=-1;
 int codes=0,tokens=0,clears=0,snapshots=0,rejections=0;bool g_bar_dirty=false,g_journal_ok=true,g_risk_ok=true,account_changed=false;
 struct Peer {std::uint64_t handle=WIN_INVALID_SOCKET,seen_ms=0;bool upgraded=false,authenticated=false,closing=false;} g_local_peers[LOCAL_PEERS];

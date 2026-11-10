@@ -26,6 +26,7 @@
 | `bars.py` | K 线序列：按券商 source 累积、只落已收盘、覆盖/缺口、轨道查询 |
 | `tools/import_bars.py` | 把导出的 CSV.gz 灌进 `bars`（幂等，导入后登记 have 覆盖） |
 | `local_ea.py` | 把 `bridge/` 打成 SyncNote / SyncTrade 两个源码包 |
+| `resources/` | 前后端共用的公开静态资源，必须随后端部署 |
 | `web/local-ea.html` | 下载页：两款 EA 的对比、安装、权限与「关网页之后」说明 |
 | `web/chart-src/src/App.tsx` | 交易台（顶栏 / K 线 / 右侧五面板 / 底部持仓历史） |
 | `web/chart-src/src/LocalTradePanel.tsx` | 本机 MT5 连接 + 下单面板 |
@@ -53,7 +54,8 @@
 
 ```bash
 python tests/smoke.py                 # 集成测试（临时生成数据）
-python tests/group_share.py           # 群分享超过 20 位成员的留言与切片回归
+python tests/run.py                   # 全部 Python/EA 测试，每套独立进程
+python tests/test_group_share.py           # 群分享超过 20 位成员的留言与切片回归
 python tools/local_demo.py            # 本地演示实例（127.0.0.1:18900，密码 syncnote-demo-2026）
 cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/chart
 ```
@@ -66,7 +68,7 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
    例外：`bridge/` 是独立的本地组件（FastAPI/uvicorn），不要把它 import 进主程序。
 2. **Python 用 1 空格缩进**（不是 4 空格），别整体重排。
 3. `web/chart` 是**构建产物**，改前端必须改 `web/chart-src/src` 再 `npm run build`，不要手改 `web/chart`。
-4. 图表页构建默认走 jsDelivr（`vite.config.ts` 的 `CHART_BASE`）；本地调试用 `CHART_BASE=/chart/ npm run build`，否则会白屏（CDN 上还没有新文件）。
+4. 图表页构建默认同源 `/chart/`（`vite.config.ts` 的 `CHART_BASE`）；显式使用 CDN 时必须固定提交，避免新分块尚未发布导致白屏。
 5. 提交前跑 `python tests/smoke.py`；前端改动至少跑一次 `npm run build`（含 `tsc --noEmit`）。
 6. 不要在仓库里写连接码、管理员密码、`.env`；服务器上的数据在 `/SyncTrade/data/`。
 7. 管理接口一律走 `self.require_admin(u, db)`（管理员身份 + 15 分钟 sudo 窗口），非管理员返回 **404**，不暴露页面存在。

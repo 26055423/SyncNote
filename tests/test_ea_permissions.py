@@ -39,7 +39,7 @@ bool ExposureAllowed(double,string&){exposure_checks++;return false;}
 bool NewOrderAction(string action){return action=="market"||action=="limit"||action=="stop";}
 double SymbolInfoDouble(string,int prop){return prop==SYMBOL_VOLUME_MIN?0.01:prop==SYMBOL_VOLUME_MAX?50.0:0.01;}
 bool MathIsValidNumber(double n){return std::isfinite(n);} double MathRound(double n){return std::round(n);} double MathAbs(double n){return std::abs(n);}
-string InpSymbol="XAUUSD";
+string InpSymbol="XAUUSD",g_symbol="XAUUSD";
 string g_instance="fixture",g_account="123",g_server="Fixture-Broker",g_epoch="epoch";
 string JStr(string value){return "\""+value+"\"";}
 string HashHex(string){return "fixture-hash";} string IntegerToString(std::int64_t n){return std::to_string(n);}

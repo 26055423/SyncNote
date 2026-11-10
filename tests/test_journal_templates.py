@@ -159,6 +159,17 @@ class JournalTemplates(unittest.TestCase):
                  [{'id':'x','caption':'c'*201,'drawing_id':'d','timeframe':'15'}]):
    with self.assertRaises(library.JournalError):self.note(sections=[self.section('坏证据',evidence=broken)])
 
+ def test_stats_count_blank_unchecked_items_in_completed_notes(self):
+  for ticket in ('1','2'):
+   self.note(ticket,sections=[self.section('方向',checked=True,verdict='yes'),self.section('风险',id='risk')])
+  result=library.stats(self.db,'alice')
+  self.assertEqual(result['notes'],2)
+  self.assertEqual([(row['title'],row['total'],row['checked'],row['rate']) for row in result['skipped']],[('风险',2,0,0)])
+  self.assertEqual(result['verdicts'],{'yes':2,'no':0,'unclear':0,'na':0})
+  self.note('2',sections=[self.section('方向'),self.section('风险',id='risk')])
+  self.assertEqual(library.stats(self.db,'alice')['notes'],1)
+  self.assertEqual(library.stats(self.db,'alice')['skipped'],[])
+
  def test_public_chapter_cloud_counts_people_not_clicks_and_needs_meaningful_content(self):
   self.db.executescript("CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,nickname TEXT); INSERT OR IGNORE INTO users VALUES('alice','A'),('bob','B');")
   for ticket,person in (('1','alice'),('2','alice'),('1','bob')):

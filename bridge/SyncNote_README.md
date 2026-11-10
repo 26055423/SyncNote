@@ -2,7 +2,7 @@
 
 SyncNote 给使用网页笔记、复盘和分享的用户使用。用户自行审阅源码、用 MetaEditor 编译，挂一个 EA 即可；不需要 DLL、本机 WebSocket、Python、本地助手或算法交易权限。MT5 和 EA 正常运行时，浏览器关闭也会继续上传历史。
 
-当前版本 **1.019** 会先向网站核对近 7 天的 K 线覆盖，并提供当前品种的券商报价时段。只读取尚未覆盖、且未被报价时段排除的区间。节假日等未确认空窗仍可复查。
+当前版本 **1.022** 恢复旧版完整 `.next` 授权文件：只在正式凭据不存在且网站、账户、格式和长度校验通过时，精确重写并原子替换；已有正式凭据始终优先。近期行情仍先核对近 7 天覆盖和券商报价时段，只读取尚未覆盖、且未被报价时段排除的区间。节假日等未确认空窗仍可复查。
 
 用高对比大字面板替代 MT5 默认小字 Comment，配对码默认 28 号、按钮至少 36px 高，字号可调、窄图表自动换行。可从 EA 属性及图表状态首行核对。新增「EA 图表显示 8 位同步配对码 → 网页填写 → 回 MT5 允许同步」流程，不必先生成长连接码再填 EA 参数。保留近期 K 线补齐、历史断点与严格 ACK；源码打包仍拒绝系统 include 和 `CTrade` 声明，保持只读依赖闭包。
 
@@ -18,11 +18,15 @@ SyncNoteHistory.mqh
 SyncNoteJson.mqh
 SyncNoteBars.mqh
 SyncNotePairing.mqh
+SyncNoteSymbols.mqh
+SyncNoteRangeSync.mqh
+HistoryRange.mqh
+QuoteSessions.mqh
 SyncNote_README.md
 SYNCNOTE_PROTOCOL.md
 ```
 
-五个代码文件放在同一目录，所有 include 为相对路径。此包没有系统 DLL 导入、本机监听或任何交易执行函数。旧的单文件采集程序已下线，不再提供下载。
+所有代码文件放在同一目录，include 使用相对路径，完整文件清单见包内 `SOURCE_MANIFEST.json`。此包没有系统 DLL 导入、本机监听或任何交易执行函数。旧的单文件采集程序已下线，不再提供下载。
 
 ## 安装
 

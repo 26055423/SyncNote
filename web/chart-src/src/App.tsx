@@ -1464,9 +1464,7 @@ export default function App() {
                 const rows = (marketView ? liveRef.current[base!] : seriesRef.current[base!]) ?? [];
                 if (rows.length < 10) throw new Error('还没有可回放的 K 线');
                 const pick = rows[Math.floor(Math.random() * rows.length)][0];
-                chartRef.current?.focus(pick * 1000);
-                await new Promise((resolve) => window.setTimeout(resolve, 400));
-                await chartRef.current?.replayStartFromView();
+                await chartRef.current?.replayStartAt(pick * 1000);
                 return;
               }
               const total = windows.reduce((sum, w) => sum + w.weight, 0);
@@ -1479,23 +1477,19 @@ export default function App() {
                 ).catch(() => null);
                 const first = look?.bars?.[0]?.[0];
                 if (first) {
-                  chartRef.current?.focus(first * 1000);
-                  await new Promise((resolve) => window.setTimeout(resolve, 400));
-                  await chartRef.current?.replayStartFromView();
+                  await chartRef.current?.replayStartAt(first * 1000);
                   return;
                 }
               }
               throw new Error('随机到的区间暂时没有 K 线，请再试一次');
             }}
             onEarliest={async () => {
-              // 「最早可用日期」：先把视口挪到当前数据最早一根，再从视图开始。
+              // 将最早一根直接交给回放控制器，按各周期共同历史边界对齐。
               const base = TIMEFRAMES[tf]?.base;
               const rows = (marketView ? liveRef.current[base] : seriesRef.current[base]) ?? [];
               const first = rows[0]?.[0];
               if (!first) throw new Error('当前周期还没有可回放的历史');
-              chartRef.current?.focus(first * 1000);
-              await new Promise((resolve) => window.setTimeout(resolve, 400));
-              await chartRef.current?.replayStartFromView();
+              await chartRef.current?.replayStartAt(first * 1000);
             }}
           />
           <span className="spacer" />

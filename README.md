@@ -109,11 +109,12 @@ git push -u origin feature/my-change
 | 路径 | 内容 |
 |---|---|
 | `web/` | 网页、样式、图标和 MT5 采集源码 |
-| `bridge/` | WebBridge 全套源码：MT5 EA + 本地网关 + 协议文档（可选组件，需要 pip 依赖） |
+| `bridge/` | 两款当前 EA、共享头文件及兼容组件；独立 gateway 才需要 pip 依赖，详见目录内 README |
 | `bridge/SyncNote.mq5` | 笔记版 EA：只读历史上传，无 DLL、无 socket、不交易（`/downloads/syncnote.zip`） |
 | `bridge/SyncTrade.mq5` | 交易版 EA：本机 WebSocket 看盘/下单 + 历史导出（`/downloads/synctrade.zip`） |
 | `sync_history.py` | 只读历史入库：保留原始成交，交易与费用由服务器重建 |
 | `local_ea.py` | 把 `bridge/` 打成源码包；打包时校验 SyncNote 不含 DLL/交易/socket |
+| `resources/` | 前后端共享公开资源，随后端部署，修改后需重建前端 |
 | `web/admin.html` | 管理后台：用户锁定、邀请码批量生成与导出（仅管理员，二次密码） |
 | `web/chart-src/` | 复盘图表页源码（Vite + React + `@luxalgo/vela`） |
 | `web/chart/` | 图表页构建产物，由 `app_server.py` 在 `/chart` 提供 |
@@ -123,6 +124,6 @@ git push -u origin feature/my-change
 | `journal.py`、`trade_time.py`、`market.py` | 复盘与时间处理；公共参考行情工具默认不调度 |
 | `bootstrap_admin.py` | 交互初始化本实例管理员 |
 | `compose.yaml`、`Dockerfile` | 独立容器部署（图表页在构建阶段用 Node 编译，运行时镜像内无 Node） |
-| `tests/` | 使用全新临时数据的集成测试 |
+| `tests/` | 使用全新临时数据的后端、HTTP、EA 测试；`python3 tests/run.py` 为统一入口 |
 
 [本机 EA 交易架构设计](docs/本机EA交易架构设计.md) · [架构说明](docs/架构说明.md) · [Agent 入口](AGENTS.md) · [交接范围与数据排除](docs/交接范围.md) · [部署说明](docs/部署说明.md)

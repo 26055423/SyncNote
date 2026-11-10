@@ -160,7 +160,7 @@ def pin_item(db,person,data):
  db.execute('UPDATE '+table+' SET pinned=? WHERE person=? AND id=?',(1 if pinned else 0,person,ident))
  return {'ok':True,'pinned':pinned}
 
-SYSTEM_CHAPTERS=json.loads((Path(__file__).resolve().parent/'web/chart-src/src/publicChapterPresets.json').read_text(encoding='utf-8'))
+SYSTEM_CHAPTERS=json.loads((Path(__file__).resolve().parent/'resources/publicChapterPresets.json').read_text(encoding='utf-8'))
 
 def public_chapters(db,limit=60,min_users=1):
  """全服条目词云：只回标题、分组、人数与使用笔数，不带任何用户或交易信息。"""
@@ -203,7 +203,7 @@ def stats(db,person):
   meaningful=[s for s in sections if s.get('checked') or str(s.get('body','')).strip()]
   if not meaningful:continue
   notes+=1
-  for section in meaningful:
+  for section in sections:
    title=str(section.get('title','')).strip() or '未命名'
    entry=counts.setdefault(title,{'title':title,'total':0,'checked':0,'yes':0,'no':0,'unclear':0,'na':0})
    entry['total']+=1
@@ -212,7 +212,7 @@ def stats(db,person):
    if verdict in verdicts:
     entry[verdict]+=1;verdicts[verdict]+=1
  titles=sorted(counts.values(),key=lambda item:(-item['total'],item['title']))[:50]
- skipped=[item for item in counts.values() if item['total']>=2]
+ skipped=[item for item in counts.values() if item['total']>=2 and item['checked']<item['total']]
  skipped=sorted(skipped,key=lambda item:(item['checked']/item['total'],-item['total'],item['title']))[:5]
  for item in titles+skipped:
   item['rate']=round(item['checked']/item['total'],3) if item['total'] else 0
