@@ -1964,3 +1964,8 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .review-notes-list summary { display: flex; align-items: center; gap: 8px; }
 .review-notes-history { margin-left: auto; color: var(--accent-ink); font-size: 11px; text-decoration: none; white-space: nowrap; }
 .review-notes-history:hover { text-decoration: underline; }
+
+/* 「我的复盘」= 直接跳交易日历的入口 */
+.review-notes-jump { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 12px; text-decoration: none; }
+.review-notes-jump:hover { border-color: var(--accent-line); color: var(--accent-ink); }
+.review-notes-jump-arrow { margin-left: auto; color: var(--dim); }

@@ -94,7 +94,6 @@ export default function App() {
   const [friendManager, setFriendManager] = useState(false);
   const [chatGroup, setChatGroup] = useState<{ id: string; name: string; avatar?: string } | null>(null);
   const [shareRequest, setShareRequest] = useState<{ ticket: string; note_id?: string; note?: unknown; snapshot: unknown; initialRecipient?: { kind: 'dm' | 'group'; id: string } } | null>(null);
-  const [notesRevision, setNotesRevision] = useState(0);
   const [creatingNote, setCreatingNote] = useState(false);
   const [chat, setChat] = useState('');
   const [tf, setTf] = useState('15');
@@ -423,13 +422,6 @@ export default function App() {
     history.replaceState(null, '', '/chart?view=review&share=' + row.id);
   };
 
-  const openNote = (id: string) => {
-    if (!confirmLeaveNote()) return;
-    chartRef.current?.flush();
-    setEntry(null); setShareId(null); setTarget({ person: board!.user.id, ticket: '', note: id });
-    setMode('review'); setTab('review'); setRailOpen(true); setNoteState('idle'); setSaveState('idle'); setShareRequest(null);
-    history.replaceState(null, '', '/chart?view=review&note=' + encodeURIComponent(id));
-  };
   const captureScene = () => {
     const view = chartRef.current?.view();
     if (!view) return null;
@@ -445,7 +437,7 @@ export default function App() {
       const result = await api<{ note: { id: string } }>('/api/notes', { scene, document: scene.document, body: '', tags: [], sections: [] });
       setNote({ body: '', tags: [], sections: [] });
       setEntry(null); setShareId(null); setTarget({ person: board!.user.id, ticket: '', note: result.note.id });
-      setMode('review'); setTab('review'); setRailOpen(true); setNotesRevision(n => n + 1);
+      setMode('review'); setTab('review'); setRailOpen(true);
       history.replaceState(null, '', '/chart?view=review&note=' + result.note.id);
     } catch (error) { setError(String(error)); }
     finally { setCreatingNote(false); }
@@ -463,7 +455,6 @@ export default function App() {
       const unchanged = JSON.stringify(noteRef.current) === JSON.stringify(snapshot);
       if (unchanged) setNote({ body: result.note.body, tags: result.note.tags, sections: result.note.sections ?? [] });
       setNoteState(unchanged ? 'saved' : 'idle');
-      setNotesRevision(n => n + 1);
     } catch (error) { setNoteState('error'); setError(String(error)); }
   };
   useEffect(() => {
@@ -1497,7 +1488,7 @@ export default function App() {
 
               {tab === 'review' ? (
                 <div className="pane">
-                  <ReviewNotesList revision={notesRevision} current={entry?.note_id ?? null} open={openNote} />
+                  <ReviewNotesList current={entry?.note_id ?? null} />
                   <h3>
                     复盘
                     {trade.ticket ? <small> #{trade.ticket} · {sideText(trade.side)}</small> : null}
