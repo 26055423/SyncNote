@@ -147,6 +147,15 @@ export default function App() {
       quote_symbol: current.symbol, quote_sessions: current.quote_sessions };
   };
   const chooseSymbol = async (symbol: string) => {
+    // 「商品代码」不同步时，品种只换当前激活的那一格：一格黄金、一格纳指这种对照。
+    if (syncs.symbol === false) {
+      const cellId = chartRef.current?.activeCellId?.() ?? null;
+      if (cellId) {
+        await chartRef.current?.setCellSymbol?.(cellId, symbol);
+        setError('');
+        return;
+      }
+    }
     if (localConnected) await localTerminal.selectSymbol(symbol);
     else setStoredSymbol(symbol);
     showLatestChart();
@@ -1012,6 +1021,7 @@ export default function App() {
           <span className="mark">▥</span> 同频 <small>交易台</small>
         </a>
         <div className="status-row" title={reviewingOther ? '正在复盘的是别人的交易；账户数字已隐藏，避免和对方混淆' : '我的账户'}>
+          {syncs.symbol === false ? <span className="symbol-scope-hint" title="商品代码不同步：选中的品种只作用于当前激活的那一格">仅当前格</span> : null}
           <SymbolPicker symbol={tradeReview ? trade.symbol || 'XAUUSD' : liveSymbol} symbols={symbolOptions} loading={symbolsLoading} disabled={local.symbol_switching} error={symbolsError} contextNote={tradeReview ? '选择品种后打开行情，当前复盘记录保留。' : !localConnected && !catalogAvailable ? '当前仅列出已有行情；更新并运行 SyncNote 1.015 后可同步券商品种目录。' : undefined} onSelect={chooseSymbol} onOpen={() => setCatalogRevision((revision) => revision + 1)} />
         </div>
         <div
