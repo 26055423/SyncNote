@@ -1500,14 +1500,8 @@ export default function App() {
                         {money(trade.volume)} 手 · {money(trade.open)} → {money(trade.close)} · 盈亏 <b className={(trade.profit || 0) >= 0 ? 'up' : 'down'}>{money(trade.profit)}</b><br />
                         开仓 {stamp(entry.review.opened)} · 平仓 {stamp(trade.closed)}
                       </p> : <p className="dim">{trade.symbol} · {stamp((entry.scene?.anchor_ms ?? 0) / 1000)} · 图表笔记</p>}
-                      {!entry.read_only && entry.note_id && <label className="notebook-target">关联订单（可选）<select value={String(trade.ticket || '')} onChange={async event => {
-                        try {
-                          await api('/api/notes', { id: entry.note_id, ...noteRef.current, ticket: event.target.value || null });
-                          setTarget({ person: entry.owner.id, ticket: '', note: entry.note_id! });
-                          history.replaceState(null, '', '/chart?view=review&note=' + entry.note_id);
-                          setEntry(await api<Entry>('/api/chart/entry?note=' + entry.note_id));
-                        } catch (error) { setError(String(error)); }
-                      }}><option value="">不关联订单</option>{myHistory.filter(item => item.symbol === trade.symbol).map(item => <option key={String(item.ticket)} value={String(item.ticket)}>#{String(item.ticket)} · {item.symbol}</option>)}</select></label>}
+
+
                       <ReviewNotebook
                         key={entry.note_id || `${entry.owner.id}:${trade.ticket}`}
                         value={note}
