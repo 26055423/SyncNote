@@ -50,9 +50,9 @@ def clean_scene(value,allow_unscoped=False):
  if not isinstance(symbol,str) or not 1<=len(symbol)<=64:raise Error('图表缺少品种')
  if value.get('timeframe') not in ('1','5','15','30','60','240','1D'):raise Error('图表周期不正确')
  replay=value.get('replay_ms')
+ if replay is not None and (isinstance(replay,bool) or not isinstance(replay,int) or not 0<replay<=chart.MAX_ANCHOR_MS):raise Error('回放进度不正确')
  cursor=value.get('replay_cursor_ms')
  if cursor is not None and (isinstance(cursor,bool) or not isinstance(cursor,int) or not 0<cursor<=chart.MAX_ANCHOR_MS or replay is None or cursor>=replay):raise Error('回放光标不正确')
- if replay is not None and (isinstance(replay,bool) or not isinstance(replay,int) or not 0<replay<=chart.MAX_ANCHOR_MS):raise Error('回放进度不正确')
  return {k:view.get(k) for k in ('anchor_ms','timeframe','layout','range')}|{'source':source,'symbol':symbol,'replay_ms':replay,'replay_cursor_ms':cursor}
 
 def save(db,person,data):
@@ -74,6 +74,7 @@ def save(db,person,data):
  if old and old['primary_ticket']:
   journal.save(db,person,{'ticket':old['primary_ticket'],'body':body,'tags':tags,'sections':sections})
   if document is not None:chart.save_state(db,person,old['primary_ticket'],document)
+  elif 'document' in data:chart.clear_state(db,person,old['primary_ticket'])
  return {'ok':True,'note':get(db,person,ident)}
 
 def listing(db,person,q):

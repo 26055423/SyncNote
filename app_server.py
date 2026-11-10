@@ -538,9 +538,10 @@ class Handler(BaseHTTPRequestHandler):
                         result=chart.clear_state(db,uid,ticket) if data.get('clear') is True else chart.save_state(db,uid,ticket,data.get('state'))
                         review_notes.sync_legacy(db,uid,ticket,document=None if data.get('clear') is True else data.get('state'),write_document=True)
                     elif path=='/api/reviews/share':
-                        if data.get('note_id'):return self.reply(review_notes.share(db,uid,data))
-                        ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
-                        result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''),data.get('snapshot'),journal.notes(db,uid)['notes'].get(ticket))
+                        if data.get('note_id'):result=review_notes.share(db,uid,data)
+                        else:
+                            ticket=str(data.get('ticket',''));journal.trade(db,uid,ticket)
+                            result=chart.share(db,uid,ticket,data.get('recipients'),data.get('message',''),data.get('snapshot'),journal.notes(db,uid)['notes'].get(ticket))
                     elif path=='/api/reviews/share/seen':
                         share_id=data.get('id')
                         if not isinstance(share_id,int) or isinstance(share_id,bool):raise Error('消息编号不正确')
@@ -624,13 +625,9 @@ class Handler(BaseHTTPRequestHandler):
                     elif path=='/api/groups/reaction':
                         result=groups.reaction(db,uid,str(data.get('group','')),data.get('id'),data.get('emoji'),data.get('active'))
                     elif path=='/api/groups/share':
-                        if data.get('note_id'):return self.reply(review_notes.share_group(db,uid,data))
-                        try:
+                        if data.get('note_id'):result=review_notes.share_group(db,uid,data)
+                        else:
                             result=groups.share_trade(db,uid,str(data.get('group','')),str(data.get('ticket','')),data.get('snapshot'),data.get('message',''))
-                        except groups.GroupError:
-                            raise
-                        except Exception as _e:
-                            raise Error('分享失败: '+type(_e).__name__+' '+str(_e)[:160])
                     elif path=='/api/groups/open':
                         mid=data.get('id')
                         if not isinstance(mid,int) or isinstance(mid,bool):raise Error('消息编号不正确')

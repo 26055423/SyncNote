@@ -34,6 +34,7 @@ def get_chart_entry(self,db,u,q):
  bar_offset=int(clock_row['offset']) if clock_row and isinstance(clock_row['offset'],(int,float)) else 0
  review['market_source']=review_market_source(db,target,review['trade'])
  independent=review_notes.ensure_trade(db,uid,ticket) if not row and target==uid else None
+ if independent:db.commit()  # Publish a newly allocated note id only after it is durable.
  if independent and independent['ticket']!=str(ticket):return self.reply(review_notes.entry(db,uid,independent))
  return self.reply({'note_id':independent['id'] if independent else None,'scene':independent['scene'] if independent else None,'mode':'shared' if row else 'owner' if target==uid else 'viewer','owner':{'id':owner['id'],'name':owner['nickname'],'avatar':owner['avatar']},'read_only':target!=uid,'share':share_info,'review':review,'note':note,'chart':stored,'bar_offset':bar_offset})
 

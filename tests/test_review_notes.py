@@ -75,6 +75,9 @@ class ReviewNotes(unittest.TestCase):
   note=self.request('/api/chart/entry?note='+ident)['note']
   self.assertEqual(note['body'],'旧客户端修改');self.assertEqual(note['sections'],old['note']['sections'])
   self.assertEqual(self.request('/api/chart/entry?ticket=t')['note_id'],ident)
+  self.request('/api/chart/state',{'ticket':'t','state':{'version':1,'charts':[{'id':'c1'}]}})
+  self.request('/api/notes',{'id':ident,'document':None})
+  self.assertIsNone(self.request('/api/chart/entry?ticket=t')['chart'])
   self.request('/api/notes',{'id':ident,'ticket':None})
   detached=self.request('/api/chart/entry?ticket=t')
   self.assertEqual(detached['note_id'],ident);self.assertNotIn('ticket',detached['review']['trade'])
@@ -94,6 +97,20 @@ class ReviewNotes(unittest.TestCase):
   rows=self.request('/api/chart/bars?note='+note['id']+'&tf=M1&limit=100')['bars']
   self.assertGreater(rows[-1][0]*1000,cutoff)
   self.request('/api/chart/entry?share='+str(sid),uid='other',status=404)
+
+ def test_share_response_is_sent_after_commit_and_is_immediately_readable(self):
+  note=self.create();observed=[]
+  with self.app.connect() as db:before=db.execute('SELECT count(*) FROM review_snapshots').fetchone()[0]
+  reply=self.app.Handler.reply
+  def inspect(handler,value,*args,**kwargs):
+   if handler.path=='/api/reviews/share' and value.get('ok'):
+    with self.app.connect() as db:observed.append(db.execute('SELECT count(*) FROM review_snapshots').fetchone()[0])
+   return reply(handler,value,*args,**kwargs)
+  with patch.object(self.app.Handler,'reply',inspect):
+   self.request('/api/reviews/share',{'note_id':note['id'],'recipients':['b']})
+  self.assertEqual(observed,[before+1])
+  for bad in ({'replay_ms':'bad','replay_cursor_ms':1},{'replay_ms':True},{'replay_ms':1700000000000,'replay_cursor_ms':1700000100000}):
+   self.request('/api/notes',{'scene':self.scene(**bad)},status=400)
 
  def test_group_note_without_order_late_member_gets_original_and_recall_revokes(self):
   note=self.create()
