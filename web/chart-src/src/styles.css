@@ -1981,3 +1981,13 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-inline-add > button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel-2); color: var(--text); font-size: 12px; cursor: pointer; }
 .notebook-inline-add > button[type='submit'] { border-color: var(--accent-line); color: var(--accent-ink); }
 .notebook-inline-add > button:disabled { opacity: .5; cursor: default; }
+
+/* 快捷添加：多选已选 + 一次加入 */
+.notebook-pick-hint { margin-left: 6px; color: var(--dim); font-size: 10px; font-weight: 400; }
+.notebook-phrase.is-picked { border-color: var(--accent-line); background: var(--accent-bg); }
+.notebook-phrase.is-picked > button[aria-pressed='true'] { color: var(--accent-ink); }
+.notebook-pick-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.notebook-pick-actions > input { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; font-size: 12px; }
+.notebook-pick-actions > button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel-2); color: var(--text); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.notebook-pick-actions > button.primary { border-color: var(--accent-line); background: var(--accent-bg); color: var(--accent-ink); }
+.notebook-pick-actions > button:disabled { opacity: .5; cursor: default; }
