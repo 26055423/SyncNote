@@ -450,7 +450,7 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         <h5>选择条目 <span className="notebook-pick-hint">可多选，选好一起加入</span></h5>
         <div className="notebook-phrases">{[...new Set([...CHAPTERS, ...library.chapters.map(row => row.title)])].map(title => {
           const inNote = chapterExists(title), picked = pick.includes(title);
-          return <span className={`notebook-phrase${picked ? ' is-picked' : ''}`} key={title}>
+          return <span className={`notebook-phrase${picked ? ' is-picked' : ''}${inNote ? ' is-in-note' : ''}`} key={title} title={inNote ? '已经在笔记里，不能重复添加' : undefined}>
             <button type="button" disabled={full || inNote} aria-pressed={picked} title={inNote ? '已经在笔记里' : (picked ? '移出已选' : '加入已选')} onClick={() => togglePick(title)}>{title}</button>
             <button type="button" aria-label={'收藏条目 ' + title} aria-pressed={library.chapters.some(row => row.title === title && row.favorite)} onClick={() => void run(() => favoriteChapter(title))}>{library.chapters.some(row => row.title === title && row.favorite) ? '★' : '☆'}</button>
           </span>;

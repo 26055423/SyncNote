@@ -1991,3 +1991,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .notebook-pick-actions > button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel-2); color: var(--text); font-size: 12px; cursor: pointer; white-space: nowrap; }
 .notebook-pick-actions > button.primary { border-color: var(--accent-line); background: var(--accent-bg); color: var(--accent-ink); }
 .notebook-pick-actions > button:disabled { opacity: .5; cursor: default; }
+
+/* 快捷添加：已经在笔记里的条目（灰 + 勾） */
+.notebook-phrase.is-in-note { opacity: .55; }
+.notebook-phrase.is-in-note > button:first-child::after { content: ' ✓'; color: var(--dim); }
