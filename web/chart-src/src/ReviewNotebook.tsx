@@ -54,11 +54,14 @@ function blocks(sections: NoteSection[]): Block[] {
 export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }: Props) {
   const [library, setLibrary] = useState<NotebookLibrary>(EMPTY_LIBRARY);
   const [quickOpen, setQuickOpen] = useState(false);
-  const [libraryExpanded, setLibraryExpanded] = useState(false);
+  const [previewTab, setPreviewTab] = useState<'picked' | 'templates'>('picked');
+  const [templateId, setTemplateId] = useState<string | number | null>(null);
+  const [candidate, setCandidate] = useState('');
+  const [customChapters, setCustomChapters] = useState<string[]>([]);
   const [chapterDraft, setChapterDraft] = useState('');
   /** 标题旁「＋」：不打开弹窗，直接手输条目名称。 */
   const [inlineOpen, setInlineOpen] = useState(false);
-  /** 快捷添加里先多选，再一次性加入笔记。 */
+  /** 快捷添加里先组合结构，再一次性加入笔记。 */
   const [pick, setPick] = useState<string[]>([]);
   const [inlineTitle, setInlineTitle] = useState('');
   const quickDialog = useRef<HTMLDialogElement>(null);
@@ -201,7 +204,9 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   }, [quickOpen]);
   const openQuickAdd = () => {
     setPick([]);
-    setLibraryExpanded(false);
+    setPreviewTab('picked');
+    setTemplateId(null);
+    setCandidate('');
     setChapterDraft('');
     setError('');
     setMessage('');
@@ -212,12 +217,20 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
     const title = chapterDraft.trim();
     if (!title) return;
     setChapterDraft('');
-    setPick(list => list.includes(title) ? list : [...list, title]);
+    if (!chapterExists(title)) {
+      setPick(list => list.includes(title) || list.length >= MAX_SECTIONS ? list : [...list, title]);
+      setPreviewTab('picked');
+      setCustomChapters(list => list.includes(title) ? list : [...list, title]);
+    }
     void rememberChapter(title);
   };
   /** 已选的条目一次性加到笔记末尾（跳过已在笔记里的）。 */
   const applyPick = () => {
-    if (!pick.length) return;
+    if (previewTab === 'templates') {
+      if (chosenTemplate) applyTemplate(chosenTemplate);
+      return;
+    }
+    if (!pick.length || pick.length > MAX_SECTIONS - value.sections.length) return;
     const room = Math.max(0, MAX_SECTIONS - value.sections.length);
     const fresh = pick.filter(title => !chapterExists(title)).slice(0, room);
     if (fresh.length) {
@@ -231,10 +244,11 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   /** 把已选的这套条目存成模板（只存标题和顺序）。 */
   const savePickTemplate = () => {
     const name = templateName.trim();
-    if (!name || !pick.length) return;
-    const structure = templateStructure(pick.map(title => newSection(title)));
+    if (!name) return;
+    const structure = templateStructure(previewSections);
+    if (!structure.length) return;
     void run(async () => {
-      await api('/api/journal/templates', { name, sections: structure, phrases: templatePhrases });
+      await api('/api/journal/templates', { name, sections: structure, phrases: previewTab === 'templates' ? chosenTemplate?.phrases ?? [] : [] });
       await refresh();
       setTemplateName('');
       setMessage('已把已选条目存为模板，不含本次正文与勾选。');
@@ -252,7 +266,16 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
   };
   const summaryText = summarizeNote(value);
   const chapterExists = (title: string) => value.sections.some(section => section.title.trim() === title);
-  const full = value.sections.length >= MAX_SECTIONS;
+  const chosenTemplate = library.templates.find(template => template.id === templateId);
+  const previewSections = previewTab === 'templates' ? chosenTemplate?.sections ?? [] : pick.map(title => newSection(title));
+  const chapterOptions = [...new Set([...CHAPTERS, ...library.chapters.map(row => row.title), ...customChapters])];
+  const availableChapters = chapterOptions.filter(title => !chapterExists(title) && !pick.includes(title));
+  const transferChapter = () => {
+    if (!candidate || !availableChapters.includes(candidate) || pick.length >= MAX_SECTIONS) return;
+    setPick(list => [...list, candidate]);
+    setCandidate('');
+    setPreviewTab('picked');
+  };
   const circles = '①②③④⑤⑥⑦⑧⑨⑩';
   const openEvidencePicker = (id: string) => {
     setPickerFor(id);
@@ -424,39 +447,65 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
         <strong id="sn-quick-title">快捷添加</strong>
         <button type="button" aria-label="关闭快捷添加" onClick={closeQuickAdd}>×</button>
       </div>
-      <section aria-label="条目选择">
-        <h5>选择条目 <span className="notebook-pick-hint">可多选，选好一起加入</span></h5>
-        <div className="notebook-phrases">{[...new Set([...CHAPTERS, ...library.chapters.map(row => row.title)])].map(title => {
-          const inNote = chapterExists(title), picked = pick.includes(title);
-          return <span className={`notebook-phrase${picked ? ' is-picked' : ''}${inNote ? ' is-in-note' : ''}`} key={title} title={inNote ? '已经在笔记里，不能重复添加' : undefined}>
-            <button type="button" disabled={full || inNote} aria-pressed={picked} title={inNote ? '已经在笔记里' : (picked ? '移出已选' : '加入已选')} onClick={() => togglePick(title)}>{title}</button>
-            <button type="button" aria-label={'收藏条目 ' + title} aria-pressed={library.chapters.some(row => row.title === title && row.favorite)} onClick={() => void run(() => favoriteChapter(title))}>{library.chapters.some(row => row.title === title && row.favorite) ? '★' : '☆'}</button>
-          </span>;
-        })}</div>
-      </section>
-      <form className="notebook-library-form" onSubmit={event => { event.preventDefault(); pickCustom(); }}>
-        <input autoFocus aria-label="条目名称" maxLength={80} placeholder="自定义条目名称" value={chapterDraft} onChange={event => setChapterDraft(event.target.value)} />
-        <button type="submit" disabled={full || !chapterDraft.trim()}>加入已选</button>
-      </form>
-      <section aria-label="已选条目">
-        <h5>已选{pick.length ? `（${pick.length}）` : ''}</h5>
-        {pick.length ? <div className="notebook-phrases">{pick.map(title => <span className="notebook-phrase is-picked" key={title}>
-          <span>{title}</span><button type="button" className="notebook-phrase-remove" aria-label={`移除已选 ${title}`} onClick={() => togglePick(title)}>×</button>
-        </span>)}</div> : <p className="notebook-library-hint">点上面的条目或输入名称，选好后一起加到笔记。</p>}
-        <div className="notebook-pick-actions">
-          <input aria-label="模板名称" maxLength={80} placeholder="给这套条目起个名字（存为模板）" value={templateName} onChange={event => setTemplateName(event.target.value)} />
-          <button type="button" disabled={busy || !pick.length || !templateName.trim()} onClick={savePickTemplate}>保存模板</button>
-          <button type="button" className="primary" disabled={!pick.length || value.sections.length >= MAX_SECTIONS} onClick={applyPick}>添加到笔记</button>
+      <div className="notebook-builder">
+        <section className="notebook-builder-column" aria-label="可选条目">
+          <h5>可选条目 <span className="dim">{availableChapters.length}</span></h5>
+          <div className="notebook-builder-list" role="listbox" aria-label="可选条目列表">
+            {chapterOptions.map(title => {
+              const unavailable = chapterExists(title) || pick.includes(title);
+              return <div className="notebook-builder-option" key={title}>
+                <button type="button" role="option" aria-selected={candidate === title} disabled={unavailable}
+                  onClick={() => setCandidate(title)} onDoubleClick={() => {
+                    if (!unavailable && pick.length < MAX_SECTIONS) {
+                      setPick(list => [...list, title]); setPreviewTab('picked'); setCandidate('');
+                    }
+                  }}>{title}{chapterExists(title) ? ' ✓ 已在笔记' : pick.includes(title) ? ' ✓ 已选' : ''}</button>
+                <button type="button" aria-label={'收藏条目 ' + title} disabled={busy} aria-pressed={library.chapters.some(row => row.title === title && row.favorite)}
+                  onClick={() => void run(() => favoriteChapter(title))}>{library.chapters.some(row => row.title === title && row.favorite) ? '★' : '☆'}</button>
+              </div>;
+            })}
+          </div>
+          <form className="notebook-library-form" onSubmit={event => { event.preventDefault(); pickCustom(); }}>
+            <input aria-label="条目名称" maxLength={80} placeholder="自定义条目名称" value={chapterDraft} onChange={event => setChapterDraft(event.target.value)}/>
+            <button type="submit" disabled={!chapterDraft.trim() || pick.length >= MAX_SECTIONS || chapterExists(chapterDraft.trim())}>加入</button>
+          </form>
+        </section>
+        <div className="notebook-transfer" role="group" aria-label="移动条目">
+          <button type="button" aria-label="加入选中条目" title="加入选中条目" disabled={!candidate || pick.length >= MAX_SECTIONS} onClick={transferChapter}>&gt;</button>
+          <button type="button" aria-label="加入全部可选条目" title="加入全部可选条目" disabled={!availableChapters.length || pick.length >= MAX_SECTIONS} onClick={() => {
+            setPick(list => [...list, ...availableChapters].slice(0, MAX_SECTIONS)); setPreviewTab('picked'); setCandidate('');
+          }}>&gt;&gt;</button>
+          <button type="button" aria-label="清空本次组合" title="清空本次组合" disabled={!pick.length} onClick={() => setPick([])}>&lt;&lt;</button>
         </div>
-      </section>
-      {full && <p className="dim">每篇笔记最多 {MAX_SECTIONS} 个条目。</p>}
-      {message && <p className="notebook-feedback" role="status">{message}</p>}
-      {error && <p className="notebook-error" role="alert">{error}</p>}
-      <details className="notebook-library" open={libraryExpanded} onToggle={event => setLibraryExpanded(event.currentTarget.open)}>
-      <summary>我的模板 / 保存组合</summary>
+        <section className="notebook-builder-column" aria-label="笔记结构预览">
+          <div className="notebook-preview-tabs" role="tablist" aria-label="结构来源">
+            <button type="button" role="tab" id="sn-picked-tab" aria-controls="sn-structure-preview" aria-selected={previewTab === 'picked'} onClick={() => setPreviewTab('picked')}>本次组合（{pick.length}）</button>
+            <button type="button" role="tab" id="sn-templates-tab" aria-controls="sn-structure-preview" aria-selected={previewTab === 'templates'} onClick={() => setPreviewTab('templates')}>已有模板</button>
+          </div>
+          {previewTab === 'templates' && <label className="notebook-template-select">选择模板
+            <select aria-label="选择已有模板" value={templateId ?? ''} onChange={event => {
+              const template = library.templates.find(row => String(row.id) === event.target.value);
+              setTemplateId(template?.id ?? null);
+            }}>
+              <option value="">请选择模板</option>
+              {frequentFirst(library.templates).map(template => <option key={template.id} value={template.id}>{template.name}（{template.sections.length} 条）</option>)}
+            </select>
+          </label>}
+          <div className="notebook-builder-list notebook-structure-preview" role="tabpanel" id="sn-structure-preview" aria-labelledby={previewTab === 'picked' ? 'sn-picked-tab' : 'sn-templates-tab'}>
+            {previewSections.length ? <ol>{previewSections.map((section, index) => <li key={previewTab === 'picked' ? section.title : section.id}>
+              <div><strong>{section.title}</strong>{section.group && <small>{section.group}</small>}<p>填写判断、依据或过程…</p></div>
+              {previewTab === 'picked' && <div className="notebook-section-actions">
+                <button type="button" aria-label={'上移预览条目 ' + section.title} disabled={index === 0} onClick={() => setPick(list => { const next = [...list]; [next[index - 1], next[index]] = [next[index]!, next[index - 1]!]; return next; })}>↑</button>
+                <button type="button" aria-label={'下移预览条目 ' + section.title} disabled={index === pick.length - 1} onClick={() => setPick(list => { const next = [...list]; [next[index], next[index + 1]] = [next[index + 1]!, next[index]!]; return next; })}>↓</button>
+                <button type="button" aria-label={'移除预览条目 ' + section.title} onClick={() => togglePick(section.title)}>×</button>
+              </div>}
+            </li>)}</ol> : <p className="notebook-library-hint">{previewTab === 'picked' ? '从左侧选择条目，用 > 加入结构。' : '选择一个已有模板，查看结构。'}</p>}
+          </div>
+          <details className="notebook-library">
+          <summary>管理已有模板</summary>
       <h5>条目组合</h5>
       {frequentFirst(library.templates).map(template => <div className="notebook-template" key={template.id}><div className="notebook-library-item">
-        <button type="button" title={`添加 ${template.sections.length} 个条目；保留已有内容`} disabled={!template.sections.length || value.sections.length + template.sections.length > MAX_SECTIONS || busy} onClick={() => applyTemplate(template)}><span>{template.pinned ? '★ ' : ''}{template.name}</span><small>{template.sections.length} 条{(template.phrases ?? []).length ? ` · ${(template.phrases ?? []).length} 条用语` : ''} · 用过 {template.uses} 次</small></button>
+        <button type="button" title={`预览 ${template.sections.length} 个条目的模板结构`} disabled={!template.sections.length || busy} onClick={() => { setTemplateId(template.id); setPreviewTab('templates'); }}><span>{template.pinned ? '★ ' : ''}{template.name}</span><small>{template.sections.length} 条{(template.phrases ?? []).length ? ` · ${(template.phrases ?? []).length} 条用语` : ''} · 用过 {template.uses} 次</small></button>
         <button type="button" className="notebook-library-remove" aria-pressed={Boolean(template.pinned)} title={template.pinned ? '取消固定' : '固定到前面'} aria-label={`固定模板 ${template.name}`} disabled={busy} onClick={() => void run(async () => {
           await api('/api/journal/templates/pin', { template_id: template.id, pinned: !template.pinned }); await refresh();
         })}>{template.pinned ? '★' : '☆'}</button>
@@ -483,7 +532,19 @@ export function ReviewNotebook({ value, onChange, readOnly, onError, evidence }:
       {!library.templates.length && <p className="notebook-library-hint">保存自己的条目组合，下次可以一键添加。</p>}
       <p className="notebook-library-hint">只保存条目标题、分组和顺序，不会保存正文或证据。</p>
 
-      </details>
+          </details>
+        </section>
+      </div>
+      <footer className="notebook-builder-footer">
+        <input aria-label="模板名称" maxLength={80} placeholder="模板名称（填入模板时必填）" value={templateName} onChange={event => setTemplateName(event.target.value)}/>
+        <div>
+          <button type="button" className="primary" disabled={busy || !previewSections.length || previewSections.length > MAX_SECTIONS - value.sections.length} onClick={applyPick}>填入笔记</button>
+          <button type="button" disabled={busy || !previewSections.length || !templateName.trim()} onClick={savePickTemplate}>填入模板</button>
+        </div>
+      </footer>
+      {previewSections.length > MAX_SECTIONS - value.sections.length && <p className="dim">当前笔记最多还能添加 {Math.max(0, MAX_SECTIONS - value.sections.length)} 个条目。</p>}
+      {message && <p className="notebook-feedback" role="status">{message}</p>}
+      {error && <p className="notebook-error" role="alert">{error}</p>}
     </dialog>}
 
     {summaryOpen && <div className="notebook-summary">

@@ -1925,7 +1925,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 /* 全服章节词云 */
 
 /* 词云：居中、无边框、字号与颜色都有层次 */
-.notebook-quick-dialog { box-sizing: border-box; width: min(580px, calc(100vw - 24px)); max-height: min(740px, calc(100dvh - 24px)); margin: auto; padding: 18px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+.notebook-quick-dialog { box-sizing: border-box; width: min(900px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin: auto; padding: 18px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
 .notebook-quick-dialog::backdrop { background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); }
 .notebook-quick-dialog .notebook-library-head strong { font-size: 16px; }
 .notebook-quick-cloud { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
@@ -1995,3 +1995,42 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 /* 快捷添加：已经在笔记里的条目（灰 + 勾） */
 .notebook-phrase.is-in-note { opacity: .55; }
 .notebook-phrase.is-in-note > button:first-child::after { content: ' ✓'; color: var(--dim); }
+
+.notebook-builder { display: grid; grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1.2fr); gap: 12px; margin-top: 16px; }
+.notebook-builder-column { min-width: 0; }
+.notebook-builder-column > h5 { height: 34px; margin: 0; font-size: 13px; }
+.notebook-builder-list { height: clamp(220px, 40dvh, 360px); overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--well); }
+.notebook-builder-option { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); }
+.notebook-builder-option:last-child { border: 0; }
+.notebook-builder-option > button { padding: 10px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--text); font: inherit; font-size: 12px; }
+.notebook-builder-option > button[role='option'] { flex: 1; text-align: left; overflow-wrap: anywhere; }
+.notebook-builder-option > button[aria-selected='true'] { background: var(--active-bg); color: var(--accent-ink); }
+.notebook-builder-option > button:hover:not(:disabled) { background: var(--hover); }
+.notebook-builder-option > button:disabled { color: var(--dim); opacity: .6; }
+.notebook-transfer { display: flex; flex-direction: column; justify-content: center; gap: 8px; padding-bottom: 42px; }
+.notebook-transfer > button, .notebook-builder-footer button { padding: 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
+.notebook-transfer > button:disabled, .notebook-builder-footer button:disabled { opacity: .45; cursor: default; }
+.notebook-preview-tabs { display: flex; height: 34px; gap: 4px; }
+.notebook-preview-tabs > button { flex: 1; border: 1px solid var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; background: var(--panel-2); color: var(--dim); font: inherit; font-size: 12px; }
+.notebook-preview-tabs > button[aria-selected='true'] { color: var(--accent-ink); background: var(--active-bg); border-color: var(--accent-line); }
+.notebook-structure-preview > ol { list-style: decimal; margin: 0; padding: 0 0 0 28px; }
+.notebook-structure-preview li { padding: 12px 6px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.notebook-structure-preview li > div:first-child { display: inline; }
+.notebook-structure-preview strong { overflow-wrap: anywhere; }
+.notebook-structure-preview small { margin-left: 8px; color: var(--dim); }
+.notebook-structure-preview p { color: var(--dim); font-size: 11px; margin: 8px 0; }
+.notebook-structure-preview .notebook-section-actions { justify-content: flex-end; }
+.notebook-template-select { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 12px; color: var(--dim); }
+.notebook-template-select select { flex: 1; min-width: 0; padding: 6px; border: 1px solid var(--line); background: var(--well); color: var(--text); border-radius: 5px; }
+.notebook-builder-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.notebook-builder-footer > input { flex: 1 1 200px; min-width: 0; padding: 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); color: var(--text); font: inherit; font-size: 12px; }
+.notebook-builder-footer > div { display: flex; gap: 8px; margin-left: auto; }
+.notebook-builder-footer button.primary { background: var(--active-bg); color: var(--accent-ink); border-color: var(--accent-line); }
+@media (max-width: 600px) {
+  .notebook-quick-dialog { padding: 12px; }
+  .notebook-builder { grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr); gap: 6px; }
+  .notebook-builder-list { padding: 3px; }
+  .notebook-builder-option > button { padding: 9px 4px; }
+  .notebook-builder-column .notebook-library-form { flex-wrap: wrap; }
+  .notebook-builder-column .notebook-library-form > input { flex-basis: 100%; width: 100%; }
+}
