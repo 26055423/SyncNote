@@ -1,0 +1,43 @@
+{
+  "schema": "syncnote-breakout-validation.v1",
+  "frozen_id": "f44a9f7dd22cc3f5bfb9b975d06f2baf045cf5a268903705847f96ce59ca57c8",
+  "mode": "future",
+  "status": "insufficient_new_sample",
+  "source": "srv:EasyTradingOnlineLtd-Server",
+  "symbol": "XAUUSD",
+  "as_of": "2026-11-13T07:22:10+00:00",
+  "evaluation_sample_sha256": "9ac5ed71c8890641938b74f4f705896c5b559c7e9a490156241845947cccf1f9",
+  "n": 0,
+  "span_days": 0,
+  "criteria": {
+    "case": "main",
+    "stage": "after_15m",
+    "reward_atr": 1.0,
+    "failure_atr": 0.5,
+    "horizon_seconds": 21600,
+    "embargo_seconds": 21600,
+    "min_evaluation_events": 200,
+    "min_evaluation_days": 180,
+    "primary_comparison": "only_position versus distance, Brier",
+    "secondary_comparison": "full versus distance, Brier; log loss and calibration diagnostic",
+    "bootstrap_repetitions": 2000,
+    "bootstrap_seed": 20261113,
+    "distance": "q=clip((position+0.5)/1.5); unresolved rate from training only",
+    "future": "events must start at least 6h after freeze; fixed all-history models, no updating",
+    "transfer": "different broker, same symbol; annual models trained only before test year; correlated underlying market is not independent future evidence",
+    "stopping": "below 200 events or 180 days: descriptive only; no confirmatory intervals",
+    "selection": "original complete-M1-window and target-touch filters; retrospective frozen-model replay, not a live timestamped forecast log"
+  },
+  "exclusions": {
+    "already_observed_or_embargo": 1169
+  },
+  "metrics": {},
+  "intervals": {},
+  "years": {},
+  "directions": {
+    "-1": {},
+    "1": {}
+  },
+  "predictions": [],
+  "limitations": "Frozen retrospective replay with original complete-window selection; no timestamped live forecasts, trading costs, or independent-market proof. Repeated interim reads do not justify early confirmatory conclusions."
+}
