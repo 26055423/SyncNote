@@ -27,7 +27,7 @@
 | `share_migrations.py` | 独立分享快照迁移，保留旧链接 |
 | `observability.py` / `tools/capacity_probe.py` | 有界耗时指标、合成数据容量测量 |
 | `ea_hub.py` | MT5 EA 直连的多用户 hub（TCP 8788 / NDJSON v1） |
-| `live.py` | 实时行情内存缓存（tick + 4 个周期的最近 K 线） |
+| `live.py` | 实时行情内存缓存（tick + 7 个周期的最近 K 线） |
 | `review_notes.py` / `docs/统一复盘笔记.md` | 独立笔记、可选订单、场景、词库交互与兼容约定 |
 | `journal.py` | 笔记、复盘读写；`reviewed()` 判断哪些成交真的复盘过 |
 | `chart.py` | 画线存档与消息（复盘分享） |
@@ -104,6 +104,7 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 
 ## 行情与复盘共用 K 线轨道
 
+- **七个原生周期**：M1/M5/M15/M30/H1/H4/D1。SyncNote 1.023、SyncTrade 1.113、网页代传与服务器区间任务均支持；图表直接读对应周期，不能再用 M15/H1 按 UTC 聚合替代 M30/H4/D1。自动回填仅近 7 天，更早缺口由「同步行情」指定区间补齐。
 - **已收盘 K 线**：统一从 `bars` 读取，按券商轨道 `source`、品种、周期和时间区分。行情读 `/api/market/bars`，复盘按成交或分享授权读 `/api/chart/bars`。
 - **复盘快照**：`trade_reviews.payload` 为已有交易提供起始窗口；同一时刻优先显示该轨道的已入库 K 线。图表后台读新数据并按需翻页。
 - **盘中更新**：本机 SyncTrade 推送仅合入券商与品种均匹配的视图。旧 `/api/live` 内存缓存缺少可靠轨道身份，保留旧客户端兼容用途。
@@ -112,7 +113,7 @@ cd web/chart-src && npm ci && npm run build   # 重新构建图表页 → web/ch
 
 - 正式地址 `https://sync-trade.top`；EA 的 `InpAllowedOrigin` 用这个，不要用 IP。
 - 服务已改名：`syncnote.service`、`syncnote-pull`、`nginx/syncnote.conf`；Cookie 仍是 `tongpin_session`（兼容保留）。
-- **云端不提供下单通道**：hub 只收行情/账户与旧摘要。旧 SyncNoteLocal 保持模拟账户边界；当前 SyncTrade 1.112 支持实盘/模拟账户，协议 `tongpin-local.v1`。
+- **云端不提供下单通道**：hub 只收行情/账户与旧摘要。旧 SyncNoteLocal 保持模拟账户边界；当前 SyncTrade 1.113 支持实盘/模拟账户，协议 `tongpin-local.v1`。
 - **当前 SyncTrade 支持市价及限价/止损挂单**，动作以 EA capabilities 为准。`LOCAL_NO_QUOTAS=true`，不能再宣称默认只读或强制限额；账户稳定、命令日志、风险账本仍需健康，净额管理有独立授权。本次重构不更改 EA 权限。
 - 上述首版边界指旧 `SyncNoteLocal`。当前 `SyncTrade` 1.106 支持市价与限价/止损挂单，本机配对授权后固定取消账户类型及本地手数/敞口/每日额度门槛，身份字段为 `quota_unrestricted:true`；不授予净额管理权限，日志、券商规则、点差/偏离、配对和未知结果不重试继续保留。`SyncNote` 仍保持只读。详见 `bridge/SyncTrade_README.md`。
 - 顶栏价格：有实时行情时用 tick 中间价，否则取最后一根 K 线收盘。

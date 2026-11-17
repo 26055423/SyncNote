@@ -9,7 +9,7 @@ async function moduleFrom(path) {
   return import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 }
 const { mergeLiveHistory, prependLiveHistory, BASE_SECONDS } = await moduleFrom('../src/liveHistory.ts');
-const { LiveProvider } = await moduleFrom('../src/vela/provider.ts');
+const { LiveProvider, ReviewProvider } = await moduleFrom('../src/vela/provider.ts');
 const row = (time, close = 2) => [time, 1, 3, 0.5, close, 10];
 
 test('paged M1 history survives repeated recent-window snapshots and live candles', () => {
@@ -53,7 +53,7 @@ test('recent out-of-order corrections retain old pages and do not duplicate time
   mergeLiveHistory(cache, { M1: [row(120), row(180, 2.8), row(300)] });
   assert.deepEqual(cache.M1.map((bar) => bar[0]), [60, 120, 180, 240, 300]);
   assert.equal(cache.M1[2][4], 2.8);
-  assert.deepEqual(BASE_SECONDS, { M1: 60, M5: 300, M15: 900, H1: 3600 });
+  assert.deepEqual(BASE_SECONDS, { M1: 60, M5: 300, M15: 900, H1: 3600, M30: 1800, H4: 14400, D1: 86400 });
 });
 
 test('older paging is not silently discarded once the previous 60000-row cutoff is reached', () => {
@@ -62,4 +62,34 @@ test('older paging is not silently discarded once the previous 60000-row cutoff 
   mergeLiveHistory(cache, { M1: [row(60099, 2.9), row(60100)] });
   assert.equal(cache.M1[0][0], 99);
   assert.equal(cache.M1.length, 60002);
+});
+
+test('native M30 H4 and D1 retain broker session boundaries and never use lower-period substitutes', async () => {
+  // Broker midnight at UTC+3 is 21:00 UTC, not a UTC daily bucket boundary.
+  const day = Math.floor(1800000000 / 86400) * 86400 - 10800;
+  const cache = {
+    M15: [row(day, 900), row(day + 900, 901)],
+    H1: [row(day, 800), row(day + 3600, 801)],
+    M30: [row(day, 30), row(day + 1800, 31)],
+    H4: [row(day, 40), row(day + 14400, 41)],
+    D1: [row(day, 50), row(day + 86400, 51)],
+  };
+  let listener;
+  const live = new LiveProvider(cache, 'XAUUSD', (callback) => { listener = callback; return () => {}; });
+  const review = new ReviewProvider(cache, 'XAUUSD');
+  for (const [tf, base] of [['30', 'M30'], ['240', 'H4'], ['1D', 'D1']]) {
+    for (const provider of [live, review]) {
+      const actual = await provider.getBars('XAUUSD', tf);
+      assert.deepEqual(actual.map((bar) => [bar.time / 1000, bar.close]), cache[base].map((bar) => [bar[0], bar[4]]));
+    }
+  }
+  const updates = [];
+  live.subscribe('XAUUSD', '1D', (bar) => updates.push(bar));
+  mergeLiveHistory(cache, { D1: [row(day + 86400, 52)] });
+  listener();
+  assert.equal(updates.at(-1).time, (day + 86400) * 1000);
+  assert.equal(updates.at(-1).close, 52);
+  const missing = new ReviewProvider({ H1: cache.H1, M15: cache.M15 }, 'XAUUSD');
+  assert.deepEqual(await missing.getBars('XAUUSD', '240'), []);
+  assert.deepEqual(await missing.getBars('XAUUSD', '1D'), []);
 });

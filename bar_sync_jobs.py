@@ -2,7 +2,7 @@
 import hashlib,json,secrets,time
 import bars,market_symbols,sync_history,trade_time
 
-PERIODS={'M1':60,'M5':300,'M15':900,'H1':3600}
+PERIODS={'M1':60,'M5':300,'M15':900,'H1':3600,'M30':1800,'H4':14400,'D1':86400}
 ACTIVE=('waiting','running')
 class JobError(Exception):
  def __init__(self,text,code=400):self.text=text;self.code=code;super().__init__(text)

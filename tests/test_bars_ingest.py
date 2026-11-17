@@ -2,7 +2,7 @@
 import sqlite3,sys,unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-import bars
+import bars,live
 
 class BarsIngest(unittest.TestCase):
  def setUp(self):
@@ -11,6 +11,34 @@ class BarsIngest(unittest.TestCase):
   self.now=1800000037
 
  def row(self,stamp):return [stamp,100,101,99,100.5,3]
+
+ def test_seven_native_periods_close_on_wall_time_and_keep_their_utc_openings(self):
+  for shift in (10800,-18000):
+   source='srv:Seven-'+str(shift)
+   bars.ensure_feed(self.db,source[4:],'1',self.now)
+   bars.set_source_offset(self.db,source,shift,self.now)
+   for tf,period in bars.TF_SECONDS.items():
+    with self.subTest(tf=tf,shift=shift):
+     forming=(self.now+shift)//period*period
+     result=bars.ingest(self.db,source,'fixture','XAUUSD',{tf:{
+      'bars':[self.row(forming-period),self.row(forming)],'complete':False,
+      'from_server':forming-period,'to_server':forming}},self.now)
+     self.assertEqual(result['series'][tf]['accepted'],1)
+     self.assertEqual(result['series'][tf]['dropped'],1)
+     self.assertEqual(bars.latest_utc(self.db,source,'XAUUSD',tf,10,self.now)['bars'][0][0],forming-period-shift)
+   tracks=bars.tracks_utc(self.db,'XAUUSD',source,self.now-2*86400,self.now)
+   track=next(item for item in tracks['tracks'] if item['source']==source)
+   self.assertEqual(set(track['series']),set(bars.TF_SECONDS))
+   self.assertTrue(all(item['bars']==1 for item in track['series'].values()))
+
+ def test_forming_cache_accepts_all_seven_native_periods_without_utc_rebucketing(self):
+  shift=10800
+  series={tf:self.row((self.now+shift)//period*period) for tf,period in bars.TF_SECONDS.items()}
+  cache=live.FormingBars()
+  self.assertTrue(cache.put(('user','account','token'),'XAUUSD',(self.now+shift)*1000,series,shift,self.now))
+  actual=cache.read(('user','account','token'),'XAUUSD',self.now)
+  self.assertEqual(set(actual),set(bars.TF_SECONDS))
+  for tf in series:self.assertEqual(actual[tf][0][0],series[tf][0]-shift)
 
  def test_positive_and_negative_offsets_close_bars_on_broker_clock_but_audit_utc(self):
   for shift in (10800,-18000):

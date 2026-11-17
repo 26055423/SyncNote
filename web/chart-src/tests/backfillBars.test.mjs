@@ -8,7 +8,7 @@ const compiled = ts.transpileModule(readFileSync(new URL('../src/backfillBars.ts
 const require = createRequire(import.meta.url), exports = {};
 vm.runInNewContext(compiled, { exports, require: (name) => name === './localTerminal' ? { localTerminal: { subscribe() { return () => {}; } } } : name === './localHistorySync' ? { historyAccountKey: async () => 'fixture-account-key' } : require(name), AbortController, console, window: { localStorage: {} } });
 const { BackfillBars } = exports;
-const PERIOD = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600 }, TF_PERIOD = { M1: 60, M5: 300, M15: 900, H1: 3600 };
+const PERIOD = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '30m': 1800, '4h': 14400, '1d': 86400 }, TF_PERIOD = { M1: 60, M5: 300, M15: 900, H1: 3600, M30: 1800, H4: 14400, D1: 86400 };
 const NOW_SERVER = 1800000037, RECENT = 7 * 86400;
 const key = 'syncnote-backfill-v2:fixture-user:fixture-account-key:XAUUSD';
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -47,7 +47,7 @@ function fixture(options = {}) {
 test('automatic backfill is bounded to seven days, fair across periods, and never locks charts', async () => {
   const f = fixture();await f.sync.start();assert.equal(f.sync.getSnapshot().phase, 'ready');
   assert.ok(f.locks.every((value) => value === false));
-  assert.deepEqual(f.reads.slice(0, 4).map((read) => read.tf), ['1m', '5m', '15m', '1h']);
+  assert.deepEqual(f.reads.slice(0, 7).map((read) => read.tf), ['1m', '5m', '15m', '1h', '30m', '4h', '1d']);
   for (const read of f.reads) assert.ok(read.range.from_server >= NOW_SERVER - RECENT);
   assert.ok(f.reads.length < 20);assert.equal((f.reads[0].range.to_server - f.reads[0].range.from_server) / 60 + 1, 2000);
   assert.equal(f.checkpoint().version, 2);assert.equal(f.checkpoint().done, true);
@@ -58,9 +58,22 @@ test('old deep-history checkpoints stay untouched and explicit starts inspect th
   const oldKey = key.replace('-v2:', '-v1:'), old = JSON.stringify({ version: 1, floor_server: NOW_SERVER - 5 * 365 * 86400, cursors: { M1: NOW_SERVER - 200 * 86400 } });
   const f = fixture({ stored: new Map([[oldKey, old]]) });await f.sync.start();assert.equal(f.stored.get(oldKey), old);
   f.advance(4 * 86400 * 1000);const before = f.reads.length;await f.sync.start();
-  assert.deepEqual(f.reads.slice(before, before + 4).map((read) => read.tf), ['1m', '5m', '15m', '1h']);
+  assert.deepEqual(f.reads.slice(before, before + 7).map((read) => read.tf), ['1m', '5m', '15m', '1h', '30m', '4h', '1d']);
   for (const read of f.reads.slice(before)) assert.ok(read.range.from_server >= f.wallNow() - RECENT);
   assert.ok(f.reads[before].range.to_server > f.reads[0].range.to_server);
+});
+
+test('an existing four-period checkpoint still scans and persists all newly supported periods', async () => {
+  const old = JSON.stringify({ version: 2, account_key: 'fixture-account-key', account: '1001', server: 'Fixture-Broker', symbol: 'XAUUSD',
+    floor_server: NOW_SERVER - RECENT, heads: { M1: NOW_SERVER - 97, M5: NOW_SERVER - 337, M15: NOW_SERVER - 937, H1: NOW_SERVER - 3637 },
+    tail_heads: {}, gaps: {}, cursors: {}, done: true });
+  const f = fixture({ stored: new Map([[key, old]]) });
+  await f.sync.start();
+  for (const [tf, wire] of [['M30', '30m'], ['H4', '4h'], ['D1', '1d']]) {
+    assert.ok(f.reads.some((read) => read.tf === wire));
+    assert.ok(f.uploads.some(({ body }) => body.tf === tf));
+    assert.equal(f.checkpoint().heads[tf], Math.floor(NOW_SERVER / TF_PERIOD[tf]) * TF_PERIOD[tf] - TF_PERIOD[tf]);
+  }
 });
 test('stored coverage skips reads and an unavailable coverage service defers backfill', async () => {
   const covered = fixture({ coverage: async () => ({ missing: [] }) });await covered.sync.start();assert.equal(covered.reads.length, 0);assert.equal(covered.sync.getSnapshot().phase, 'ready');
@@ -125,7 +138,7 @@ test('holes are clipped into aligned windows and a one-slot hole preserves left 
 });
 test('minute delta overlaps two periods from successful heads', async () => {
   const f = fixture();await f.sync.start();const previous = { ...f.checkpoint().heads }, count = f.reads.length;f.advance(60000);await f.wake();
-  const next = f.reads.slice(count);assert.equal(next.length, 4);
+  const next = f.reads.slice(count);assert.equal(next.length, 7);
   for (const read of next) { const tf = Object.keys(TF_PERIOD).find((item) => TF_PERIOD[item] === PERIOD[read.tf]);assert.equal(read.range.from_server, previous[tf] - 2 * PERIOD[read.tf]); }
   assert.ok(f.checkpoint().heads.M1 > previous.M1);assert.equal(f.scheduled.size, 1);
 });
@@ -137,7 +150,7 @@ test('failed delta does not advance its head and retries the same missing tail',
 test('overlapping delta calls share one serial operation without duplicate reads', async () => {
   let block = false, release, heldPage;const f = fixture({ read(page) { if (block && page.tf === '1m') { heldPage = page;return new Promise((resolve) => { release = resolve; }); }return page; } });
   await f.sync.start();f.advance(60000);const count = f.reads.length;block = true;const a = f.sync.delta(), b = f.sync.delta();await flush();assert.equal(f.reads.length, count + 1);
-  block = false;release(heldPage);await Promise.all([a, b]);assert.equal(f.reads.length, count + 4);
+  block = false;release(heldPage);await Promise.all([a, b]);assert.equal(f.reads.length, count + 7);
 });
 test('stop cancels in-flight reads, late uploads and the minute timer', async () => {
   let release, heldPage;const f = fixture({ read(page) { heldPage = page;return new Promise((resolve) => { release = resolve; }); } });

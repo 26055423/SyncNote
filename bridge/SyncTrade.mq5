@@ -3,7 +3,7 @@
 // No MT5 password/account credential is read, accepted from the web, or uploaded.
 // Trading requires local pairing consent and durable journals; account-type and quota gates are disabled.
 #property copyright "SyncTrade"
-#property version "1.112"
+#property version "1.113"
 #property strict
 #property description "Windows localhost EA. Local pairing consent required; no account-type or quota gates."
 
@@ -40,7 +40,7 @@ input int InpTickPushMs=15;                            // Minimum gap between qu
 input int InpPanelScale=200;                           // On-chart panel scale in % (100..300); 200 = double size
 
 #define LOCAL_PORT 18765
-#define LOCAL_VERSION "1.112"
+#define LOCAL_VERSION "1.113"
 // Only account-type and volume/exposure/daily quotas are removed. Other protections remain.
 #define LOCAL_NO_QUOTAS true
 #define JOURNAL_MAX 10000
@@ -547,6 +547,7 @@ void SendSnapshot(const int peer)
 ENUM_TIMEFRAMES LocalTf(const string tf)
 {
    if(tf=="1m") return PERIOD_M1;if(tf=="5m") return PERIOD_M5;if(tf=="15m") return PERIOD_M15;if(tf=="1h") return PERIOD_H1;
+   if(tf=="30m") return PERIOD_M30;if(tf=="4h") return PERIOD_H4;if(tf=="1d") return PERIOD_D1;
    return PERIOD_CURRENT;
 }
 void BeginBars(const int peer,const string js)
@@ -673,8 +674,8 @@ void PumpBars()
 }
 void SendCurrentBars(const int peer)
 {
-   string names[]={"1m","5m","15m","1h"};
-   for(int i=0;i<4;i++)
+   string names[]={"1m","5m","15m","1h","30m","4h","1d"};
+   for(int i=0;i<7;i++)
    {
       ENUM_TIMEFRAMES tf=LocalTf(names[i]);
       if(!SeriesInfoInteger(g_symbol,tf,SERIES_SYNCHRONIZED)) continue;

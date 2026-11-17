@@ -12,6 +12,7 @@ class RangeLoading(unittest.TestCase):
   support=r'''
 using ENUM_TIMEFRAMES=int;
 constexpr int PERIOD_CURRENT=0,SERIES_SYNCHRONIZED=1,SYMBOL_DIGITS=99;
+constexpr int PERIOD_M1=60,PERIOD_M5=300,PERIOD_M15=900,PERIOD_M30=1800,PERIOD_H1=3600,PERIOD_H4=14400,PERIOD_D1=86400;
 struct MqlRates{std::int64_t time;double open=10,high=11,low=9,close=10;std::int64_t tick_volume=1;};
 struct Peer{bool authenticated=true;std::vector<int> tx;int tx_offset=0;}g_local_peers[1];
 struct HistoryJob{bool active=false;}g_history_job;
@@ -21,7 +22,6 @@ constexpr int ERR_HISTORY_NOT_FOUND=4401;
 void ResetLastError(){}
 bool SNHistoryRangeEmpty(const string&,int,std::int64_t,std::int64_t){return count_result==0;}
 bool SymbolSelect(const string&,bool){return true;}
-int LocalTf(const string& tf){return tf=="1m"?60:0;}
 int PeriodSeconds(int tf){return tf;}
 bool SeriesInfoInteger(const string&,int,int){return synced;}
 void LocalError(int,const string& code,const string&,const string&="");
@@ -41,13 +41,13 @@ int main(int argc,char** argv){
 }
 '''
   cls.temp=tempfile.TemporaryDirectory();cls.addClassCleanup(cls.temp.cleanup);folder=Path(cls.temp.name);cpp=folder/'range.cpp';cls.exe=folder/'range.exe'
-  cpp.write_text('\n'.join([(ROOT/'tests/cpp/synctrade_runtime.hpp').read_text(),cpp_source((ROOT/'bridge/SyncNoteLocalJson.mqh').read_text(encoding='utf-8-sig')),support,cpp_source(struct),'LocalBarsJob g_bars_job;',cpp_source(function(source,'BeginBars')),cpp_source(function(source,'PumpBars')),main]),encoding='utf-8')
+  cpp.write_text('\n'.join([(ROOT/'tests/cpp/synctrade_runtime.hpp').read_text(),cpp_source((ROOT/'bridge/SyncNoteLocalJson.mqh').read_text(encoding='utf-8-sig')),support,cpp_source(struct),'LocalBarsJob g_bars_job;',cpp_source(function(source,'LocalTf')),cpp_source(function(source,'BeginBars')),cpp_source(function(source,'PumpBars')),main]),encoding='utf-8')
   command,env,msvc=compiler_environment();command+=([str(cpp),'/Fe:'+str(cls.exe),'/Fo:'+str(folder/'range.obj')] if msvc else [str(cpp),'-o',str(cls.exe)])
   result=subprocess.run(command,env=env,cwd=folder,capture_output=True,text=True)
   if result.returncode:raise AssertionError(result.stdout+result.stderr)
- def read(self,kind='range',ranged=True):
-  body={'request_id':'range-1','symbol':'NAS100','tf':'1m','limit':2000 if ranged else 300}
-  if ranged:body.update(from_server=60000,to_server=60120)
+ def read(self,kind='range',ranged=True,tf='1m',seconds=60):
+  body={'request_id':'range-1','symbol':'NAS100','tf':tf,'limit':2000 if ranged else 300}
+  if ranged:body.update(from_server=seconds*1000,to_server=seconds*1002)
   return json.loads(subprocess.run([str(self.exe),kind],input=json.dumps(body),capture_output=True,text=True,check=True).stdout)
  def test_explicit_range_loads_unready_history_without_clipping_requested_start(self):
   result=self.read();self.assertTrue(result['queued']);self.assertEqual(result['from'],60000);self.assertEqual(result['response']['bars'][0][0],60000)
@@ -56,4 +56,11 @@ int main(int argc,char** argv){
  def test_empty_range_is_distinct_from_history_not_ready(self):
   self.assertEqual(self.read('empty')['response']['bars'],[])
   self.assertEqual(self.read('unavailable')['error'],'HISTORY_UNAVAILABLE')
+ def test_all_native_periods_keep_the_broker_wall_opening(self):
+  for tf,seconds in [('1m',60),('5m',300),('15m',900),('1h',3600),('30m',1800),('4h',14400),('1d',86400)]:
+   with self.subTest(tf=tf):
+    result=self.read(tf=tf,seconds=seconds)
+    self.assertTrue(result['queued'])
+    self.assertEqual(result['response']['tf'],tf)
+    self.assertEqual(result['response']['bars'][0][0],seconds*1000)
 if __name__=='__main__':unittest.main()

@@ -1,6 +1,6 @@
 import type { BaseTimeframe, ReviewCharts } from './vela/provider';
 
-export const BASE_SECONDS: Record<BaseTimeframe, number> = { M1: 60, M5: 300, M15: 900, H1: 3600 };
+export const BASE_SECONDS: Record<BaseTimeframe, number> = { M1: 60, M5: 300, M15: 900, H1: 3600, M30: 1800, H4: 14400, D1: 86400 };
 
 function lowerBound(rows: number[][], time: number): number {
   let left = 0, right = rows.length;

@@ -27,8 +27,8 @@ interface Dependencies {
   schedule?: (callback: () => void, delay: number) => number;
   cancelSchedule?: (id: number) => void;
 }
-const periods: Record<string, number> = { M1: 60, M5: 300, M15: 900, H1: 3600 };
-const wire: Record<string, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
+const periods: Record<string, number> = { M1: 60, M5: 300, M15: 900, H1: 3600, M30: 1800, H4: 14400, D1: 86400 };
+const wire: Record<string, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h', M30: '30m', H4: '4h', D1: '1d' };
 const settled = new Set(['completed', 'rejected']);
 const sessionKey = (state: LocalTerminalState) => [state.instance_id, state.account_id, state.server, state.epoch, state.symbol].join('\n');
 const fresh = (): LocalRangeState => ({ phase: 'idle', message: '', jobId: null, segments: 0, lastUpdated: null });

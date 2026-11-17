@@ -104,13 +104,13 @@ const freshState = (): LocalTerminalState => ({
   latency: null, account: {}, tick: null, quote_sessions: null,
   positions: [], orders: [], bars: {}, history_ready: false, commands: [], revision: 0,
 });
-const TF_SECONDS: Record<string, number> = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600 };
+const TF_SECONDS: Record<string, number> = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '30m': 1800, '4h': 14400, '1d': 86400 };
 /** 初次连上时每个周期预取多少根:EA 的 range 模式一次最多 2000 个周期槽。 */
 // 留 10 根余量:EA 会按周期对齐起点,正好 2000 槽时可能多出一根被判超限。
 const HISTORY_SLOTS = 1990;
 const terminalStates = new Set(['completed', 'rejected']);
 const unresolvedStates = new Set(['sending', 'received', 'submitted', 'uncertain', 'not_found']);
-const tfKeys = new Set(['1m', '5m', '15m', '1h']);
+const tfKeys = new Set(['1m', '5m', '15m', '1h', '30m', '4h', '1d']);
 
 function parseQuoteSessions(value: unknown, previous: QuoteSession[] | null = null): QuoteSession[] | null {
   if (!Array.isArray(value) || !value.length || value.length > 224) return null;

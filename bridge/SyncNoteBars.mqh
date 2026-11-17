@@ -3,20 +3,21 @@
 #define SYNCNOTE_BARS_V2
 #include "SyncNoteJson.mqh"
 #define SNB_GAP_LIMIT 256
+#define SNB_TF_COUNT 7
 #define SNB_RECENT_SECONDS 604800
 #define SNB_SCAN 0
 #define SNB_DELTA 1
 #define SNB_REPAIR 2
-int SNBarsTfSeconds(const int idx){int s[]={60,300,900,3600};return s[idx];}
-string SNBarsTfName(const int idx){string n[]={"M1","M5","M15","H1"};return n[idx];}
+int SNBarsTfSeconds(const int idx){int s[]={60,300,900,3600,1800,14400,86400};return s[idx];}
+string SNBarsTfName(const int idx){string n[]={"M1","M5","M15","H1","M30","H4","D1"};return n[idx];}
 
 class CSyncNoteBars
 {
 private:
  string m_scope,m_account,m_server,m_symbol;
- long m_scan[4],m_tail[4],m_delta[4],m_retry[4],m_repair[4],m_probe[4],m_seen[4];
- long m_from[4][SNB_GAP_LIMIT],m_to[4][SNB_GAP_LIMIT];
- int m_count[4],m_last[4],m_round;
+ long m_scan[SNB_TF_COUNT],m_tail[SNB_TF_COUNT],m_delta[SNB_TF_COUNT],m_retry[SNB_TF_COUNT],m_repair[SNB_TF_COUNT],m_probe[SNB_TF_COUNT],m_seen[SNB_TF_COUNT];
+ long m_from[SNB_TF_COUNT][SNB_GAP_LIMIT],m_to[SNB_TF_COUNT][SNB_GAP_LIMIT];
+ int m_count[SNB_TF_COUNT],m_last[SNB_TF_COUNT],m_round;
  long Floor(const int tf,const long now){int p=SNBarsTfSeconds(tf);return ((MathMax(1,now-SNB_RECENT_SECONDS)+p-1)/p)*p;}
  long Target(const int tf,const long now){int p=SNBarsTfSeconds(tf);return now/p*p-p;}
  void Remove(const int tf,const int at)
@@ -48,7 +49,7 @@ public:
  void Begin(const string scope,const string account,const string server,const string symbol,const long now)
  {
   m_scope=scope;m_account=account;m_server=server;m_symbol=symbol;m_round=0;
-  for(int tf=0;tf<4;tf++)
+  for(int tf=0;tf<SNB_TF_COUNT;tf++)
   {
    m_count[tf]=0;m_scan[tf]=Target(tf,now);m_seen[tf]=m_scan[tf];m_tail[tf]=0;m_probe[tf]=0;
    m_delta[tf]=now+60;m_retry[tf]=0;m_repair[tf]=now+600;m_last[tf]=-1;
@@ -57,9 +58,9 @@ public:
  }
  bool Next(const long now,int &tf,long &from,long &to,int &kind)
  {
-  for(int n=0;n<4;n++)
+  for(int n=0;n<SNB_TF_COUNT;n++)
   {
-   int i=(m_round+n)%4;Refresh(i,now);int p=SNBarsTfSeconds(i);long floor=Floor(i,now),target=Target(i,now);
+   int i=(m_round+n)%SNB_TF_COUNT;Refresh(i,now);int p=SNBarsTfSeconds(i);long floor=Floor(i,now),target=Target(i,now);
    bool scan=m_scan[i]>=floor&&now>=m_retry[i];
    bool repair=m_scan[i]<floor&&m_count[i]>0&&now>=m_repair[i];
    bool delta=now>=m_delta[i];
@@ -79,7 +80,7 @@ public:
    }
    else continue;
    if(to<from)continue;
-   tf=i;m_last[i]=kind;m_round=(i+1)%4;return true;
+   tf=i;m_last[i]=kind;m_round=(i+1)%SNB_TF_COUNT;return true;
   }
   return false;
  }
@@ -112,15 +113,15 @@ public:
   else if(kind==SNB_REPAIR){m_probe[tf]=from-SNBarsTfSeconds(tf);m_repair[tf]=now+600;}
   else m_delta[tf]=now+60;
  }
- bool InitialChecked(const long now){for(int i=0;i<4;i++)if(m_scan[i]>=Floor(i,now))return false;return true;}
- int Gaps(){int n=0;for(int i=0;i<4;i++)n+=m_count[i];return n;}
+ bool InitialChecked(const long now){for(int i=0;i<SNB_TF_COUNT;i++)if(m_scan[i]>=Floor(i,now))return false;return true;}
+ int Gaps(){int n=0;for(int i=0;i<SNB_TF_COUNT;i++)n+=m_count[i];return n;}
  long ScanCursor(const int tf){return m_scan[tf];}
  long Tail(const int tf){return m_tail[tf];}
  bool Unconfirmed(const int tf,const long stamp){for(int j=0;j<m_count[tf];j++)if(m_from[tf][j]<=stamp&&m_to[tf][j]>=stamp)return true;return false;}
  string State()
  {
-  string b="SYNCNOTE_BARS_2\n"+m_scope+"\n"+m_account+"\n"+m_server+"\n"+m_symbol+"\n";
-  for(int i=0;i<4;i++)
+  string b="SYNCNOTE_BARS_3\n"+m_scope+"\n"+m_account+"\n"+m_server+"\n"+m_symbol+"\n";
+  for(int i=0;i<SNB_TF_COUNT;i++)
   {
    b+=IntegerToString(m_scan[i])+"\n"+IntegerToString(m_tail[i])+"\n"+IntegerToString(m_seen[i])+"\n"+IntegerToString(m_probe[i])+"\n"+IntegerToString(m_count[i])+"\n";
    for(int j=0;j<m_count[i];j++)b+=IntegerToString(m_from[i][j])+"\n"+IntegerToString(m_to[i][j])+"\n";
@@ -129,12 +130,12 @@ public:
  }
  bool Load(const string text,const long now)
  {
-  string f[];int count=StringSplit(text,'\n',f);if(count<27||f[count-1]!="")return false;
-  if(f[0]!="SYNCNOTE_BARS_2"||f[1]!=m_scope||f[2]!=m_account||f[3]!=m_server||f[4]!=m_symbol)return false;
+  string f[];int count=StringSplit(text,'\n',f);if(count<7+5*SNB_TF_COUNT||f[count-1]!="")return false;
+  if(f[0]!="SYNCNOTE_BARS_3"||f[1]!=m_scope||f[2]!=m_account||f[3]!=m_server||f[4]!=m_symbol)return false;
   string b="";for(int i=0;i<count-2;i++)b+=f[i]+"\n";if(SNJHash(b)!=f[count-2])return false;
   // Validate the whole checkpoint before touching any live progress.
   int at=5;long v;
-  for(int tf=0;tf<4;tf++)
+  for(int tf=0;tf<SNB_TF_COUNT;tf++)
   {
    for(int j=0;j<4;j++){if(at>=count-2||!SNJSignedPositive(f[at++],v)||v>now)return false;}
    if(at>=count-2||!SNJSignedPositive(f[at++],v)||v>SNB_GAP_LIMIT)return false;
@@ -148,7 +149,7 @@ public:
   }
   if(at!=count-2)return false;
   at=5;
-  for(int tf=0;tf<4;tf++)
+  for(int tf=0;tf<SNB_TF_COUNT;tf++)
   {
    SNJSignedPositive(f[at++],m_scan[tf]);SNJSignedPositive(f[at++],m_tail[tf]);SNJSignedPositive(f[at++],m_seen[tf]);SNJSignedPositive(f[at++],m_probe[tf]);
    SNJSignedPositive(f[at++],v);m_count[tf]=(int)v;
@@ -230,7 +231,7 @@ bool g_sn_bf_inited=false;
 ulong g_sn_bf_next=0;
 int g_sn_bf_tf=-1,g_sn_bf_kind=0;
 long g_sn_bf_from=0,g_sn_bf_to=0;
-ENUM_TIMEFRAMES SNBarsTfPeriod(const int idx){ENUM_TIMEFRAMES p[]={PERIOD_M1,PERIOD_M5,PERIOD_M15,PERIOD_H1};return p[idx];}
+ENUM_TIMEFRAMES SNBarsTfPeriod(const int idx){ENUM_TIMEFRAMES p[]={PERIOD_M1,PERIOD_M5,PERIOD_M15,PERIOD_H1,PERIOD_M30,PERIOD_H4,PERIOD_D1};return p[idx];}
 bool SNBarsSaveState()
 {
  string temp=g_sn_bf_state_path+".next";
@@ -243,7 +244,7 @@ void SNBarsInit(const string scope)
  string schedule_scope=scope+"-"+SNJHash(g_sn_bars_schedule);
  g_sn_bars.Begin(schedule_scope,g_sn_account,g_sn_server,g_sn_bars_symbol,now);
  g_sn_bf_tf=-1;
- g_sn_bf_state_path="SyncNote\\bars-v3-"+StringSubstr(SNJHash(schedule_scope+"\n"+g_sn_key+"\n"+g_sn_bars_symbol),0,40)+".state";
+ g_sn_bf_state_path="SyncNote\\bars-v4-"+StringSubstr(SNJHash(schedule_scope+"\n"+g_sn_key+"\n"+g_sn_bars_symbol),0,40)+".state";
  // The checkpoint is scoped to the schedule used to confirm regular closures.
  if(FileIsExist(g_sn_bf_state_path))
  {

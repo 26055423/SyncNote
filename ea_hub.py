@@ -42,7 +42,7 @@ class Session:
         self.account = {}
         self.positions = []
         self.orders = []
-        self.bars = {tf: deque(maxlen=MAX_BARS) for tf in ('1m', '5m', '15m', '1h')}
+        self.bars = {tf: deque(maxlen=MAX_BARS) for tf in ('1m', '5m', '15m', '1h', '30m', '4h', '1d')}
         self.deals = {}
         self.history = {}
         self.events = []
@@ -377,7 +377,7 @@ class Hub:
         if not cached.get('1m'):
             return None
         charts, errors = {}, {}
-        for name, tf, seconds in (('M1', '1m', 60), ('M5', '5m', 300), ('M15', '15m', 900), ('H1', '1h', 3600)):
+        for name, tf, seconds in (('M1', '1m', 60), ('M5', '5m', 300), ('M15', '15m', 900), ('H1', '1h', 3600), ('M30', '30m', 1800), ('H4', '4h', 14400), ('D1', '1d', 86400)):
             rows = [b for b in cached.get(tf, []) if opened_server - 30 * seconds <= b.get('bar_time', 0) <= closed_server + 30 * seconds]
             reason = ''
             if len(rows) > 2000:

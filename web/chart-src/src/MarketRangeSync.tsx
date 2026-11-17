@@ -104,7 +104,7 @@ export function MarketRangeSync({ symbol, transport = 'syncnote', getLocalContex
     : job && job.total_segments > 0 ? Math.min(100, Math.floor(job.processed_segments / job.total_segments * 100)) : 0;
   return <section className="market-range-sync" aria-labelledby={`${id}-heading`}>
     <div className="market-range-head"><h3 id={`${id}-heading`}>同步行情</h3><span>{symbol}</span></div>
-    <p className="market-range-intro">{local ? '选择区间，通过已授权的 SyncTrade 本机连接读取并同步四周期 K 线。' : '选择区间，由已授权的 SyncNote 获取该品种的四周期 K 线。'}</p>
+    <p className="market-range-intro">{local ? '选择区间，通过已授权的 SyncTrade 本机连接读取并同步七周期 K 线（1m、5m、15m、30m、1h、4h、日线）。' : '选择区间，由已授权的 SyncNote 获取该品种的七周期 K 线（1m、5m、15m、30m、1h、4h、日线）。'}</p>
     <form onSubmit={async (event) => {
       event.preventDefault();
       if (busy || loading || waiting || !symbol) return;

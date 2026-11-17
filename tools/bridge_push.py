@@ -25,7 +25,7 @@ _REPO_DB = str(Path(__file__).resolve().parents[1] / 'bridge' / 'ea_bridge.db')
 # 优先用仓库内的 bridge 数据库；还没迁过去时回退到旧路径，保证现有网关不中断。
 DEFAULT_DB = os.environ.get('EA_BRIDGE_DB') or (_REPO_DB if os.path.exists(_REPO_DB) else _LEGACY_DB)
 STATE_FILE = Path(__file__).with_name('bridge_push_state.json')
-TIMEFRAMES = (('M1', '1m', 60), ('M5', '5m', 300), ('M15', '15m', 900), ('H1', '1h', 3600))
+TIMEFRAMES = (('M1', '1m', 60), ('M5', '5m', 300), ('M15', '15m', 900), ('H1', '1h', 3600), ('M30', '30m', 1800), ('H4', '4h', 14400), ('D1', '1d', 86400))
 
 
 def request_json(url, data=None, token=None, timeout=15):
@@ -213,7 +213,7 @@ def push_live(bridge, syncnote, token, state):
         } if tick else None,
         'bars': {},
     }
-    for tf in ('1m', '5m', '15m', '1h'):
+    for tf in ('1m', '5m', '15m', '1h', '30m', '4h', '1d'):
         data = request_json('%s/api/bars?tf=%s&limit=%d' % (bridge, tf, limit))[1]
         rows = []
         for bar in data.get('bars') or []:

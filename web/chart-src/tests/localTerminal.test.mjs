@@ -247,6 +247,11 @@ test('history errors and read timeouts advance bootstrap without replaying a tra
   socket.emit({ type: 'bars', tf: '15m', request_id: socket.sent.at(-1).request_id, bars: [[100, 1, 2, 1, 2]] });
   assert.equal(socket.sent.at(-1).tf, '1h');
   socket.emit({ type: 'bars', tf: '1h', request_id: socket.sent.at(-1).request_id, bars: [[100, 1, 2, 1, 2]] });
+  for (const tf of ['30m', '4h', '1d']) {
+    assert.equal(client.getSnapshot().history_ready, false);
+    assert.equal(socket.sent.at(-1).tf, tf);
+    socket.emit({ type: 'bars', tf, request_id: socket.sent.at(-1).request_id, bars: [[100, 1, 2, 1, 2]] });
+  }
   assert.equal(client.getSnapshot().history_ready, true);
   assert.equal(socket.sent.filter((row) => row.type === 'command').length, 0);
 });
@@ -547,7 +552,7 @@ test('command expiry uses the EA clock sample and the same request keeps its ID'
 test('note history reads use broker ranges and cancel without issuing any trading command', async () => {
   const { client, connect } = fixture();
   const socket = connect('1001', { features: ['history'], product: 'SyncTrade', server_offset_sec: 10800 });
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 7; index += 1) {
     const request = socket.sent.at(-1);
     socket.emit({ type: 'bars', request_id: request.request_id, tf: request.tf, bars: [[100, 1, 2, 1, 2]] });
   }
@@ -569,7 +574,7 @@ test('note history reads use broker ranges and cancel without issuing any tradin
 test('review range bars are returned to the note job without overwriting live-chart UTC cache', async () => {
   const { client, connect } = fixture();
   const socket = connect('1001', { features: ['history'], product: 'SyncTrade' });
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 7; index += 1) {
     const request = socket.sent.at(-1);
     socket.emit({ type: 'bars', request_id: request.request_id, tf: request.tf, bars: [[100, 1, 2, 1, 2]] });
   }
@@ -586,7 +591,7 @@ test('review range bars are returned to the note job without overwriting live-ch
 function olderHistoryFixture() {
   const setup = fixture();
   const socket = setup.connect('1001', { features: ['history'], product: 'SyncTrade', server_offset_sec: 10800 });
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 7; index += 1) {
     const request = socket.sent.at(-1);
     socket.emit({ type: 'bars', request_id: request.request_id, tf: request.tf, bars: [[100, 1, 2, 1, 2]] });
   }

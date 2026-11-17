@@ -140,10 +140,10 @@ snh1|range_from|range_to|slice_from|slice_to|after_time_msc|after_deal_ticket
 {"review_job":{"ticket":"deal:<account prefix>:<deal ticket>","symbol":"XAUUSD","opened_server":1793487600,"closed_server":1793491200,"account":"<login>","server":"<server>","source_account_key":"<key>"}}
 ```
 
-复盘 ticket 是网站不透明标识，最多 120 字符且不能有控制字符；不能把它转为 MT5 ticket。SyncNote 对 job 中如有的账户/服务器/key 作精确绑定检查。根据已确定窗口读取 M1/M5/M15/H1 的前后 30 根，单周期最多 2000 根，再向 `/api/mt5/review` POST：
+复盘 ticket 是网站不透明标识，最多 120 字符且不能有控制字符；不能把它转为 MT5 ticket。SyncNote 对 job 中如有的账户/服务器/key 作精确绑定检查。根据已确定窗口读取 M1/M5/M15/M30/H1/H4/D1 的前后 30 根，单周期最多 2000 根，再向 `/api/mt5/review` POST：
 
 ```json
-{"ticket":"deal:<account prefix>:<deal ticket>","account_key":"<key>","account":"<login>","server":"<server>","opened_server":1793487600,"closed_server":1793491200,"charts":{"M1":[],"M5":[],"M15":[],"H1":[]},"errors":{"M1":"","M5":"","M15":"","H1":""}}
+{"ticket":"deal:<account prefix>:<deal ticket>","account_key":"<key>","account":"<login>","server":"<server>","opened_server":1793487600,"closed_server":1793491200,"charts":{"M1":[],"M5":[],"M15":[],"M30":[],"H1":[],"H4":[],"D1":[]},"errors":{"M1":"","M5":"","M15":"","M30":"","H1":"","H4":"","D1":""}}
 ```
 
 K 线每根 `[服务器秒,open,high,low,close]`；未换算 UTC。服务端结合保存的交易时间口径处理。range_too_long、symbol_unavailable、history_unavailable 等逐周期返回，不伪造图表。三次历史未就绪尝试后上报明确错误；HTTP 上传失败不回滚历史 ACK，云端保留 pending job 下次继续。
@@ -159,7 +159,7 @@ K 线每根 `[服务器秒,open,high,low,close]`；未换算 UTC。服务端结�
 
 ## 7. 只读区间 K 线任务（SyncNote 1.016）
 
-网页在认证账号下创建品种和 UTC 区间任务；服务器绑定当前 MT5 账户与凭据，并仅在时间统一换算处转换为券商墙钟。EA 首次历史 ACK 后使用现有 Bearer 轮询 `POST /api/mt5/bar-sync/poll`，请求体为 `{account,account_key,server}`。响应 `{ok:true,job:null}` 表示当前无待办，否则 job 为 `{job_id,segment_id,account,account_key,server,symbol,tf,from_server,to_server}`。每段最多 2000 个对齐周期槽，tf 为 M1/M5/M15/H1，且均为已收盘范围。
+网页在认证账号下创建品种和 UTC 区间任务；服务器绑定当前 MT5 账户与凭据，并仅在时间统一换算处转换为券商墙钟。EA 首次历史 ACK 后使用现有 Bearer 轮询 `POST /api/mt5/bar-sync/poll`，请求体为 `{account,account_key,server}`。响应 `{ok:true,job:null}` 表示当前无待办，否则 job 为 `{job_id,segment_id,account,account_key,server,symbol,tf,from_server,to_server}`。每段最多 2000 个对齐周期槽，tf 为 M1/M5/M15/M30/H1/H4/D1，且均为已收盘范围。
 
 EA 对请求品种 `SymbolSelect` 后通过 `CopyRates` 读取，未就绪最多每 5 秒尝试一次、共 12 次；已返回空或部分范围最多尝试 3 次，再提交 `POST /api/mt5/bar-sync/result`。请求包含同一身份、job_id、segment_id、symbol、tf、from_server、to_server、bars 与 error；bars 每行 `[服务器秒,open,high,low,close,volume]`，error 为 `""`、`history_unavailable`、`empty_window` 或 `partial_window`。不上传未收盘行，不推断休市时间。
 

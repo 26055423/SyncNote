@@ -107,7 +107,7 @@ coalesces them for browser clients to at most 10 per second per client.
 ```
 
 * `bar_time` is the **bar open time**, Unix seconds.
-* `tf` is one of `1m`, `5m`, `15m`, `1h` (v1 gateway defaults).
+* `tf` is one of `1m`, `5m`, `15m`, `1h` (legacy v1 gateway defaults; the current gateway also accepts 30m, 4h, 1d).
 * `closed:false` updates the still-forming bar in place.
 * `closed:true` is final. A closed bar is written to SQLite by the gateway as soon
   as it is received. Later `closed:false` updates for that same `bar_time` are ignored.

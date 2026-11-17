@@ -39,8 +39,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 LOG = logging.getLogger("ea_bridge")
 
 PROTOCOL_VERSION = 1
-SUPPORTED_TFS: tuple[str, ...] = ("1m", "5m", "15m", "1h")
-TF_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+SUPPORTED_TFS: tuple[str, ...] = ("1m", "5m", "15m", "1h", "30m", "4h", "1d")
+TF_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "30m": 1800, "4h": 14400, "1d": 86400}
 HANDSHAKE_TIMEOUT = 5.0
 HEARTBEAT_TIMEOUT = 5.0
 COMMAND_TIMEOUT = 10.0

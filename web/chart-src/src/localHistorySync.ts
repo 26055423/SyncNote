@@ -314,7 +314,7 @@ export class LocalHistorySync {
       }
       if (!Number.isFinite(job.opened_server) || !Number.isFinite(job.closed_server) || job.opened_server <= 0 || job.closed_server < job.opened_server || !job.symbol) throw new Error('复盘任务时间范围无效。');
       const charts: Record<string, number[][]> = {}, errors: Record<string, string> = {};
-      for (const [name, tf, seconds] of [['M1', '1m', 60], ['M5', '5m', 300], ['M15', '15m', 900], ['H1', '1h', 3600]] as const) {
+      for (const [name, tf, seconds] of [['M1', '1m', 60], ['M5', '5m', 300], ['M15', '15m', 900], ['H1', '1h', 3600], ['M30', '30m', 1800], ['H4', '4h', 14400], ['D1', '1d', 86400]] as const) {
         if (!this.active(generation)) return;
         const terminal = this.dependencies.terminal.getSnapshot();
         if (terminal.commands.some((command) => command.account_id === terminal.account_id && command.server === terminal.server && ['sending', 'received', 'submitted'].includes(command.state))) {
@@ -357,7 +357,7 @@ export class LocalHistorySync {
         account_key: checkpoint.account_key, ticket: String(job.ticket), opened_server: job.opened_server, closed_server: job.closed_server, charts, errors }, signal);
       if (!this.active(generation)) return;
       if (ack.ok !== true) throw new Error('网站未确认复盘图。');
-      this.update({ reviews: this.state.reviews + 1, review_message: Object.values(errors).some(Boolean) ? '复盘图已同步；缺少历史或范围过长的周期已明确标记。' : '四周期复盘图已同步，可在笔记中查看与分享。' });
+      this.update({ reviews: this.state.reviews + 1, review_message: Object.values(errors).some(Boolean) ? '复盘图已同步；缺少历史或范围过长的周期已明确标记。' : '七周期复盘图已同步，可在笔记中查看与分享。' });
     } catch (error) {
       if (this.active(generation)) this.update({ review_message: `历史已同步，复盘图稍后再试：${error instanceof Error ? error.message : String(error)}` });
     }

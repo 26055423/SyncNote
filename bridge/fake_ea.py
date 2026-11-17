@@ -20,7 +20,7 @@ from typing import Any
 
 LOG = logging.getLogger("fake_ea")
 
-TFS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+TFS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "30m": 1800, "4h": 14400, "1d": 86400}
 
 
 @dataclass

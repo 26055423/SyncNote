@@ -32,7 +32,7 @@ XAUUSD 图表上，`InpHost=127.0.0.1`、`InpPort=8788`、`InpToken` 与网关�
 |---|---|
 | `GET /api/health` | EA 连接状态、行情缓冲大小、服务器时区偏移 |
 | `GET /api/latest` | 最新 tick + 各周期最后一根 bar + 账户 |
-| `GET /api/bars?tf=1m&limit=500` | 历史 K 线（`1m/5m/15m/1h`） |
+| `GET /api/bars?tf=1m&limit=500` | 历史 K 线（`1m/5m/15m/1h/30m/4h/1d`） |
 | `GET /api/account`、`/api/positions`、`/api/orders` | 账户与持仓 |
 | `POST /api/orders` 等 | 下单/平仓/改单（谨慎使用） |
 | `WS /ws` | 实时 tick / bar / 成交推送 |

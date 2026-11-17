@@ -38,7 +38,7 @@ input int    InpPort            = 8788;          // Gateway EA port
 input string InpToken           = "change-me-before-use"; // Shared token
 input string InpSymbol          = "XAUUSD";      // Dedicated symbol
 input bool   InpSendTicks       = true;          // Send ticks
-input string InpBarPeriods      = "1m,5m,15m,1h";// Timeframes
+input string InpBarPeriods      = "1m,5m,15m,1h,30m,4h,1d";// Timeframes
 input int    InpSnapshotBars    = 500;           // Snapshot bars per TF
 
 //--- operational inputs (safe defaults) ------------------------------
@@ -1557,9 +1557,15 @@ bool AddTimeframe(const string raw)
       tf = PERIOD_M15;
    else if(name == "1h")
       tf = PERIOD_H1;
+   else if(name == "30m")
+      tf = PERIOD_M30;
+   else if(name == "4h")
+      tf = PERIOD_H4;
+   else if(name == "1d")
+      tf = PERIOD_D1;
    else
    {
-      Print("WebBridge: unsupported timeframe (v1 supports 1m,5m,15m,1h): ", name);
+      Print("WebBridge: unsupported timeframe (v1 supports 1m,5m,15m,1h,30m,4h,1d): ", name);
       return false;
    }
    int count = ArraySize(g_tfs);

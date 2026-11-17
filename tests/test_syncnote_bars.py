@@ -18,7 +18,7 @@ int main(int argc,char** argv){try{
  string scenario=argc>1?argv[1]:"";CSyncNoteBars b;init(b);
  int tf,kind;std::int64_t from,to;
  if(scenario=="fair"){
-  for(int i=0;i<4;i++){
+  for(int i=0;i<SNB_TF_COUNT;i++){
    require(b.Next(NOW,tf,from,to,kind)&&tf==i&&kind==SNB_SCAN,"initial timeframes starved");
    require(from>=NOW-SNB_RECENT_SECONDS&&to<NOW,"request escaped recent closed bars");
    require((to-from)/SNBarsTfSeconds(tf)+1<=2000,"page exceeds 2000 rows");
@@ -27,14 +27,14 @@ int main(int argc,char** argv){try{
   require(!b.Next(NOW,tf,from,to,kind),"failed frame retries without cooldown");
  }
  else if(scenario=="bounded_empty"){
-  int pages[4]={0,0,0,0},attempts=0;
+  int pages[SNB_TF_COUNT]={0},attempts=0;
   while(b.Next(NOW,tf,from,to,kind)){
    require(kind==SNB_SCAN,"unexpected initial work kind");pages[tf]++;attempts++;
    b.Acknowledged(tf,kind,from,NOW);require(attempts<20,"scan never completes");
   }
   require(b.InitialChecked(NOW),"initial bounded checking did not finish");
-  require(pages[0]==6&&pages[1]==2&&pages[2]==1&&pages[3]==1,"wrong bounded scan depth");
-  require(b.Gaps()==4,"empty read fabricated known closure");
+  require(pages[0]==6&&pages[1]==2&&pages[2]==1&&pages[3]==1&&pages[4]==1&&pages[5]==1&&pages[6]==1,"wrong bounded scan depth");
+  require(b.Gaps()==SNB_TF_COUNT,"empty read fabricated known closure");
   require(b.Tail(0)==0,"empty read advanced confirmed tail");
  }
  else if(scenario=="partial"){
@@ -51,24 +51,24 @@ int main(int argc,char** argv){try{
  }
  else if(scenario=="weekend"){
   while(b.Next(NOW,tf,from,to,kind))b.Acknowledged(tf,kind,from,NOW);
-  auto later=NOW+3*86400;int seen[4]={0,0,0,0};
-  for(int i=0;i<4;i++){
+  auto later=NOW+3*86400;int seen[SNB_TF_COUNT]={0};
+  for(int i=0;i<SNB_TF_COUNT;i++){
    require(b.Next(later,tf,from,to,kind)&&kind==SNB_DELTA,"old weekend gap blocked current delta");seen[tf]++;
    int p=SNBarsTfSeconds(tf);require(to==later/p*p-p&&from>=to-1999*p,"delta did not target current head");
    b.Confirm(tf,to-2*p,to);b.Acknowledged(tf,kind,from,later);
   }
-  for(int i=0;i<4;i++)require(seen[i]==1,"delta unfair across timeframes");
+  for(int i=0;i<SNB_TF_COUNT;i++)require(seen[i]==1,"delta unfair across timeframes");
   require(b.Gaps()>0,"new tail erased old weekend uncertainty");
  }
  else if(scenario=="repair"){
   while(b.Next(NOW,tf,from,to,kind))b.Acknowledged(tf,kind,from,NOW);
   auto later=NOW+600;std::int64_t first=0,second=0;int probes=0;
-  for(int i=0;i<8;i++){
+  for(int i=0;i<2*SNB_TF_COUNT;i++){
    require(b.Next(later,tf,from,to,kind),"missing delayed work");
    if(tf==0&&kind==SNB_REPAIR){first=to;probes++;}b.Acknowledged(tf,kind,from,later);
   }
   require(probes==1,"repair did not receive bounded turn");later+=600;
-  for(int i=0;i<8;i++){
+  for(int i=0;i<2*SNB_TF_COUNT;i++){
    require(b.Next(later,tf,from,to,kind),"missing second delayed work");
    if(tf==0&&kind==SNB_REPAIR){second=to;probes++;}b.Acknowledged(tf,kind,from,later);
   }
@@ -76,13 +76,14 @@ int main(int argc,char** argv){try{
  }
  else if(scenario=="state"){
   b.Next(NOW,tf,from,to,kind);b.Confirm(tf,from+60,from+60);b.Acknowledged(tf,kind,from,NOW);
-  string state=b.State();CSyncNoteBars copy;init(copy);require(copy.Load(state,NOW),"valid v2 state rejected");
+  string state=b.State();CSyncNoteBars copy;init(copy);require(copy.Load(state,NOW),"valid v3 state rejected");
   require(copy.ScanCursor(0)==b.ScanCursor(0)&&!copy.Unconfirmed(0,from+60)&&copy.Unconfirmed(0,from),"checkpoint lost evidence or gap");
   require(copy.Next(NOW,tf,from,to,kind)&&kind==SNB_DELTA,"reconnect did not prioritize fresh current tail");
   for(string field:{"scope","account","server","symbol"}){
    CSyncNoteBars changed;init(changed,NOW,field=="scope"?"other":"scope",field=="account"?"other":"1001",field=="server"?"other":"Synthetic-Demo",field=="symbol"?"other":"XAUUSD");
    require(!changed.Load(state,NOW),"checkpoint scope mismatch accepted");
   }
+  require(!copy.Load("SYNCNOTE_BARS_2\nkey\n",NOW),"old four-period checkpoint resumed");
   require(!copy.Load("SYNCNOTE_BARS_1\nkey\n",NOW),"v1 deep history resumed");
   auto bad=state;bad[bad.size()-3]=bad[bad.size()-3]=='a'?'b':'a';require(!copy.Load(bad,NOW),"bad checksum accepted");
  }
@@ -102,7 +103,7 @@ int main(int argc,char** argv){try{
  }
  else if(scenario=="overflow"){
   b.Next(NOW,tf,from,to,kind);for(int i=1;i<1200;i+=2)b.Confirm(tf,from+i*60,from+i*60);
-  require(b.Gaps()<=SNB_GAP_LIMIT+3,"gap storage exceeds bound");
+  require(b.Gaps()<=SNB_GAP_LIMIT+SNB_TF_COUNT-1,"gap storage exceeds bound");
   for(int i=0;i<1200;i+=2)require(b.Unconfirmed(tf,from+i*60),"fragment overflow erased an unconfirmed minute");
  }
  else if(scenario=="coverage"){
@@ -142,13 +143,13 @@ class SyncNoteBarRuntime(unittest.TestCase):
   result=subprocess.run([str(self.exe),name],capture_output=True,text=True,timeout=15)
   self.assertEqual(result.returncode,0,result.stdout+'\n'+result.stderr)
 
- def test_four_timeframes_fair_even_when_reads_fail(self):self.scenario('fair')
+ def test_seven_timeframes_fair_even_when_reads_fail(self):self.scenario('fair')
  def test_empty_initial_scan_bounded_but_never_claims_complete(self):self.scenario('bounded_empty')
  def test_partial_prefix_internal_and_tail_remain_unconfirmed(self):self.scenario('partial')
  def test_failed_ack_never_advances_progress(self):self.scenario('failed_ack')
  def test_old_weekend_gaps_do_not_block_fresh_delta(self):self.scenario('weekend')
  def test_empty_repair_rotates_segments_with_cooldown(self):self.scenario('repair')
- def test_v2_state_identity_symbol_scope_and_v1_rejection(self):self.scenario('state')
+ def test_v3_state_identity_symbol_scope_and_v1_rejection(self):self.scenario('state')
  def test_strict_ack_validates_existing_and_extended_response(self):self.scenario('ack')
  def test_fragment_overflow_stays_conservative(self):self.scenario('overflow')
  def test_server_coverage_limits_reads_to_actual_missing_candle_slots(self):self.scenario('coverage')

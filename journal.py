@@ -63,7 +63,7 @@ def receive(db,person,data):
   payload.update(opened_server=opened,closed_server=closed)
   charts=data.get('charts',{});errors=data.get('errors',{})
   if not isinstance(charts,dict) or not isinstance(errors,dict):raise JournalError('行情格式不正确')
-  for tf,seconds in [('M1',60),('M5',300),('M15',900),('H1',3600)]:
+  for tf,seconds in [('M1',60),('M5',300),('M15',900),('H1',3600),('M30',1800),('H4',14400),('D1',86400)]:
    bars=charts.get(tf,[])
    if not isinstance(bars,list) or len(bars)>2000:raise JournalError('行情数量不正确')
    previous=0

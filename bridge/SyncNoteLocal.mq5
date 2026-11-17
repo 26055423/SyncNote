@@ -304,6 +304,7 @@ void SendSnapshot(const int peer)
 ENUM_TIMEFRAMES LocalTf(const string tf)
 {
    if(tf=="1m") return PERIOD_M1;if(tf=="5m") return PERIOD_M5;if(tf=="15m") return PERIOD_M15;if(tf=="1h") return PERIOD_H1;
+   if(tf=="30m") return PERIOD_M30;if(tf=="4h") return PERIOD_H4;if(tf=="1d") return PERIOD_D1;
    return PERIOD_CURRENT;
 }
 void BeginBars(const int peer,const string js)
@@ -312,7 +313,7 @@ void BeginBars(const int peer,const string js)
    JsonGetString(js,"request_id",request_id);JsonGetString(js,"tf",tf);JsonGetString(js,"symbol",symbol);
    if(symbol!="" && symbol!=InpSymbol) {LocalError(peer,"SYMBOL","Only configured EA symbol is available",request_id);return;}
    if(!JsonNumber(js,"limit",limit,300) || limit<1 || limit>500 || limit!=MathFloor(limit) || LocalTf(tf)==PERIOD_CURRENT)
-   {LocalError(peer,"BARS_REQUEST","tf must be 1m/5m/15m/1h; limit 1..500",request_id);return;}
+   {LocalError(peer,"BARS_REQUEST","tf must be 1m/5m/15m/1h/30m/4h/1d; limit 1..500",request_id);return;}
    if(StringLen(request_id)>80) {LocalError(peer,"REQUEST_ID","request_id too long");return;}
    if(g_bars_job.active) {LocalError(peer,"BARS_BUSY","Wait for current history response",request_id);return;}
    // Never wait for a large history download in the EA network event handler.
@@ -344,8 +345,8 @@ void PumpBars()
 }
 void SendCurrentBars(const int peer)
 {
-   string names[]={"1m","5m","15m","1h"};
-   for(int i=0;i<4;i++)
+   string names[]={"1m","5m","15m","1h","30m","4h","1d"};
+   for(int i=0;i<7;i++)
    {
       ENUM_TIMEFRAMES tf=LocalTf(names[i]);
       if(!SeriesInfoInteger(InpSymbol,tf,SERIES_SYNCHRONIZED)) continue;

@@ -47,6 +47,9 @@ const REVIEW_WINDOW: Record<(typeof REVIEW_BASE_TFS)[number], [number, number]> 
   M5: [10, 2],
   M15: [30, 7],
   H1: [120, 30],
+  M30: [60, 14],
+  H4: [365, 120],
+  D1: [730, 365],
 };
 
 /* ------------------------------------------------------------------ 工具 */
@@ -832,7 +835,7 @@ export default function App() {
   useEffect(() => {
     if (!marketView || !marketInfo?.source || !liveBars || prefetchedRef.current === marketInfo.source) return;
     prefetchedRef.current = marketInfo.source;
-    const bases: BaseTimeframe[] = ['M1', 'M5', 'M15', 'H1'];
+    const bases: BaseTimeframe[] = ['M1', 'M5', 'M15', 'H1', 'M30', 'H4', 'D1'];
     void (async () => {
       for (const base of bases) {
         if (!liveRef.current[base]?.length) continue;
@@ -1052,7 +1055,7 @@ export default function App() {
               // 随机起点：在「所有数据轨道的覆盖并集」里随机，再用 /api/market/bars 回查一次，
               // 确认真有 K 线才跳；查空就换一个时点重试（用户无感）。
               const base = TIMEFRAMES[tf]?.base;
-              const tfName: Record<string, '1m' | '5m' | '15m' | '1h'> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
+              const tfName: Record<string, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h', M30: '30m', H4: '4h', D1: '1d' };
               const name = base ? tfName[base] : undefined;
               if (!name) throw new Error('当前周期不支持随机回放');
               const seconds = TF_SECONDS[base!];

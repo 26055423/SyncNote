@@ -1,7 +1,7 @@
 // SyncNote: history-only uploader. Pure MQL5; no DLLs, local listener, or trading.
 #property strict
 #property copyright "SyncNote"
-#property version "1.022"
+#property version "1.023"
 #property description "Read-only history, review charts and shared K-line track backfill. HTTPS only; no DLL and no trading permissions required."
 #include "SyncNoteHistory.mqh"
 
@@ -143,9 +143,9 @@ void SNTryReview()
  if(g_sn_review_ticket==""||!SNStillBound())return;
  g_sn_review_attempts++;
  string charts="",errors="";bool waiting=false;
- ENUM_TIMEFRAMES periods[]={PERIOD_M1,PERIOD_M5,PERIOD_M15,PERIOD_H1};string names[]={"M1","M5","M15","H1"};
+ ENUM_TIMEFRAMES periods[]={PERIOD_M1,PERIOD_M5,PERIOD_M15,PERIOD_H1,PERIOD_M30,PERIOD_H4,PERIOD_D1};string names[]={"M1","M5","M15","H1","M30","H4","D1"};
  bool available=SymbolSelect(g_sn_review_symbol,true);
- for(int i=0;i<4;i++)
+ for(int i=0;i<7;i++)
  {
   string rows="",reason="";int seconds=PeriodSeconds(periods[i]);
   long start=g_sn_review_opened-30*seconds,end=g_sn_review_closed+30*seconds;
@@ -316,7 +316,7 @@ bool SNFormingPump(const ulong now)
  if(!SymbolInfoTick(_Symbol,tick)||tick.time_msc<=last_tick)return false;
  string series="";
  int digits=(int)SymbolInfoInteger(_Symbol,SYMBOL_DIGITS);
- for(int i=0;i<4;i++)
+ for(int i=0;i<7;i++)
  {
   MqlRates rows[];
   if(CopyRates(_Symbol,SNBarsTfPeriod(i),0,1,rows)!=1)continue;

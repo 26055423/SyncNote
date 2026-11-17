@@ -9,7 +9,7 @@ from test_ea_history import compiler_environment,cpp_source
 ROOT=Path(__file__).resolve().parents[1]
 
 def function(source,name):
- match=re.search(r'^(?:bool|string|void|double|int|long|ulong)\s+'+re.escape(name)+r'\s*\(',source,re.M)
+ match=re.search(r'^(?:bool|string|void|double|int|long|ulong|ENUM_TIMEFRAMES)\s+'+re.escape(name)+r'\s*\(',source,re.M)
  if not match:raise AssertionError('Production function not found: '+name)
  start=source.find('{',match.start());depth=1;i=start+1;quote=None;comment=None
  while i<len(source) and depth:

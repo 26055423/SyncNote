@@ -17,10 +17,10 @@ export interface BackfillState {
   /** An old-gap upload ACK may change interior rows without moving the latest bar. */
   repairUpdated: number | null;
 }
-type Tf = 'M1' | 'M5' | 'M15' | 'H1';
-const TFS: Tf[] = ['M1', 'M5', 'M15', 'H1'];
-const TF_SECONDS: Record<Tf, number> = { M1: 60, M5: 300, M15: 900, H1: 3600 };
-const TF_WIRE: Record<Tf, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h' };
+type Tf = 'M1' | 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D1';
+const TFS: Tf[] = ['M1', 'M5', 'M15', 'H1', 'M30', 'H4', 'D1'];
+const TF_SECONDS: Record<Tf, number> = { M1: 60, M5: 300, M15: 900, H1: 3600, M30: 1800, H4: 14400, D1: 86400 };
+const TF_WIRE: Record<Tf, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h', M30: '30m', H4: '4h', D1: '1d' };
 const MAX_BARS = 2000;
 const RECENT_SECONDS = 7 * 86400;
 const DELTA_MS = 60_000;

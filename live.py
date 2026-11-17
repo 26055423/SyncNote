@@ -7,7 +7,7 @@ import threading
 import time
 import math
 
-FORMING_PERIODS = {'M1': 60, 'M5': 300, 'M15': 900, 'H1': 3600}
+FORMING_PERIODS = {'M1': 60, 'M5': 300, 'M15': 900, 'H1': 3600, 'M30': 1800, 'H4': 14400, 'D1': 86400}
 FORMING_TTL = 12
 
 
@@ -58,7 +58,7 @@ class FormingBars:
                 return {}
             return {tf: rows for tf, rows in entry[1].items() if rows[0][0] + FORMING_PERIODS[tf] > now}
 
-TIMEFRAMES = ('1m', '5m', '15m', '1h')
+TIMEFRAMES = ('1m', '5m', '15m', '1h', '30m', '4h', '1d')
 MAX_BARS = 3000
 
 

@@ -29,21 +29,21 @@ class RangeJobs(unittest.TestCase):
  def test_segments_are_fair_bounded_closed_and_end_exclusive(self):
   job=self.create(begin=NOW-7*86400)
   seen=[]
-  for _ in range(4):
+  for _ in range(len(jobs.PERIODS)):
    segment=self.poll();seen.append(segment['tf']);p=jobs.PERIODS[segment['tf']]
    self.assertLessEqual((segment['to_server']-segment['from_server'])//p+1,2000)
-   self.assertEqual(segment['to_server']+p,NOW)
+   self.assertEqual(segment['to_server']+p,NOW//p*p)
    jobs.result(self.db,self.link,self.body(segment),NOW)
   self.assertEqual(seen,list(jobs.PERIODS))
-  self.assertEqual(job['total_segments'],10)
+  self.assertEqual(job['total_segments'],13)
  def test_exact_result_retry_is_idempotent_and_full_history_completes(self):
-  self.create();segment=self.poll();body=self.body(segment)
+  job=self.create();segment=self.poll();body=self.body(segment)
   self.assertEqual(self.poll(),segment)
   first=jobs.result(self.db,self.link,body,NOW)
   self.assertEqual(jobs.result(self.db,self.link,body,NOW),first)
   with self.assertRaises(jobs.JobError):jobs.result(self.db,self.link,body|{'bars':[]},NOW)
   self.finish();state=jobs.status(self.db,'owner','NAS100')['job']
-  self.assertEqual(state['status'],'completed');self.assertEqual(state['processed_segments'],4)
+  self.assertEqual(state['status'],'completed');self.assertEqual(state['processed_segments'],job['total_segments'])
   self.assertGreater(state['bars_received'],0)
   self.assertEqual(self.db.execute('SELECT DISTINCT source FROM bars').fetchall()[0][0],'srv:Broker-A')
  def test_empty_weekend_remains_partial_and_never_registers_empty_coverage(self):

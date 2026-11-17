@@ -79,7 +79,7 @@ EA 图表显示由 Windows CSPRNG 生成的 8 位配对码，有效期 120 秒�
 
 positions/orders 是替换快照（各最多 500 条）；可能列出当前账户其他品种，但交易只允许 EA 配置品种。所有数据仅发送已配对的本机网页。
 
-推送：`{"type":"tick","tick":{...}}` 按 `InpTickPushMs` 节流（默认 100ms，可配 50–1000ms）；snapshot（账户/持仓/挂单）每秒或交易变化后刷新；当前四周期 K 线由 tick 驱动、按 `InpBarPushMs` 节流推送 `{"type":"bar","symbol":"XAUUSD","tf":"1m","bar_time":0,"open":0,"high":0,"low":0,"close":0,"volume":0}`（默认 100ms，可配 50–1000ms），让蜡烛随行情实时伸缩。当前 K 线推送独立于 1 秒 snapshot 节奏；发送缓冲积压时自动降频（<16KiB 全速、16–32KiB 间隔翻倍、≥32KiB 本轮让给 tick），撞上 512KiB 上限前先降频而非硬断。这些是限频展示更新，不是无损 tick 存档；最终流畅度上限取决于券商给 EA 的 tick 频率。
+推送：`{"type":"tick","tick":{...}}` 按 `InpTickPushMs` 节流（默认 100ms，可配 50–1000ms）；snapshot（账户/持仓/挂单）每秒或交易变化后刷新；当前七周期 K 线由 tick 驱动、按 `InpBarPushMs` 节流推送 `{"type":"bar","symbol":"XAUUSD","tf":"1m","bar_time":0,"open":0,"high":0,"low":0,"close":0,"volume":0}`（默认 100ms，可配 50–1000ms），让蜡烛随行情实时伸缩。当前 K 线推送独立于 1 秒 snapshot 节奏；发送缓冲积压时自动降频（<16KiB 全速、16–32KiB 间隔翻倍、≥32KiB 本轮让给 tick），撞上 512KiB 上限前先降频而非硬断。这些是限频展示更新，不是无损 tick 存档；最终流畅度上限取决于券商给 EA 的 tick 频率。
 
 ### 历史 K 线
 
@@ -87,7 +87,7 @@ positions/orders 是替换快照（各最多 500 条）；可能列出当前账�
 {"type":"bars","request_id":"<id>","symbol":"XAUUSD","tf":"1m","limit":300,"token":"<token>","account_id":"<login>","server":"<server>","epoch":"<epoch>"}
 ```
 
-tf 仅 `1m/5m/15m/1h`，limit 1–500。网页**串行请求**四个周期，收到上一周期响应或错误后再请求下一周期。EA 内部每次定时器拼装最多 50 根，最终一条完整响应：
+tf 仅 `1m/5m/15m/1h/30m/4h/1d`，limit 1–500。网页**串行请求**七个周期，收到上一周期响应或错误后再请求下一周期。EA 内部每次定时器拼装最多 50 根，最终一条完整响应：
 
 ```json
 {"type":"bars","request_id":"<id>","symbol":"XAUUSD","tf":"1m","bars":[[0,0,0,0,0,0]],"instance_id":"<id>","account_id":"<login>","server":"<server>","epoch":"<epoch>","demo":true,"read_only":true,"trade_enabled":false,"capabilities":[]}

@@ -396,12 +396,12 @@ test('each website user gets a separate local cursor even for the same MT5 accou
   assert.equal(stored.size, 2);
 });
 
-test('a matching review uses historical symbol/range, preserves broker timestamps and uploads four periods', async () => {
+test('a matching review uses historical symbol/range, preserves broker timestamps and uploads seven periods', async () => {
   const job = { ticket: 'trade-1', symbol: 'EURUSD', opened_server: 1700000000, closed_server: 1700000300,
     account: '1001', server: 'Demo-Server', source_account_key: ACCOUNT_KEY };
   const { sync, reviewReads, reviewUploads } = fixture({ job });
   await sync.start();
-  assert.equal(reviewReads.length, 4);
+  assert.equal(reviewReads.length, 7);
   assert.equal(reviewReads[0].symbol, 'EURUSD');
   assert.equal(reviewUploads.length, 1);
   assert.equal(reviewUploads[0].charts.M1[0][0], reviewReads[0].range.from_server);

@@ -17,12 +17,14 @@ function fixture(options = {}) {
   const listeners = new Set(), scheduled = new Map(), requests = [], reads = [];
   let sequence = 0;
   const segment = { job_id: 'job-1', segment_id: 'segment-1', account_key: 'key-1', account: '1001', server: 'Broker', symbol: 'NAS100.cash', tf: 'M1', from_server: 1800000000, to_server: 1800000120 };
+  Object.assign(segment, options.segment);
   const jobs = [segment];
   const sync = new LocalRangeSync({
     terminal: { subscribe(callback) { listeners.add(callback); return () => listeners.delete(callback); }, getSnapshot: () => terminalState,
       async requestReviewBars(symbol, tf, range, signal) {
         reads.push({ symbol, tf, range: native(range), signal });
-        const page = { symbol, tf, range, time_basis: 'broker_server', bars: [0, 60, 120].map((delta) => [range.from_server + delta, 10, 12, 9, 11, 4]) };
+        const period = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '30m': 1800, '4h': 14400, '1d': 86400 }[tf];
+        const page = { symbol, tf, range, time_basis: 'broker_server', bars: [0, period, 2 * period].map((delta) => [range.from_server + delta, 10, 12, 9, 11, 4]) };
         return options.read ? options.read(page, reads.length, signal) : page;
       },
     },
@@ -63,6 +65,20 @@ test('a completed explicit task does not silently consume a later task', async (
   await f.sync.start(); await f.wake(); await f.wake();
   assert.equal(f.sync.getSnapshot().phase, 'idle'); assert.equal(f.jobs.length, 1); assert.equal(f.scheduled.size, 0);
   await f.sync.start(); assert.equal(f.sync.getSnapshot().jobId, 'job-2');
+});
+
+test('native M30 H4 D1 range jobs upload their own candles with exact ACK identity', async () => {
+  for (const [tf, wire, period] of [['M30', '30m', 1800], ['H4', '4h', 14400], ['D1', '1d', 86400]]) {
+    const to = Math.floor(1800003600 / period) * period - period;
+    const f = fixture({ segment: { tf, from_server: to - 2 * period, to_server: to } });
+    await f.sync.start(); await f.wake(); await f.wake();
+    assert.equal(f.reads[0].tf, wire);
+    const body = f.requests.find((row) => row.path.endsWith('local-result')).body;
+    assert.equal(body.tf, tf);
+    assert.deepEqual(body.bars.map((row) => row[0]), [to - 2 * period, to - period, to]);
+    assert.equal(f.sync.getSnapshot().segments, 1);
+    assert.equal(f.sync.getSnapshot().phase, 'idle');
+  }
 });
 
 test('unknown trades and busy history reads yield without advancing or consuming retry budget', async () => {

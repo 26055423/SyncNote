@@ -1,16 +1,13 @@
 import type { DataProvider } from '@luxalgo/vela';
 
 /**
- * 同频复盘图表的行情来源。
- *
- * 交易快照先定位，随后合并同一券商轨道的服务器历史（M1/M5/M15/H1，UTC 秒）。
- * 缓存由工作区原位更新，切换周期/布局仍能读取补齐后的数据；不需要连接 EA。
- *
- * 30m 从 M15 聚合、4h 和 1D 从 H1 聚合；聚合不出足够 K 线的周期不会出现在
- * 周期菜单里（见 `availableTimeframes`）。
+ * 同频图表使用同一券商轨道的七个原生周期，时间由服务端统一换算为 UTC。
+ * 缓存原位更新，切换周期仍能读取补齐后的数据。
+ * M30 / H4 / D1 直接读取各自的原生 K 线，保留券商的开盘边界；
+ * 不用低周期聚合补齐未同步的数据。
  */
 
-export type BaseTimeframe = 'M1' | 'M5' | 'M15' | 'H1';
+export type BaseTimeframe = 'M1' | 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D1';
 export type ReviewCharts = Partial<Record<BaseTimeframe, number[][]>>;
 
 interface Recipe {
@@ -25,10 +22,10 @@ export const TIMEFRAMES: Record<string, Recipe> = {
   '1': { base: 'M1', seconds: 60, minBars: 1 },
   '5': { base: 'M5', seconds: 300, minBars: 1 },
   '15': { base: 'M15', seconds: 900, minBars: 1 },
-  '30': { base: 'M15', seconds: 1800, minBars: 4 },
+  '30': { base: 'M30', seconds: 1800, minBars: 1 },
   '60': { base: 'H1', seconds: 3600, minBars: 1 },
-  '240': { base: 'H1', seconds: 14400, minBars: 4 },
-  '1D': { base: 'H1', seconds: 86400, minBars: 24 },
+  '240': { base: 'H4', seconds: 14400, minBars: 1 },
+  '1D': { base: 'D1', seconds: 86400, minBars: 1 },
 };
 
 export const TF_LABEL: Record<string, string> = {
@@ -127,7 +124,7 @@ export class ReviewProvider implements DataProvider {
 }
 
 function basePeriodKey(base: BaseTimeframe): string {
-  return base === 'M1' ? '1' : base === 'M5' ? '5' : base === 'M15' ? '15' : '60';
+  return { M1: '1', M5: '5', M15: '15', M30: '30', H1: '60', H4: '240', D1: '1D' }[base];
 }
 
 /**

@@ -14,7 +14,7 @@ class RangeSyncTests(unittest.TestCase):
   production=cpp_source((ROOT/'bridge/SyncNoteRangeSync.mqh').read_text(encoding='utf-8-sig'))
   path.write_text(support+'\n'+json+r'''
 using ulong=std::uint64_t;
-enum ENUM_TIMEFRAMES {PERIOD_CURRENT,PERIOD_M1=60,PERIOD_M5=300,PERIOD_M15=900,PERIOD_H1=3600};
+enum ENUM_TIMEFRAMES {PERIOD_CURRENT,PERIOD_M1=60,PERIOD_M5=300,PERIOD_M15=900,PERIOD_H1=3600,PERIOD_M30=1800,PERIOD_H4=14400,PERIOD_D1=86400};
 int PeriodSeconds(ENUM_TIMEFRAMES p){return (int)p;}
 struct MqlRates{datetime time;double open=100,high=102,low=99,close=101;std::int64_t tick_volume=10;};
 void ArraySetAsSeries(std::vector<MqlRates>&,bool){}
@@ -39,6 +39,17 @@ void check(bool ok,const char* message){if(!ok)throw std::runtime_error(message)
 void start(){check(SNRangePump()&&g_snr_job=="job","poll did not accept");tick=g_snr_next;}
 int main(int argc,char** argv){try{string name=argc>1?argv[1]:"";
  if(name=="authorization"){g_sn_token="";check(!SNRangePump()&&posts==0,"unpaired poll");g_sn_token="token";g_sn_ack_batches=0;check(!SNRangePump()&&posts==0,"unbound poll");}
+ else if(name=="native"){
+  for(string tf:{"M30","H4","D1"}){
+   int p=PeriodSeconds(SNRangePeriod(tf));check(p>0,"native period rejected");
+   auto to=now/p*p-p,from=to-p;
+   string reply="{\"ok\":true,\"job\":{\"job_id\":\"job\",\"segment_id\":\"seg\",\"symbol\":\"NAS100\",\"tf\":"+SNJQuote(tf)+",\"account_key\":\"key\",\"account\":\"123\",\"server\":\"Broker\",\"from_server\":"+IntegerToString(from)+",\"to_server\":"+IntegerToString(to)+"}}";
+   check(SNRangeAccept(reply)&&SNRangeBuild(),"native range not read");
+   check(g_snr_tf==tf&&g_snr_sent==2&&g_snr_pending.find(IntegerToString(from))!=string::npos,"native payload lost identity or wall time");
+   reply="{\"ok\":true,\"job_id\":\"job\",\"segment_id\":\"seg\",\"symbol\":\"NAS100\",\"tf\":"+SNJQuote(tf)+",\"account_key\":\"key\",\"from_server\":"+IntegerToString(from)+",\"to_server\":"+IntegerToString(to)+",\"status\":\"running\",\"accepted\":2}";
+   check(SNRangeAcknowledged(reply),"native ACK rejected");SNRangeInit();
+  }
+ }
  else if(name=="validation"){check(!SNRangeAccept(job("NAS100","other")),"wrong account accepted");check(!SNRangeAccept(job("NAS100","key",now)),"forming segment accepted");check(!SNRangeAccept(job("NAS100","key",1799999821)),"unaligned segment accepted");}
  else if(name=="success"){start();SNRangePump();check(reads==1&&selected=="NAS100"&&g_snr_sent==2&&!g_snr_pending.empty(),"arbitrary symbol not read");tick=g_snr_next;SNRangePump();check(g_snr_job.empty()&&posts==2,"exact ACK did not finish segment");check(bodies[1].find("\"symbol\":\"NAS100\"")!=string::npos,"raw code missing");}
  else if(name=="empty"){read_count=0;start();for(int i=0;i<3;i++){SNRangePump();tick=g_snr_next;}check(reads==3&&g_snr_sent==0&&g_snr_pending.find("empty_window")!=string::npos,"empty range falsely complete");}
@@ -57,6 +68,7 @@ int main(int argc,char** argv){try{string name=argc>1?argv[1]:"";
   result=subprocess.run([str(self.exe),name],capture_output=True,text=True);self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(result.stdout,'ok')
  def test_unpaired_and_unbound_do_not_poll(self):self.scenario('authorization')
  def test_identity_alignment_and_forming_range_validation(self):self.scenario('validation')
+ def test_native_m30_h4_d1_range_reads_uploads_and_ack(self):self.scenario('native')
  def test_requested_symbol_upload_and_exact_ack(self):self.scenario('success')
  def test_empty_history_is_explicit_after_bounded_retry(self):self.scenario('empty')
  def test_unavailable_history_waits_for_bounded_download(self):self.scenario('unavailable')

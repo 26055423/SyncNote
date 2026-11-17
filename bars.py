@@ -191,9 +191,9 @@ def source_of_trade(trade):
 
 
 def series_from_review(charts, errors=None):
-  """把 EA 复盘上传里的 `charts`（M1/M5/M15/H1）转成 ingest 需要的样子。
+  """把 EA 复盘上传里的 `charts`（七个原生周期）转成 ingest 需要的样子。
 
-  复盘图的窗口就是这笔交易的四周期 K 线；它天然是“某个 source 在某个区间的采样”，
+  复盘图的窗口就是这笔交易的七周期 K 线；它天然是“某个 source 在某个区间的采样”，
   所以第一版不需要新的 EA 端点，直接回收利用。
   """
   if not isinstance(charts, dict):
@@ -546,7 +546,7 @@ def read_utc(db, source, symbol, tf, start, end, now=None):
   return payload
 
 
-def tracks(db, symbol, source_active, start, end, tfs=('M1', 'M5', 'M15', 'H1'), utc=False):
+def tracks(db, symbol, source_active, start, end, tfs=tuple(TF_SECONDS), utc=False):
   """视频编辑软件式的“轨道”：一个券商服务器一条轨，返回每条轨在 [start,end] 的覆盖情况。
 
   `source_active` 是当前这笔交易所属的轨（会被前端提到最上层）。
@@ -584,7 +584,7 @@ def tracks(db, symbol, source_active, start, end, tfs=('M1', 'M5', 'M15', 'H1'),
   return {'symbol': symbol, 'from': start, 'to': end, 'tf': 'M1', 'tracks': result}
 
 
-def tracks_utc(db, symbol, source_active, start, end, tfs=('M1', 'M5', 'M15', 'H1')):
+def tracks_utc(db, symbol, source_active, start, end, tfs=tuple(TF_SECONDS)):
   """同一 UTC 窗口内，各券商轨分别按自己的墙钟偏移查询和换回 UTC。"""
   payload = tracks(db, symbol, source_active, start, end, tfs, utc=True)
   payload['time_basis'] = 'utc'

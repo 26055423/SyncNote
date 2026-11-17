@@ -1168,7 +1168,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
 });
 
 function basePeriodKey(base: BaseTimeframe): string {
-  return base === 'M1' ? '1' : base === 'M5' ? '5' : base === 'M15' ? '15' : '60';
+  return { M1: '1', M5: '5', M15: '15', M30: '30', H1: '60', H4: '240', D1: '1D' }[base];
 }
 
 function toOhlcv(bar: number[]) {
