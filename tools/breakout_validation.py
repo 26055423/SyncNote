@@ -126,7 +126,7 @@ def evaluate(bundle, sample, mode='future'):
  return {'schema':'syncnote-breakout-validation.v1','frozen_id':bundle['id'],'mode':mode,'status':'ready_for_fixed_sample_comparison' if enough else 'insufficient_new_sample','source':source,'symbol':sample['data']['symbol'],'as_of':sample['data']['as_of'],'evaluation_sample_sha256':digest(sample),'n':len(rows),'span_days':days,'criteria':bundle['spec'],'exclusions':dict(excluded),'metrics':scores,'intervals':intervals,'years':{str(y):stability.summarize([r for r in rows if r['year']==y]) for y in sorted({r['year'] for r in rows})},'directions':{str(d):stability.summarize([r for r in rows if r['direction']==d]) for d in (-1,1)},'predictions':rows,'limitations':'Frozen retrospective replay with original complete-window selection; no timestamped live forecasts, trading costs, or independent-market proof. Repeated interim reads do not justify early confirmatory conclusions.'}
 
 def render(report, audit=None):
- css = (Path(__file__).resolve().parents[1]/'web/chart-src/src/styles.css').read_text()
+ css = (Path(__file__).resolve().parents[1]/'web/chart-src/src/styles.css').read_text(encoding='utf-8')
  tokens = ':root {'+css.split(':root {',1)[1].split('}',1)[0]+'}'
  styles = tokens+'body{background:var(--bg);color:var(--text);font:16px/1.7 system-ui;max-width:1000px;margin:32px auto;padding:0 20px}table{border-collapse:collapse;width:100%}td,th{border:1px solid var(--line);padding:8px;text-align:left}details{background:var(--panel);padding:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere}'
  rows = [[stability.NAMES[k],v['n'],'%.5f'%v['brier'],'%.5f'%v['log_loss']] for k,v in report['metrics'].items()]
@@ -156,14 +156,14 @@ def main():
  test.add_argument('--audit-json')
  args = parser.parse_args()
  try:
-  sample = json.loads(Path(args.events_json).read_text())
+  sample = json.loads(Path(args.events_json).read_text(encoding='utf-8'))
   if args.command=='freeze':
    result = freeze(sample)
   else:
-   result = evaluate(json.loads(Path(args.frozen).read_text()),sample,args.mode)
+   result = evaluate(json.loads(Path(args.frozen).read_text(encoding='utf-8')),sample,args.mode)
   write_new(args.output,result)
   if args.command=='evaluate' and args.html:
-   audit = json.loads(Path(args.audit_json).read_text()) if args.audit_json else None
+   audit = json.loads(Path(args.audit_json).read_text(encoding='utf-8')) if args.audit_json else None
    Path(args.html).write_text(render(result,audit),encoding='utf-8')
  except (ValueError,FileExistsError) as error:
   parser.exit(2,str(error)+'\n')

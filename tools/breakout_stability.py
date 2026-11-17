@@ -141,7 +141,7 @@ def table(headers, rows):
  return '<table><tr>'+''.join('<th>'+html.escape(str(x))+'</th>' for x in headers)+'</tr>'+''.join('<tr>'+''.join('<td>'+html.escape(str(x))+'</td>' for x in row)+'</tr>' for row in rows)+'</table>'
 
 def render(report):
- css = (Path(__file__).resolve().parents[1]/'web/chart-src/src/styles.css').read_text()
+ css = (Path(__file__).resolve().parents[1]/'web/chart-src/src/styles.css').read_text(encoding='utf-8')
  tokens = ':root {'+css.split(':root {',1)[1].split('}',1)[0]+'}'
  styles = tokens+'body{background:var(--bg);color:var(--text);font:16px/1.65 system-ui;max-width:1150px;margin:32px auto;padding:0 20px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{border:1px solid var(--line);padding:8px;text-align:left}th,details{background:var(--panel)}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{padding:12px;cursor:pointer}svg{max-width:900px;width:100%;height:auto}svg text{fill:var(--text);font-size:13px}'
  parts = ['<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>突破模型：特征与稳定性</title><style>'+styles+'</style><h1>突破模型：特征与稳定性</h1><p>删掉一项信息后重新训练，且使用完全相同的事件、标签与年份。评分越低越好。区间表示对固定样本外预测按周/月分块抽样的不确定性，未做多重比较修正。</p><p>正的改善量表示完整模型优于比较模型；区间跨过零表示贡献尚不清楚。有关联的特征可能互相替代，不能解释为因果关系。</p><p>距离基准按当前位置在上下目标间的比例分配延续/失败概率，未决比例只来自训练数据。这是诊断用启发式，并非六小时价格定律。它在第一轮消融后加入，仍属探索性比较。</p>']
@@ -196,9 +196,9 @@ def main():
  if args.repetitions<100:
   parser.error('At least 100 bootstrap repetitions required')
  if args.render_json:
-  report = json.loads(Path(args.render_json).read_text())
+  report = json.loads(Path(args.render_json).read_text(encoding='utf-8'))
  elif args.events_json:
-  sample = json.loads(Path(args.events_json).read_text())
+  sample = json.loads(Path(args.events_json).read_text(encoding='utf-8'))
   if sample.get('schema')!='syncnote-breakout-events.v1':
    parser.error('Expected syncnote-breakout-events.v1')
   report = stability(sample,args.repetitions,lambda s:print(s,file=sys.stderr,flush=True))
