@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import type { SymbolSpec } from './trade/risk';
 
 export type LocalPhase = 'disconnected' | 'connecting' | 'pairing' | 'confirming' | 'connected' | 'error';
 /** Sunday = 0. The two offsets are measured from broker-wall midnight. */
@@ -28,6 +29,7 @@ export interface LocalTerminalState {
   epoch: string;
   symbol: string;
   quote_sessions: QuoteSession[] | null;
+  symbol_spec?: SymbolSpec | null;
   read_only: boolean;
   demo: boolean;
   /** 对冲账户：false = 净额账户（持仓合并，归属无法证明）。 */
@@ -102,6 +104,7 @@ const freshState = (): LocalTerminalState => ({
   phase: 'disconnected', error: '', instance_id: '', account_id: '', server: '', epoch: '',
   symbol: 'XAUUSD', read_only: true, demo: false, hedging: false, netting_manage: false, real_trading: false, capabilities: [], product: '', features: [], server_offset_sec: 0,
   latency: null, account: {}, tick: null, quote_sessions: null,
+  symbol_spec: null,
   positions: [], orders: [], bars: {}, history_ready: false, commands: [], revision: 0,
 });
 const TF_SECONDS: Record<string, number> = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '30m': 1800, '4h': 14400, '1d': 86400 };
@@ -111,6 +114,18 @@ const HISTORY_SLOTS = 1990;
 const terminalStates = new Set(['completed', 'rejected']);
 const unresolvedStates = new Set(['sending', 'received', 'submitted', 'uncertain', 'not_found']);
 const tfKeys = new Set(['1m', '5m', '15m', '1h', '30m', '4h', '1d']);
+
+function parseSymbolSpec(value: unknown): SymbolSpec | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const spec = value as Record<string, unknown>;
+  const fields = ['tick_size', 'tick_value_loss', 'volume_min', 'volume_max', 'volume_step'] as const;
+  if (!fields.every((key) => typeof spec[key] === 'number' && Number.isFinite(spec[key]) && (spec[key] as number) > 0)
+    || (spec.volume_max as number) < (spec.volume_min as number)) return null;
+  const parsed = Object.fromEntries(fields.map((key) => [key, spec[key]])) as unknown as SymbolSpec;
+  if (typeof spec.tick_value_profit === 'number' && Number.isFinite(spec.tick_value_profit) && spec.tick_value_profit > 0) parsed.tick_value_profit = spec.tick_value_profit;
+  if (Number.isInteger(spec.digits) && (spec.digits as number) >= 0 && (spec.digits as number) <= 8) parsed.digits = spec.digits as number;
+  return parsed;
+}
 
 function parseQuoteSessions(value: unknown, previous: QuoteSession[] | null = null): QuoteSession[] | null {
   if (!Array.isArray(value) || !value.length || value.length > 224) return null;
@@ -373,6 +388,7 @@ export class LocalTerminal {
           }
           this.noteReads.clear(); this.reviewReads.clear();
           this.update({ symbol: message.symbol, symbol_switching: false, tick: null, bars: {}, historyWarnings: {}, history_ready: false,
+            symbol_spec: null,
             quote_sessions: parseQuoteSessions(message.quote_sessions) });
           this.send({ type: 'snapshot' });
           this.historyQueue = [...tfKeys];
@@ -388,6 +404,7 @@ export class LocalTerminal {
             && typeof message.server_offset_sec === 'number' && Number.isFinite(message.server_offset_sec)
             ? { clock_sample: { server_time_ms: message.server_time_ms, server_offset_sec: message.server_offset_sec } } : {}),
           account: message.account && typeof message.account === 'object' ? message.account : this.state.account,
+          symbol_spec: message.symbol === this.state.symbol ? parseSymbolSpec(message.symbol_spec) : null,
           positions: Array.isArray(message.positions) ? message.positions : this.state.positions,
           orders: Array.isArray(message.orders) ? message.orders : this.state.orders,
           tick: message.tick || this.state.tick,

@@ -80,6 +80,36 @@ test('EA clock samples retain raw UTC milliseconds and offset and clear on disco
   assert.equal(client.getSnapshot().clock_sample, undefined);
 });
 
+test('contract specs are accepted only for the connected symbol and clear on switching', async () => {
+  const { client, connect } = fixture();
+  const socket = connect('1001', { features: ['select_symbol'] });
+  const spec = { tick_size: .01, tick_value_loss: 1, tick_value_profit: 1, volume_min: .01, volume_max: 100, volume_step: .01, digits: 2 };
+  socket.emit({ type: 'snapshot', symbol: 'XAUUSD', symbol_spec: spec });
+  assert.equal(client.getSnapshot().symbol_spec.tick_value_loss, 1);
+  socket.emit({ type: 'snapshot', symbol: 'USTEC', symbol_spec: { ...spec, tick_value_loss: 1000 } });
+  assert.equal(client.getSnapshot().symbol_spec.tick_value_loss, 1);
+  const switching = client.selectSymbol('USTEC');
+  const request = socket.sent.at(-1);
+  socket.emit({ type: 'symbol_selected', request_id: request.request_id, symbol: 'USTEC' });
+  await switching;
+  assert.equal(client.getSnapshot().symbol_spec, null);
+  socket.emit({ type: 'snapshot', symbol: 'USTEC', symbol_spec: { ...spec, tick_value_loss: 0 } });
+  assert.equal(client.getSnapshot().symbol_spec, null);
+  socket.emit({ type: 'snapshot', symbol: 'USTEC', symbol_spec: spec });
+  client.disconnect();
+  assert.equal(client.getSnapshot().symbol_spec, null);
+});
+
+test('missing or malformed contract snapshots cannot retain stale sizing values', () => {
+  const { client, connect } = fixture(); const socket = connect();
+  const spec = { tick_size: .01, tick_value_loss: 1, volume_min: .01, volume_max: 100, volume_step: .01 };
+  socket.emit({ type: 'snapshot', symbol: 'XAUUSD', symbol_spec: spec });
+  socket.emit({ type: 'snapshot', symbol: 'XAUUSD' });
+  assert.equal(client.getSnapshot().symbol_spec, null);
+  socket.emit({ type: 'snapshot', symbol: 'XAUUSD', symbol_spec: { ...spec, tick_size: '0.01' } });
+  assert.equal(client.getSnapshot().symbol_spec, null);
+});
+
 test('quote sessions follow the exact connected broker symbol, including overnight sessions', async () => {
   const { client, connect } = fixture();
   const socket = connect('1001', { features: ['select_symbol'] });

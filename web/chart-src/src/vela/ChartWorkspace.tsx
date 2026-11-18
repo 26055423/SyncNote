@@ -7,6 +7,8 @@ import { prefs, usePrefs } from '../ui/prefs';
 import { resolveZone } from '../lib/time';
 import { centerChartOnTime, restoreChartLeft } from './viewportPan';
 import { fitSavedWorkspaceTracks } from './trackSizing';
+import { OrderLevels, transientOrderLine, type OrderLevel } from './orderLevels';
+import type { TradePriceField } from '../trade/chartOrders';
 
 /**
  * 指标选择器（指标库）的排位。
@@ -125,9 +127,9 @@ interface Props {
   /** 复盘时在图上标出开仓/平仓点，并用虚线连接（类似 MT5）。 */
   tradeMarks?: { openedAt: number; closedAt: number; open: number; close: number; side: 'buy' | 'sell' } | null;
   /** 当前持仓：画开仓线与止损/止盈线，止损止盈可以拖动改价。 */
-  positionLevels?: Array<{ ticket: string; side: 'buy' | 'sell' | string; entry: number; sl?: number | null; tp?: number | null; volume?: number }>;
+  positionLevels?: OrderLevel[];
   /** 拖动止损/止盈线后回调（松手时触发）。 */
-  onLevelDrag?: (ticket: string, field: 'sl' | 'tp', price: number) => void;
+  onLevelDrag?: (ticket: string, field: TradePriceField, price: number) => void;
   /** 行情模式下用实时 provider 覆盖默认的静态复盘数据源。 */
   provider?: unknown;
   loadIndicatorMinutes?: (endMs: number, count: number) => Promise<number[][]>;
@@ -167,6 +169,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     for (const cell of wsRef.current?.cells?.() ?? []) {
       const drawings: DrawingsControl = cell.chart.drawings;
       for (const id of markIdsByCellRef.current.get(cell.id) ?? []) drawings.show(id, visible);
+      orderLevelsRef.current?.sync(cell, orderColors(), visible);
     }
   };
   const startReplay = async (from: number, cell?: string) => {
@@ -214,8 +217,11 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   const levelDragRef = useRef(props.onLevelDrag);
   levelDragRef.current = props.onLevelDrag;
   const positionSyncRef = useRef<(() => void) | null>(null);
-  const levelMetaRef = useRef(new Map<string, { ticket: string; field: 'entry' | 'sl' | 'tp' }>());
-  const positionIdsRef = useRef(new Map<string, string>());
+  const orderLevelsRef = useRef<OrderLevels | null>(null);
+  const orderColors = () => {
+    const css = getComputedStyle(document.documentElement);
+    return { entry: css.getPropertyValue('--accent').trim(), sl: css.getPropertyValue('--bad').trim(), tp: css.getPropertyValue('--good').trim() };
+  };
   const markIdsByCellRef = useRef<Map<string, Set<string>>>(new Map());
   // 分享时要把开平仓标注剔掉，`stripMarks` 定义在初始化闭包里，用 ref 传出来。
   const stripRef = useRef<((document: unknown) => unknown) | null>(null);
@@ -395,7 +401,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       const rows = Array.isArray(doc?.drawings) ? doc.drawings : [];
       const marks = markIdsByCellRef.current.get(wsRef.current?.active?.id ?? '') ?? markIdsRef.current;
       const timeframe = String(chart?.market?.timeframe ?? '');
-      return rows.filter((row: any) => row && row.visible !== false && !marks.has(row.id)).map((row: any) => {
+      return rows.filter((row: any) => row && row.visible !== false && !marks.has(row.id) && !transientOrderLine(row)).map((row: any) => {
         const anchorPoint = Array.isArray(row.anchors) && row.anchors.length ? row.anchors[0] : null;
         const time = anchorPoint && typeof anchorPoint.time === 'number' ? anchorPoint.time : null;
         return {
@@ -788,65 +794,11 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           if (ids.size) markIdsByCellRef.current.set(cell.id, ids);
         };
 
-        /** 当前持仓的开仓/止损/止盈线；止损止盈不锁，可以直接拖动改价。 */
-        const positionKey = (cellId: string, ticket: string, field: string) => `${cellId}|${ticket}|${field}`;
-        const annotatePositions = (cell: any) => {
-          if (replaying()) return;
-          const levels = positionLevelsRef.current ?? [];
-          const api = cell?.chart?.drawings;
-          if (!api) return;
-          const palette = markColors(themeRef.current);
-          const tfId: string = cell?.chart?.market?.timeframe ?? '15';
-          const stepSec = TIMEFRAMES[tfId]?.seconds ?? 900;
-          const now = Math.floor(Date.now() / 1000 / stepSec) * stepSec * 1000;
-          const present = new Set<string>(((api.all?.() ?? []) as Array<{ id: string }>).map((row) => row.id));
-          const wanted = new Set<string>();
-          // 同一个 (格子, 持仓, 字段) 只维护一条线：价格变化时原地 update，不新增、不重复。
-          const draw = (ticket: string, field: 'entry' | 'sl' | 'tp', price: number, options: { color: string; label: string; dashed: boolean; zIndex: number; vAlign: 'top' | 'bottom' }) => {
-            const key = positionKey(cell.id, ticket, field);
-            wanted.add(key);
-            const existing = positionIdsRef.current.get(key);
-            if (existing && present.has(existing)) {
-              try {
-                api.update(existing, {
-                  anchors: [{ time: now, price }],
-                  text: { value: options.label, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: options.vAlign, color: options.color },
-                });
-                return;
-              } catch { /* 失败就重建 */ }
-            }
-            try {
-              const drawing = api.add('hline', {
-                anchors: [{ time: now, price }],
-                style: { lineColor: options.color, lineWidth: 1, lineStyle: options.dashed ? 'dashed' : 'solid' },
-                text: { value: options.label, size: 'small' as const, bold: true, hAlign: 'left' as const, vAlign: options.vAlign, color: options.color },
-                zIndex: options.zIndex,
-              });
-              const id = (drawing as { id?: string } | null)?.id;
-              if (!id) return;
-              positionIdsRef.current.set(key, id);
-              markIdsRef.current.add(id);
-              levelMetaRef.current.set(id, { ticket, field });
-              if (field === 'entry') api.lock?.(id, true);
-            } catch { /* ignore */ }
-          };
-          for (const level of levels) {
-            if (!Number.isFinite(level.entry) || level.entry <= 0) continue;
-            const color = level.side === 'sell' ? (palette.labelExit ?? '#d17b7b') : (palette.labelEntry ?? '#63c08d');
-            draw(level.ticket, 'entry', level.entry, { color, label: `开仓 ${level.entry.toFixed(2)}`, dashed: false, zIndex: 1990, vAlign: 'bottom' });
-            if (typeof level.sl === 'number' && level.sl > 0) draw(level.ticket, 'sl', level.sl, { color: '#d17b7b', label: `止损 ${level.sl.toFixed(2)}`, dashed: true, zIndex: 1995, vAlign: 'top' });
-            if (typeof level.tp === 'number' && level.tp > 0) draw(level.ticket, 'tp', level.tp, { color: '#63c08d', label: `止盈 ${level.tp.toFixed(2)}`, dashed: true, zIndex: 1995, vAlign: 'bottom' });
-          }
-          // 已经平掉/移出视野的持仓：把它的线删掉。
-          const prefix = cell.id + '|';
-          for (const [key, id] of [...positionIdsRef.current]) {
-            if (!key.startsWith(prefix) || wanted.has(key)) continue;
-            if (present.has(id)) { try { api.remove(id); } catch { /* ignore */ } }
-            positionIdsRef.current.delete(key);
-            markIdsRef.current.delete(id);
-            levelMetaRef.current.delete(id);
-          }
-        };
+        const orderLevels = new OrderLevels(() => positionLevelsRef.current ?? [],
+          (ticket, field, price) => levelDragRef.current?.(ticket, field, price),
+          () => readOnly || replaying());
+        orderLevelsRef.current = orderLevels;
+        const annotatePositions = (cell: any) => orderLevels.sync(cell, orderColors(), !replaying());
         const syncPositions = () => {
           for (const cell of wsRef.current?.cells?.() ?? []) annotatePositions(cell);
         };
@@ -857,7 +809,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           for (const chart of document.charts) {
             const drawings = chart?.drawings;
             if (drawings && Array.isArray(drawings.drawings)) {
-              drawings.drawings = drawings.drawings.filter((row: any) => !markIdsRef.current.has(row?.id));
+              drawings.drawings = drawings.drawings.filter((row: any) => !markIdsRef.current.has(row?.id) && !transientOrderLine(row));
             }
             // 存档不写配色：换主题的人不该把颜色带给同事的复盘和别人的分享。
             if (chart && typeof chart === 'object') delete chart.rendererConfig;
@@ -958,13 +910,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           // 拖动止损/止盈线：松手后把新价格交给调用方去改单。
           cell.chart?.on?.('drawing:edited', ({ id }: { id?: string }) => {
             if (!id) return;
-            const meta = levelMetaRef.current.get(id);
-            if (!meta || meta.field === 'entry') return;
-            const rows = (cell.chart?.drawings?.all?.() ?? []) as Array<{ id: string; anchors?: Array<{ price?: number }> }>;
-            const row = rows.find((item) => item.id === id);
-            const price = row?.anchors?.[0]?.price;
-            if (!Number.isFinite(price)) return;
-            levelDragRef.current?.(meta.ticket, meta.field, Number(price));
+            orderLevels.edit(cell, id);
           });
           cell.chart?.on?.('market:changed', () => {
             onTimeframe?.(cell.chart?.market?.timeframe ?? '15');
@@ -1046,6 +992,8 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       replayArmedRef.current = false; replayBusyRef.current = false; replayPendingRef.current.clear();
       const ws = wsRef.current;
       wsRef.current = null;
+      orderLevelsRef.current = null; positionSyncRef.current = null;
+      markIdsRef.current.clear(); markIdsByCellRef.current.clear();
       try {
         ws?.destroy?.();
       } catch {
@@ -1097,6 +1045,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     } catch {
       /* 旧版本没有 setTheme 时忽略 */
     }
+    positionSyncRef.current?.();
     // 十字线单独调亮：主题自带的太淡，压在 K 线上几乎看不见。
     // applyConfig 挂在渲染器上（chart.rendererControl.renderer），不在 chart 上。
     for (const cell of wsRef.current?.cells?.() ?? []) {

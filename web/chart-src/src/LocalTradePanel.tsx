@@ -3,11 +3,12 @@ import { money, quotePrice } from './api';
 import { localTerminal, localTradeAccess, type LocalTerminalState } from './localTerminal';
 import { OrderTicket } from './trade/OrderTicket';
 import { submitMarketOrder } from './trade/localSubmit';
+import type { ChartOrderDraft, ChartOrderEdit } from './trade/chartOrders';
 
 const commandText: Record<string, string> = { sending: '正在发送', received: 'EA 已接收', submitted: '已提交，等待回报', completed: '执行完成', rejected: '已拒绝', uncertain: '结果待核实', not_found: 'EA 未找到记录，仍需核查' };
 const actionText: Record<string, string> = { market: '市价下单', limit: '限价挂单', stop: '止损挂单', close: '平仓', cancel: '撤单', modify: '修改止损止盈' };
 
-export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
+export function LocalTradePanel({ state, draftScope, chartEdit, onDraftChange }: { state: LocalTerminalState; draftScope?: string; chartEdit?: ChartOrderEdit | null; onDraftChange?: (draft: ChartOrderDraft | null) => void }) {
   const [sl, setSl] = useState('');
   const [tp, setTp] = useState('');
   const [error, setError] = useState('');
@@ -39,8 +40,12 @@ export function LocalTradePanel({ state }: { state: LocalTerminalState }) {
           <div><strong>账户 {state.account_id}</strong><span className="link-state on" title={state.read_only || (!state.demo && !realTrading) ? '只读权限' : state.unrestricted || state.quota_unrestricted ? '已获本机授权（不限额）' : '已获本机交易授权'}>{state.read_only ? '只读连接' : '本机已连接'}</span></div>
           <p><span title={state.server}>{state.server}</span><span title="本机往返延迟">{state.latency === null ? '延迟待测' : `${state.latency} ms`}</span></p>
         </div>}
-        key={`${state.instance_id}:${state.epoch}:${state.account_id}:${state.server}:${realTrading}`}
+        key={`${state.instance_id}:${state.epoch}:${state.account_id}:${state.server}:${state.symbol}:${realTrading}`}
         account={{ login: state.account_id, balance: state.account?.balance, equity: state.account?.equity, currency: state.account?.currency, leverage: state.account?.leverage }}
+        symbolSpec={state.symbol_spec ?? null}
+        draftScope={draftScope}
+        chartEdit={chartEdit}
+        onDraftChange={onDraftChange}
         symbol={state.symbol}
         bid={state.tick?.bid ?? 0}
         ask={state.tick?.ask ?? 0}

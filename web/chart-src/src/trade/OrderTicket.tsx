@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { editDraftPrice, type ChartOrderDraft, type ChartOrderEdit } from './chartOrders';
 import {
   CONTRACT_SIZE,
   fmtMoney,
   fmtPrice,
   fmtVolume,
   previewRisk,
+  sizeByRisk,
   resolveEntry,
   type Account,
   type OrderAction,
   type OrderAttempt,
   type OrderRequest,
   type OrderSide,
+  type SymbolSpec,
 } from './risk';
 
 /**
@@ -38,6 +41,10 @@ const cls = (...parts: Array<string | false | null | undefined>) => parts.filter
 export interface OrderTicketProps {
   context?: ReactNode;
   account: Account | null;
+  symbolSpec?: SymbolSpec | null;
+  draftScope?: string;
+  chartEdit?: ChartOrderEdit | null;
+  onDraftChange?: (draft: ChartOrderDraft | null) => void;
   symbol: string;
   bid: number;
   ask: number;
@@ -55,10 +62,12 @@ export interface OrderTicketProps {
   onConnect?: () => void;
 }
 
-export function OrderTicket({ context, account, symbol, bid, ask, connected, lockedReason, real = false, quotaUnrestricted = false, allowedActions = ['market'], submitting = false, onSubmit, onConnect }: OrderTicketProps) {
+export function OrderTicket({ context, account, symbolSpec = null, draftScope = '', chartEdit, onDraftChange, symbol, bid, ask, connected, lockedReason, real = false, quotaUnrestricted = false, allowedActions = ['market'], submitting = false, onSubmit, onConnect }: OrderTicketProps) {
   const [action, setAction] = useState<OrderAction>('market');
   const [side, setSide] = useState<OrderSide>('buy');
   const [volume, setVolume] = useState('0.01');
+  const [riskBased, setRiskBased] = useState(false);
+  const [riskBudget, setRiskBudget] = useState('10');
   const [price, setPrice] = useState('');
   const [slOn, setSlOn] = useState(false);
   const [tpOn, setTpOn] = useState(false);
@@ -70,11 +79,20 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
   const [confirming, setConfirming] = useState(false);
   const [attempt, setAttempt] = useState<OrderAttempt | null>(null);
   const [busy, setBusy] = useState(false);
+  const [chartError, setChartError] = useState('');
+  const appliedEdit = useRef<number | null>(null);
 
   const keyRef = useRef<string | null>(null);
   const fingerprintRef = useRef('');
+  const confirmationRef = useRef('');
 
   const hasQuote = bid > 0 && ask > 0;
+  const ref = useMemo(() => ({ bid, ask }), [bid, ask]);
+  const sizing = useMemo(() => riskBased ? sizeByRisk({ action, side, price: num(price), sl: slOn ? num(sl) : 0 }, ref, account, symbolSpec, num(riskBudget), quotaUnrestricted) : null,
+    [riskBased, action, side, price, slOn, sl, ref, account, symbolSpec, riskBudget, quotaUnrestricted]);
+  const effectiveVolume = riskBased ? sizing?.volume ?? 0 : num(volume);
+  const priceStep = symbolSpec?.tick_size ?? 0.01;
+  const priceText = (value: number) => fmtPrice(value, symbolSpec?.digits ?? 2);
 
   useEffect(() => {
     if (action === 'market' || price) return;
@@ -87,7 +105,7 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
       action,
       side,
       symbol,
-      volume: num(volume),
+      volume: effectiveVolume,
       price: action === 'market' ? 0 : num(price),
       sl: slOn ? num(sl) : 0,
       tp: tpOn ? num(tp) : 0,
@@ -95,12 +113,29 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
       magic: 0,
       comment: 'syncnote-web',
     }),
-    [action, side, symbol, volume, price, slOn, sl, tpOn, tp],
+    [action, side, symbol, effectiveVolume, price, slOn, sl, tpOn, tp],
   );
 
-  const ref = useMemo(() => ({ bid, ask }), [bid, ask]);
-  const preview = useMemo(() => previewRisk(request, ref, account, quotaUnrestricted), [request, ref, account, quotaUnrestricted]);
+  const preview = useMemo(() => previewRisk(request, ref, account, quotaUnrestricted, symbolSpec), [request, ref, account, quotaUnrestricted, symbolSpec]);
   const entry = resolveEntry(request, ref);
+  useEffect(() => {
+    onDraftChange?.({ scope: draftScope, symbol, action, side, entry, sl: request.sl, tp: request.tp, volume: request.volume,
+      editable: connected && hasQuote && !busy && !submitting, step: priceStep, digits: symbolSpec?.digits ?? 2 });
+  }, [onDraftChange, draftScope, symbol, action, side, entry, request.sl, request.tp, request.volume, connected, hasQuote, busy, submitting, priceStep, symbolSpec?.digits]);
+  useEffect(() => () => onDraftChange?.(null), [onDraftChange, draftScope]);
+  useEffect(() => {
+    if (!chartEdit || chartEdit.scope !== draftScope || appliedEdit.current === chartEdit.id) return;
+    appliedEdit.current = chartEdit.id;
+    try {
+      const patch = editDraftPrice({ scope: draftScope, symbol, action, side, entry, sl: request.sl, tp: request.tp, volume: request.volume,
+        editable: connected && hasQuote && !busy && !submitting, step: priceStep, digits: symbolSpec?.digits ?? 2 }, chartEdit.field, chartEdit.price, ref, allowedActions);
+      setChartError(''); setConfirming(false);
+      if (patch.price != null) setPrice(String(patch.price));
+      if (patch.action) setAction(patch.action);
+      if (patch.sl != null) { setSlOn(true); setSl(String(patch.sl)); }
+      if (patch.tp != null) { setTpOn(true); setTp(String(patch.tp)); }
+    } catch (error) { setChartError(error instanceof Error ? error.message : String(error)); onDraftChange?.({ scope: draftScope, symbol, action, side, entry, sl: request.sl, tp: request.tp, volume: request.volume, editable: connected && hasQuote && !busy && !submitting, step: priceStep, digits: symbolSpec?.digits ?? 2 }); }
+  }, [chartEdit, draftScope, connected, busy, submitting, action, side, entry, request, priceStep, symbolSpec, ref, allowedActions, onDraftChange, hasQuote, symbol]);
 
   const blocked = !connected
     ? (lockedReason || '本机 EA 未连接 —— 下单已禁用')
@@ -112,6 +147,8 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
         ? '请先勾选「解锁下单」'
         : real && !realArmed
           ? '实盘账户：请再勾选「确认按实盘下单」'
+          : sizing?.problem
+            ? sizing.problem
           : preview.problems.length > 0
             ? '请先修正校验问题'
             : null;
@@ -128,6 +165,7 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
 
   async function submit(): Promise<void> {
     if (!onSubmit || !canSubmit) return;
+    if (confirming && confirmationRef.current !== JSON.stringify(request)) return;
     setConfirming(false);
     setBusy(true);
     const key = keyFor(request);
@@ -149,8 +187,8 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
   function defaultPrice(forSide: OrderSide, forAction: OrderAction): string {
     if (!hasQuote) return '';
     const spread = Math.max(ask - bid, 0.01);
-    if (forAction === 'limit') return fmtPrice(forSide === 'buy' ? bid : ask);
-    return fmtPrice(forSide === 'buy' ? ask + spread : bid - spread);
+    if (forAction === 'limit') return priceText(forSide === 'buy' ? bid : ask);
+    return priceText(forSide === 'buy' ? ask + spread : bid - spread);
   }
 
   function pickAction(next: OrderAction): void {
@@ -166,8 +204,8 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
       if (previous > 0 && nextEntry > 0) {
         const stopDistance = slOn && num(sl) > 0 ? Math.abs(previous - num(sl)) : 0;
         const targetDistance = tpOn && num(tp) > 0 ? Math.abs(num(tp) - previous) : 0;
-        if (stopDistance > 0) setSl(fmtPrice(next === 'buy' ? nextEntry - stopDistance : nextEntry + stopDistance));
-        if (targetDistance > 0) setTp(fmtPrice(next === 'buy' ? nextEntry + targetDistance : nextEntry - targetDistance));
+        if (stopDistance > 0) setSl(priceText(next === 'buy' ? nextEntry - stopDistance : nextEntry + stopDistance));
+        if (targetDistance > 0) setTp(priceText(next === 'buy' ? nextEntry + targetDistance : nextEntry - targetDistance));
       }
     }
     setSide(next);
@@ -181,6 +219,8 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
         <span className="dim">{connected ? '手动 · 非自动' : '交易暂不可用'}</span>
       </header>
       {context}
+      {onDraftChange ? <p className="hint">可拖动 K 线上的「待下单」入场、止损和止盈线；拖动市价入场线会改为挂单。价格变化后请重新确认下单。带持仓编号的止损、止盈线松手后直接提交改单。</p> : null}
+      {chartError ? <p className="problems" role="alert">{chartError}</p> : null}
 
       {!connected ? (
         <div className="lock-banner">
@@ -199,32 +239,44 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
 
       <div className="sides">
         <button type="button" className={cls('side-btn', 'buy', side === 'buy' && 'is-active')} disabled={!connected} onClick={() => pickSide('buy')}>
-          BUY <em>{hasQuote ? fmtPrice(ask) : '—'}</em>
+          BUY <em>{hasQuote ? priceText(ask) : '—'}</em>
         </button>
         <button type="button" className={cls('side-btn', 'sell', side === 'sell' && 'is-active')} disabled={!connected} onClick={() => pickSide('sell')}>
-          SELL <em>{hasQuote ? fmtPrice(bid) : '—'}</em>
+          SELL <em>{hasQuote ? priceText(bid) : '—'}</em>
         </button>
       </div>
 
       <label className="field">
+        <span>仓位模式</span>
+        <div className="seg sizing-mode" role="group" aria-label="仓位模式">
+          <button type="button" className={cls('seg-btn', !riskBased && 'is-active')} disabled={!connected} onClick={() => { if (sizing?.volume) setVolume(String(sizing.volume)); setRiskBased(false); }}>手动手数</button>
+          <button type="button" className={cls('seg-btn', riskBased && 'is-active')} disabled={!connected} onClick={() => { setRiskBased(true); setSlOn(true); }}>以损定仓</button>
+        </div>
+      </label>
+      {riskBased ? <label className="field">
+        <span>每笔风险金额（{account?.currency || '账户货币'}）</span>
+        <input type="number" min="0.01" step="0.01" value={riskBudget} onChange={(e) => setRiskBudget(e.target.value)} disabled={!connected} inputMode="decimal" />
+      </label> : null}
+      <label className="field">
         <span>手数</span>
         <div className="field-row">
-          <input type="number" min="0.01" step="0.01" value={volume} onChange={(e) => setVolume(e.target.value)} disabled={!connected} inputMode="decimal" />
+          <input aria-label="下单手数" type="number" min={symbolSpec?.volume_min ?? 0.01} step={symbolSpec?.volume_step ?? 0.01} value={riskBased ? (sizing?.problem ? '' : String(effectiveVolume)) : volume} onChange={(e) => setVolume(e.target.value)} disabled={!connected || riskBased} inputMode="decimal" />
           <div className="quick">
             {VOLUME_STEPS.map((v) => (
-              <button key={v} type="button" className="chip" disabled={!connected} onClick={() => setVolume(v)}>{v}</button>
+              <button key={v} type="button" className="chip" disabled={!connected || riskBased} onClick={() => setVolume(v)}>{v}</button>
             ))}
           </div>
         </div>
       </label>
+      {riskBased ? <p className="hint" role="status">{sizing?.problem || (sizing?.capped ? '手数已按券商或当前授权上限缩小。' : '按止损距离自动计算，向下取整到券商允许的手数。')} 预估亏损不含手续费、滑点及跳空。</p> : null}
 
       <label className={cls('field', action === 'market' && 'is-disabled')}>
         <span>{action === 'market' ? '市价（按当前买卖价成交）' : '委托价'}</span>
         <input
           type="number"
-          step="0.01"
+          step={priceStep}
           value={action === 'market' ? '' : price}
-          placeholder={hasQuote ? fmtPrice(side === 'buy' ? ask : bid) : '—'}
+          placeholder={hasQuote ? priceText(side === 'buy' ? ask : bid) : '—'}
           onChange={(e) => setPrice(e.target.value)}
           disabled={action === 'market' || !connected}
           inputMode="decimal"
@@ -234,28 +286,28 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
       <div className="stops">
         <label className={cls('field', 'field-inline')}>
           <span>
-            <input type="checkbox" checked={slOn} onChange={(e) => setSlOn(e.target.checked)} disabled={!connected} /> 止损 SL
+            <input type="checkbox" checked={slOn} onChange={(e) => setSlOn(e.target.checked)} disabled={!connected || riskBased} /> 止损 SL
           </span>
-          <input type="number" step="0.01" value={sl} onChange={(e) => setSl(e.target.value)} disabled={!slOn || !connected} placeholder="价格" inputMode="decimal" />
+          <input type="number" step={priceStep} value={sl} onChange={(e) => setSl(e.target.value)} disabled={!slOn || !connected} placeholder="价格" inputMode="decimal" />
         </label>
         <label className={cls('field', 'field-inline')}>
           <span>
             <input type="checkbox" checked={tpOn} onChange={(e) => setTpOn(e.target.checked)} disabled={!connected} /> 止盈 TP
           </span>
-          <input type="number" step="0.01" value={tp} onChange={(e) => setTp(e.target.value)} disabled={!tpOn || !connected} placeholder="价格" inputMode="decimal" />
+          <input type="number" step={priceStep} value={tp} onChange={(e) => setTp(e.target.value)} disabled={!tpOn || !connected} placeholder="价格" inputMode="decimal" />
         </label>
       </div>
 
       <div className="risk">
         <div className="risk-head">
-          <span>风险预览</span>
-          <span className="dim" title={/^XAUUSD(?:[._-].*|m|c)?$/i.test(symbol) ? `${CONTRACT_SIZE} oz per lot（估算）` : '金额需按当前券商合约规格计算'}>估算</span>
+          <span>风险预览（{account?.currency || '账户货币'}）</span>
+          <span className="dim" title={symbolSpec ? '按当前券商的跳动价值估算，金额使用账户货币' : /^XAUUSD(?:[._-].*|m|c)?$/i.test(symbol) ? `${CONTRACT_SIZE} oz per lot（估算）` : '金额需按当前券商合约规格计算'}>估算</span>
         </div>
         <div className="risk-grid">
-          <div><em>参考入场</em><b>{entry > 0 ? fmtPrice(entry) : '—'}</b></div>
+          <div><em>参考入场</em><b>{entry > 0 ? priceText(entry) : '—'}</b></div>
           <div><em>名义价值</em><b>{preview.notional > 0 ? fmtMoney(preview.notional) : '—'}</b></div>
           <div><em>预估保证金</em><b>{preview.marginUsd != null ? fmtMoney(preview.marginUsd) : '—'}</b></div>
-          <div><em>最大亏损</em><b className={preview.riskUsd != null ? 'down' : ''}>{preview.riskUsd != null ? fmtMoney(preview.riskUsd) : '—'}</b></div>
+          <div><em>止损预估亏损</em><b className={preview.riskUsd != null ? 'down' : ''}>{preview.riskUsd != null ? fmtMoney(preview.riskUsd) : '—'}</b></div>
           <div><em>目标盈利</em><b className="up">{preview.rewardUsd != null ? fmtMoney(preview.rewardUsd) : '—'}</b></div>
           <div>
             <em>盈亏比 / 占余额</em>
@@ -292,7 +344,7 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
         type="button"
         className={cls('submit', side, oneClick && 'is-oneclick')}
         disabled={!canSubmit}
-        onClick={() => (oneClick ? void submit() : setConfirming(true))}
+        onClick={() => { if (oneClick) void submit(); else { confirmationRef.current = JSON.stringify(request); setConfirming(true); } }}
       >
         {submitting || busy ? '提交中…' : `${side === 'buy' ? '买入' : '卖出'} ${fmtVolume(request.volume)} ${symbol}${oneClick ? ' · 一键' : ''}`}
       </button>
@@ -313,14 +365,16 @@ export function OrderTicket({ context, account, symbol, bid, ask, connected, loc
                 {side === 'buy' ? '买入 BUY' : '卖出 SELL'} · {action === 'market' ? '市价' : action === 'limit' ? '限价' : '止损'}
               </dd>
               <dt>手数</dt><dd>{fmtVolume(request.volume)}</dd>
-              {action !== 'market' ? (<><dt>委托价</dt><dd>{fmtPrice(request.price)}</dd></>) : (<><dt>参考价</dt><dd>{fmtPrice(entry)}</dd></>)}
-              {slOn ? (<><dt>止损</dt><dd>{fmtPrice(request.sl)}</dd></>) : null}
-              {tpOn ? (<><dt>止盈</dt><dd>{fmtPrice(request.tp)}</dd></>) : null}
+              {riskBased ? <><dt>风险金额</dt><dd>{fmtMoney(num(riskBudget))} {account?.currency}</dd><dt>止损预估亏损</dt><dd>{fmtMoney(sizing?.loss)} {account?.currency}</dd></> : null}
+              {action !== 'market' ? (<><dt>委托价</dt><dd>{priceText(request.price)}</dd></>) : (<><dt>参考价</dt><dd>{priceText(entry)}</dd></>)}
+              {slOn ? (<><dt>止损</dt><dd>{priceText(request.sl)}</dd></>) : null}
+              {tpOn ? (<><dt>止盈</dt><dd>{priceText(request.tp)}</dd></>) : null}
             </dl>
             <div className="modal-actions">
               <button type="button" className="btn" onClick={() => setConfirming(false)}>取消</button>
-              <button type="button" className={cls('btn', 'primary', side)} disabled={!canSubmit} onClick={() => void submit()}>确认提交</button>
+              <button type="button" className={cls('btn', 'primary', side)} disabled={!canSubmit || confirmationRef.current !== JSON.stringify(request)} onClick={() => void submit()}>确认提交</button>
             </div>
+            {confirmationRef.current !== JSON.stringify(request) ? <p className="hint">报价或参数变化导致手数或订单更新，请取消后重新预览确认。</p> : null}
           </div>
         </div>
       ) : null}

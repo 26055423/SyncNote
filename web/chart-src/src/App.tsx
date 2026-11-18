@@ -19,6 +19,7 @@ import { readTrackPage, trackProviderName, type TrackPage } from './trackHistory
 import { readReviewPage, readReviewRange, mergeReviewBars, visibleReviewGap, type ReviewDirection, type ReviewScope } from './reviewHistory';
 import { readIndicatorMinutes } from './indicatorHistory';
 import { LocalTradePanel } from './LocalTradePanel';
+import { modifyPositionLevel, type ChartOrderDraft, type ChartOrderEdit } from './trade/chartOrders';
 import { MT5Connection } from './MT5Connection';
 import { BottomDock } from './BottomDock';
 import { DrawingFavs } from './DrawingFavs';
@@ -31,7 +32,7 @@ import { ReviewNotebook, type NoteSection } from './ReviewNotebook';
 import { FriendsIcon, ReviewIcon, TradeIcon } from './ui/icons';
 import { ToolbarIcon } from './ui/ToolbarIcon';
 import { DEFAULT_FAVORITES } from './vela/drawingTools';
-import { localTerminal, useLocalTerminal } from './localTerminal';
+import { localTerminal, localTradeAccess, useLocalTerminal } from './localTerminal';
 import { localHistorySync, historyAccountKey, useLocalHistorySync } from './localHistorySync';
 import { localRangeSync, useLocalRangeSync } from './localRangeSync';
 import { backfillBars, useBackfillBars } from './backfillBars';
@@ -132,6 +133,12 @@ export default function App() {
   const { storedSymbol, setStoredSymbol, symbolOptions, symbolsLoading, symbolsError, catalogSource, catalogAvailable, setCatalogRevision } = useSymbolCatalog(board, local);
   const liveSymbol = localConnected ? local.symbol : storedSymbol;
   const connectedTrack = localConnected ? (local.server.trim() ? 'srv:' + local.server.trim() : null) : board?.market_source;
+  const orderScope = JSON.stringify([local.instance_id, local.epoch, local.server, local.account_id, local.symbol]);
+  const [orderDraft, setOrderDraft] = useState<ChartOrderDraft | null>(null);
+  const [chartOrderEdit, setChartOrderEdit] = useState<ChartOrderEdit | null>(null);
+  const chartOrderEditId = useRef(0);
+  const tradeAccess = localTradeAccess(local);
+
   const chartRef = useRef<ChartHandle>(null);
   const { liveBars, setLiveBars, marketSeries, marketInfo, marketLoadError, trackSourceRef, storedTipsRef, liveRef, liveListeners, setMarketRetry, cacheScope, loadedCacheScope, refreshTrackRef } = useMarketHistory({ board, local, backfill, marketView, liveSymbol, connectedTrack, catalogSource, chartRef, forming });
   const [syncProgress, setSyncProgress] = useState<{ scope: string; job: MarketSyncGateJob | null }>({ scope: '', job: null });
@@ -1171,53 +1178,24 @@ export default function App() {
                 savedState={null}
                 readOnly={false}
                 timeframes={TIMEFRAME_OPTIONS.map((o) => o.id)}
-                positionLevels={(mode === 'live' ? myPositions : []).filter((position: any) => !liveSymbol || position.symbol === liveSymbol).map((position: any) => ({
-                  ticket: String(position.ticket),
-                  side: position.side,
-                  entry: Number(position.price_open ?? position.open ?? 0),
-                  sl: Number(position.sl ?? 0) || null,
-                  tp: Number(position.tp ?? 0) || null,
-                  volume: Number(position.volume ?? 0),
-                }))}
+                positionLevels={mode === 'live' && localConnected && !local.symbol_switching && liveSymbol === local.symbol && marketInfo?.source === connectedTrack ? [
+                  ...myPositions.filter((position: any) => position.symbol === liveSymbol).map((position: any) => ({
+                    ticket: String(position.ticket), side: position.side,
+                    entry: Number(position.price_open ?? position.open ?? 0), sl: Number(position.sl ?? 0), tp: Number(position.tp ?? 0),
+                    volume: Number(position.volume ?? 0), digits: local.symbol_spec?.digits ?? 2, step: local.symbol_spec?.tick_size ?? .01,
+                    editable: tradeAccess.enabled && tradeAccess.canManage && local.capabilities.includes('modify') && !!local.symbol_spec,
+                  })),
+                  ...(orderDraft?.scope === orderScope && orderDraft.symbol === liveSymbol ? [{ ...orderDraft, ticket: 'draft:' + orderScope, draft: true }] : []),
+                ] : []}
                 onLevelDrag={(ticket, field, price) => {
-                  const revert = () => { try { chartRef.current?.syncPositionLevels(); } catch { /* 忽略 */ } };
-                  if (!localConnected) { setError('本机 EA 未连接，无法修改止损止盈。'); revert(); return; }
-                  const position = myPositions.find((row: any) => String(row.ticket) === String(ticket));
-                  if (!position) { revert(); return; }
-                  const current = Number(position[field] ?? 0);
-                  if (Number.isFinite(current) && Math.abs(current - price) < 1e-6) return;
-                  let commandId = '';
-                  try {
-                    commandId = localTerminal.command('modify', {
-                      ticket: String(ticket),
-                      sl: field === 'sl' ? price : Number(position.sl ?? 0) || 0,
-                      tp: field === 'tp' ? price : Number(position.tp ?? 0) || 0,
-                    });
-                  } catch (err) {
-                    setError(err instanceof Error ? err.message : String(err));
+                  const revert = () => { try { chartRef.current?.syncPositionLevels(); } catch { /* ignore */ } };
+                  if (!localConnected || marketInfo?.source !== connectedTrack || liveSymbol !== local.symbol) { revert(); return; }
+                  if (ticket === 'draft:' + orderScope) {
                     revert();
+                    setChartOrderEdit({ id: ++chartOrderEditId.current, scope: orderScope, field, price });
                     return;
                   }
-                  // 等 EA 回报：被拒或超时就把线拉回原价，避免图上留下一个不存在的止损。
-                  const started = Date.now();
-                  const watch = () => {
-                    const command = localTerminal.getSnapshot().commands.find((row: any) => row.command_id === commandId);
-                    const state = command?.state ?? '';
-                    if (state === 'completed') return;
-                    if (state === 'uncertain') { setError('改单结果待核实，请到 MT5 确认后再拖一次。'); return; }
-                    if (state === 'rejected' || state === 'not_found') {
-                      setError(command?.error || 'EA 拒绝了这次改单，止损止盈保持原值。');
-                      revert();
-                      return;
-                    }
-                    if (Date.now() - started > 12000) {
-                      setError('改单等待超时，请到 MT5 核实；图上已恢复原值。');
-                      revert();
-                      return;
-                    }
-                    window.setTimeout(watch, 300);
-                  };
-                  window.setTimeout(watch, 250);
+                  modifyPositionLevel(localTerminal, local, ticket, field, price, setError, revert);
                 }}
               favorites={favs}
                 onFavorites={saveFavorites}
@@ -1333,7 +1311,7 @@ export default function App() {
                     <span><span className="stat-k">余额</span><b>{money(displayedAccount?.balance)}</b></span>
                     <span><span className="stat-k">浮盈</span><b className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</b></span>
                   </div> : null}
-                  <LocalTradePanel key={`${local.server}:${local.account_id}:${local.symbol}`} state={local} />
+                  <LocalTradePanel key={`${local.server}:${local.account_id}:${local.symbol}`} state={local} draftScope={orderScope} chartEdit={chartOrderEdit} onDraftChange={setOrderDraft} />
                   {mode === 'live' && liveSeries ? <MarketRangeSync key={syncScope} symbol={liveSymbol} transport={localConnected ? 'synctrade' : 'syncnote'} getLocalContext={getLocalSyncContext} onStartLocal={() => localRangeSync.start()} onStopLocal={() => localRangeSync.stop('区间任务已取消。')} localStatus={rangeSync} onJobChange={receiveSyncJob} onUpdated={() => { if (refreshTrackRef.current) refreshTrackRef.current(true); else setMarketRetry((value) => value + 1); }} /> : null}
                   {/* 本机连接时 LocalTradePanel 已经显示实时账户/持仓；这里只补云端快照，避免同屏两份。 */}
 

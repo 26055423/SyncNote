@@ -631,6 +631,7 @@ table.mini tr:last-child td { border-bottom: 0; }
 .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--well); border: 1px solid var(--line); border-radius: 8px; padding: 3px; }
 .seg-btn { border: 0; background: transparent; color: var(--dim); border-radius: 6px; padding: 5px 0; font-size: 12px; }
 .seg-btn.is-active { background: var(--active-bg); color: var(--text); }
+.sizing-mode { grid-template-columns: repeat(2, 1fr); }
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .side-btn { border: 1px solid var(--line); background: var(--well); border-radius: 8px; padding: 8px 6px; color: var(--text); font-size: 12px; display: flex; flex-direction: column; gap: 2px; align-items: center; }
 .side-btn em { font-style: normal; color: var(--dim); font-variant-numeric: tabular-nums; }
