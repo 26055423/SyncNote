@@ -4,6 +4,7 @@ import type { DrawingsControl } from '@luxalgo/vela';
 import { aggregate, ReviewProvider, TIMEFRAMES, TF_LABEL, timeframeMinutes, type BaseTimeframe, type ReviewCharts } from './provider';
 import { registerBigwolf } from './bigwolfNative';
 import { prefs, usePrefs } from '../ui/prefs';
+import { CANDLE_DOWN, CANDLE_UP, velaTheme } from './theme';
 import { resolveZone } from '../lib/time';
 import { centerChartOnTime, restoreChartLeft } from './viewportPan';
 import { fitSavedWorkspaceTracks } from './trackSizing';
@@ -22,6 +23,36 @@ const INDICATOR_ORDER = ['bigwolf', 'hidden-ob'];
 function indicatorSeat(type: string, index: number): number {
   const at = INDICATOR_ORDER.indexOf(type);
   return at >= 0 ? at : INDICATOR_ORDER.length + index;
+}
+
+/**
+ * K 线实体和成交量柱的涨跌色。
+ *
+ * Vela 的 canvas 不读 VelaTheme.upColor/downColor（那两个只是 chrome 的 CSS 变量），
+ * 原生渲染器只认构造时的 `upColor`/`downColor`，成交量指标又有自己的输入项，
+ * 所以主题或配色一换，这里要把两处一起改，否则蜡烛和量柱会是两套颜色。
+ */
+function applyCandlePalette(cell: any, mode: 'dark' | 'light') {
+  const up = mode === 'dark' ? CANDLE_UP.dark : CANDLE_UP.light;
+  const down = mode === 'dark' ? CANDLE_DOWN.dark : CANDLE_DOWN.light;
+  const chart = cell?.chart;
+  if (!chart) return;
+  try {
+    const renderer = (chart as any).renderer;
+    renderer?.set?.('upColor', up);
+    renderer?.set?.('downColor', down);
+  } catch {
+    /* 渲染器没有 set 时忽略 */
+  }
+  try {
+    for (const handle of (chart as any).indicators?.() ?? []) {
+      if (handle?.nativeType === 'volume' || handle?.nativeType === 'volumeProfile') {
+        handle.setInputs?.({ upColor: up, downColor: down });
+      }
+    }
+  } catch {
+    /* 原生指标还没建好时忽略 */
+  }
 }
 
 /** Local appearance wins over saved charts and applies to newly created cells. */
@@ -43,8 +74,7 @@ function applyGridPreference(cell: any) {
  * - 外观：主题 / 显示时区 / 图表语言跟着「设置」实时变（`setTheme`/`setTimezone`/`setLocale`）
  */
 
-/** 开平仓标注在深色/浅色底上的配色（浅色底要更深，否则虚线看不见）。 */
-function markColors(theme: string): { line: string; buy: string; sell: string; labelEntry: string; labelExit: string } {
+/** 开平仓标注在深色/浅色底上的配色（浅色底要更深，否则虚线看不见）。 */function markColors(theme: string): { line: string; buy: string; sell: string; labelEntry: string; labelExit: string } {
   return theme === 'light'
     ? { line: '#b8862b', buy: '#0e7490', sell: '#be1250', labelEntry: '#0e7490', labelExit: '#be1250' }
     : { line: '#e2bd77', buy: '#22d3ee', sell: '#ff5ea8', labelEntry: '#22d3ee', labelExit: '#ff5ea8' };
@@ -667,7 +697,10 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
           timeframe: '15',
           cells: seedCells(timeframes),
           live: Boolean(props.provider),
-          theme: initial.theme,
+          theme: velaTheme(initial.theme),
+          // 画布的涨跌色不跟 VelaTheme 走，要用渲染器选项单独给；否则 K 线还是默认绿/红。
+          upColor: initial.theme === 'dark' ? CANDLE_UP.dark : CANDLE_UP.light,
+          downColor: initial.theme === 'dark' ? CANDLE_DOWN.dark : CANDLE_DOWN.light,
           locale: initial.chartLocale,
           // 表格和 K 线时间轴必须用同一个显示时区，否则「复盘跳到这根 K 线」会对不上。
           timezone: resolveZone(initial.timezone),
@@ -705,7 +738,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         }
         // 回放后再对齐一次当前主题（布局/存档都可能重建过格子）。
         try {
-          ws.setTheme?.(prefs.getState().theme);
+          ws.setTheme?.(velaTheme(prefs.getState().theme));
         } catch {
           /* ignore */
         }
@@ -819,7 +852,13 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
         stripRef.current = stripMarks;
 
         const bind = (cell: any) => {
-          if (cell) applyGridPreference(cell);
+          if (cell) {
+            // Vela 的工作区只把主题写进 CSS 变量；画布颜色要逐个 chart 设，
+            // 否则 K 线还是默认的绿/红，和右边栏的涨跌色对不上。
+            try { cell.chart?.setTheme?.(velaTheme(prefs.getState().theme)); } catch { /* ignore */ }
+            applyCandlePalette(cell, prefs.getState().theme);
+            applyGridPreference(cell);
+          }
           if (!cell || cell.__tpBound) return;
           cell.__tpBound = true;
           interactionDisposers.push(configurePriceScale(cell.chart));
@@ -1025,7 +1064,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
       if (!toolbar) return;
       parent = toolbar.parentElement;
       next = toolbar.nextSibling;
-      ui.ensureUIHost(target, vela.resolveTheme(theme));
+      ui.ensureUIHost(target, vela.resolveTheme(velaTheme(theme)));
       target.lang = chartLocale;
       target.appendChild(toolbar);
     }).catch(() => { /* Keep the original toolbar usable if mounting fails. */ });
@@ -1041,7 +1080,7 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
   // `ready` 之前 ws 还没建好，等就绪后这套 effect 会再跑一次把初始值补上。
   useEffect(() => {
     try {
-      wsRef.current?.setTheme?.(theme);
+      wsRef.current?.setTheme?.(velaTheme(theme));
     } catch {
       /* 旧版本没有 setTheme 时忽略 */
     }
@@ -1050,6 +1089,9 @@ export const ChartWorkspace = forwardRef<ChartHandle, Props>(function ChartWorks
     // applyConfig 挂在渲染器上（chart.rendererControl.renderer），不在 chart 上。
     for (const cell of wsRef.current?.cells?.() ?? []) {
       try {
+        cell.chart?.setTheme?.(velaTheme(theme));
+        // 原生渲染器的 K 线 / 成交量颜色只能走渲染器选项与指标输入，主题对象里改不动。
+        applyCandlePalette(cell, theme);
         applyGridPreference(cell);
         cell.chart?.rendererControl?.renderer?.applyConfig?.({
           crosshair: theme === 'light'

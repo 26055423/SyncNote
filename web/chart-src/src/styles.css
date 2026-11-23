@@ -8,77 +8,77 @@
    ========================================================================== */
 
 :root {
-  --chart-grid: rgba(143, 161, 179, 0.07);
+  --chart-grid: rgba(255, 255, 255, 0.05);
   color-scheme: dark;
 
-  /* 底色与面板：保留蓝黑，压暗一档，层级只靠 1px 描边区分 */
-  --bg: #0a0e13;
-  --panel: #10161d;
-  --panel-2: #141d26;
-  --strip: #0d131a;
-  --strip-2: #0b1117;
-  --well: #090e14;
-  --card: #0e141b;
-  --menu: #10171f;
-  --hover: #18232e;
-  --row-hover: #0f1720;
-  --active-bg: #1a2835;
+  /* 底色与面板：OpenMarket 的近黑中性灰，层级只靠 1px 描边区分 */
+  --bg: #0f0f0f;
+  --panel: #151515;
+  --panel-2: #1d1d1d;
+  --strip: #121212;
+  --strip-2: #101010;
+  --well: #0b0b0b;
+  --card: #161616;
+  --menu: #191919;
+  --hover: #242424;
+  --row-hover: #1a1a1a;
+  --active-bg: #262626;
 
   /* 描边与文字 */
-  --line: #1e2a36;
-  --line-soft: #161f29;
-  --line-strong: #2d3f50;
-  --focus-line: #33506b;
-  --text: #dbe4ed;
-  --dim: #8698aa;
+  --line: #262626;
+  --line-soft: #1c1c1c;
+  --line-strong: #383838;
+  --focus-line: #3b7f8d;
+  --text: #dbdbdb;
+  --dim: #9a9a9a;
 
-  /* 强调色 */
-  --accent: #4f9cf0;
-  --accent-ink: #cfe4ff;
-  --accent-bg: #1d3a5c;
-  --accent-line: #2b5787;
-  --accent-soft: #16293c;
+  /* 强调色：青绿（OpenMarket 的 --strategy-bullish / base-btn-bg） */
+  --accent: #2999af;
+  --accent-ink: #cfedf3;
+  --accent-bg: #0e2a30;
+  --accent-line: #23616d;
+  --accent-soft: #0c2126;
 
-  /* 涨跌 */
-  --good: #63c08d;
-  --good-bg: #12251b;
-  --good-line: #2f5a44;
-  --good-ink: #9fe0bb;
-  --bad: #d17b7b;
-  --bad-bg: #251313;
-  --bad-line: #6b3232;
-  --bad-ink: #efb3b3;
-  --error-ink: #e6a3a3;
+  /* 涨跌：涨/买用同一支青绿，跌/卖用砖红 */
+  --good: #2999af;
+  --good-bg: #0d272c;
+  --good-line: #21606b;
+  --good-ink: #a9dfe9;
+  --bad: #c04341;
+  --bad-bg: #2a1413;
+  --bad-line: #5d2a29;
+  --bad-ink: #f0bfbe;
+  --error-ink: #e2a3a1;
 
   /* 警示（只读、锁单、离线提示） */
-  --warn-ink: #f0d08a;
+  --warn-ink: #f2c037;
   --warn-bg: #2a2416;
   --warn-line: #6b5a2c;
 
   /* 组件专用 */
-  --msg-mine: #15263a;
-  --msg-mine-line: #27405a;
-  --inbox-new: #3b6a95;
-  --lp-lit: #22405c;
-  --lp-lit-line: #3d6b96;
-  --lp-rect: #2b4257;
-  --lp-rect-on: #3d6b96;
-  --switch: #263442;
-  --switch-knob: #8ea3b6;
-  --dot-ink: #1a0f0f;
-  --done-ink: #6f8f7a;
-  --todo-ink: #7aa7d9;
-  --buy-bg: #1c4935;
-  --buy-line: #35674d;
-  --buy-ink: #d5efe0;
-  --sell-bg: #532e35;
-  --sell-line: #814653;
-  --sell-ink: #f6dcdc;
+  --msg-mine: #13272c;
+  --msg-mine-line: #23525c;
+  --inbox-new: #2c6d79;
+  --lp-lit: #123039;
+  --lp-lit-line: #2c6d79;
+  --lp-rect: #223037;
+  --lp-rect-on: #2c6d79;
+  --switch: #2a2a2a;
+  --switch-knob: #9a9a9a;
+  --dot-ink: #0f0f0f;
+  --done-ink: #7f9d97;
+  --todo-ink: #7fb4c0;
+  --buy-bg: #0e2a30;
+  --buy-line: #23616d;
+  --buy-ink: #bfe6ee;
+  --sell-bg: #2a1413;
+  --sell-line: #5d2a29;
+  --sell-ink: #f2cdcc;
   --submit-ink: #ffffff;
-  --submit-buy: #1c5c3f;
-  --submit-buy-line: #2b7d57;
-  --submit-sell: #6b2b2b;
-  --submit-sell-line: #8d3a3a;
+  --submit-buy: #1f6b78;
+  --submit-buy-line: #2c8595;
+  --submit-sell: #8f2f2e;
+  --submit-sell-line: #a83b3a;
 
   --shadow: 0 12px 28px rgba(0, 0, 0, .5);
   --scrim: rgba(3, 7, 11, .72);
@@ -206,53 +206,53 @@
   --line: #d6dde8;
   --line-soft: #e9eef5;
   --line-strong: #b8c6d8;
-  --focus-line: #8db3f0;
+  --focus-line: #8fc7d2;
   --text: #16202e;
   --dim: #5b6b80;
 
-  --accent: #1f6fd0;
-  --accent-ink: #0f4f9e;
-  --accent-bg: #e4eefc;
-  --accent-line: #a8c4e8;
-  --accent-soft: #eaf2fe;
+  --accent: #1b7d8c;
+  --accent-ink: #0d5a66;
+  --accent-bg: #e3f2f5;
+  --accent-line: #9ecfd8;
+  --accent-soft: #eaf6f8;
 
-  --good: #0b8f6a;
-  --good-bg: #e8f6ef;
-  --good-line: #b3ddc8;
-  --good-ink: #0a6b52;
-  --bad: #c0392b;
-  --bad-bg: #fdecec;
-  --bad-line: #f2c3c3;
-  --bad-ink: #a11d1d;
-  --error-ink: #a11d1d;
+  --good: #0f6f7c;
+  --good-bg: #e4f4f6;
+  --good-line: #b7dfe5;
+  --good-ink: #0c5560;
+  --bad: #b23a38;
+  --bad-bg: #fdeceb;
+  --bad-line: #f0c2c1;
+  --bad-ink: #8f2523;
+  --error-ink: #8f2523;
 
   --warn-ink: #8a5a00;
   --warn-bg: #fdf4e3;
   --warn-line: #ecd6a0;
 
-  --msg-mine: #eaf2fe;
-  --msg-mine-line: #c3d8f5;
-  --inbox-new: #8db3f0;
-  --lp-lit: #e2ecff;
-  --lp-lit-line: #8db3f0;
-  --lp-rect: #d3dde9;
-  --lp-rect-on: #7ba7e0;
+  --msg-mine: #e6f4f7;
+  --msg-mine-line: #bfe0e8;
+  --inbox-new: #7dbdca;
+  --lp-lit: #e2f3f6;
+  --lp-lit-line: #7dbdca;
+  --lp-rect: #d3dde5;
+  --lp-rect-on: #74b3c0;
   --switch: #d5dde8;
   --switch-knob: #8b9cad;
   --dot-ink: #ffffff;
-  --done-ink: #15805c;
-  --todo-ink: #1f6fd0;
-  --buy-bg: #e8f6ef;
-  --buy-line: #b3ddc8;
-  --buy-ink: #0a6b52;
-  --sell-bg: #fdecec;
-  --sell-line: #f2c3c3;
-  --sell-ink: #a11d1d;
+  --done-ink: #157d75;
+  --todo-ink: #1b7d8c;
+  --buy-bg: #e4f4f6;
+  --buy-line: #b7dfe5;
+  --buy-ink: #0c5560;
+  --sell-bg: #fdeceb;
+  --sell-line: #f0c2c1;
+  --sell-ink: #8f2523;
   --submit-ink: #ffffff;
-  --submit-buy: #1f7a52;
-  --submit-buy-line: #186b47;
-  --submit-sell: #b13b3b;
-  --submit-sell-line: #9a3232;
+  --submit-buy: #1a6b76;
+  --submit-buy-line: #145a63;
+  --submit-sell: #a13432;
+  --submit-sell-line: #8a2c2a;
 
   --shadow: 0 18px 44px rgba(16, 30, 55, .18);
   --scrim: rgba(24, 36, 54, .38);
