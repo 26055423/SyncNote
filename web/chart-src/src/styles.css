@@ -11,26 +11,26 @@
   --chart-grid: rgba(143, 161, 179, 0.07);
   color-scheme: dark;
 
-  /* 底色与面板 */
-  --bg: #0b1016;
-  --panel: #121a23;
-  --panel-2: #17222d;
-  --strip: #0e151d;
-  --strip-2: #0d151d;
-  --well: #0b131b;
-  --card: #0f1822;
-  --menu: #101922;
-  --hover: #1a2632;
-  --row-hover: #101b26;
-  --active-bg: #1c2b3a;
+  /* 底色与面板：保留蓝黑，压暗一档，层级只靠 1px 描边区分 */
+  --bg: #0a0e13;
+  --panel: #10161d;
+  --panel-2: #141d26;
+  --strip: #0d131a;
+  --strip-2: #0b1117;
+  --well: #090e14;
+  --card: #0e141b;
+  --menu: #10171f;
+  --hover: #18232e;
+  --row-hover: #0f1720;
+  --active-bg: #1a2835;
 
   /* 描边与文字 */
-  --line: #22303c;
-  --line-soft: #182430;
-  --line-strong: #33475a;
+  --line: #1e2a36;
+  --line-soft: #161f29;
+  --line-strong: #2d3f50;
   --focus-line: #33506b;
-  --text: #dce6ef;
-  --dim: #8fa1b3;
+  --text: #dbe4ed;
+  --dim: #8698aa;
 
   /* 强调色 */
   --accent: #4f9cf0;
@@ -80,8 +80,17 @@
   --submit-sell: #6b2b2b;
   --submit-sell-line: #8d3a3a;
 
-  --shadow: 0 18px 40px rgba(0, 0, 0, .55);
+  --shadow: 0 12px 28px rgba(0, 0, 0, .5);
   --scrim: rgba(3, 7, 11, .72);
+
+  /* 圆角阶梯：交易台只留 4/5/8 三档，别再散着写 6/7/9/12 */
+  --radius-sm: 4px;
+  --radius: 5px;
+  --radius-lg: 8px;
+
+  /* 纵向节奏：顶栏 40、工具条 32、dock 头 28、ticker 26 */
+  --bar-top: 40px;
+  --bar-ticker: 26px;
 }
 
 /* Indicator library: the same Vela dialog chrome, with room for category and search results. */
@@ -257,13 +266,16 @@ html, body, #root { height: 100%; margin: 0; }
 body {
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font: 12px/1.45 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* 交易台到处是价格/手数/盈亏：数字统一等宽，列才对得齐 */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; cursor: pointer; }
 
 /* ---------------------------------------------------------------- 骨架 */
-.app { height: 100%; display: grid; grid-template-rows: 52px minmax(0, 1fr) auto 32px; min-width: 0; }
+.app { height: 100%; display: grid; grid-template-rows: var(--bar-top) minmax(0, 1fr) auto var(--bar-ticker); min-width: 0; }
 
 .topbar {
   display: flex; align-items: center; gap: 20px; padding: 0 16px;
@@ -1484,9 +1496,9 @@ table.grid-table tr:hover td { background: var(--row-hover); }
 .replay-pick-menu button:disabled { color: var(--dim); cursor: not-allowed; }
 
 /* One shared row for identity, chart controls and account actions. */
-.app:has(> .unified-topbar) { grid-template-rows: 44px minmax(0, 1fr) auto 32px; }
+.app:has(> .unified-topbar) { grid-template-rows: var(--bar-top) minmax(0, 1fr) auto var(--bar-ticker); }
 .topbar.unified-topbar {
-  position: relative; z-index: 90; min-height: 44px; height: 44px;
+  position: relative; z-index: 90; min-height: var(--bar-top); height: var(--bar-top);
   flex-wrap: nowrap; gap: 10px; padding: 0 10px; overflow: visible;
 }
 .unified-topbar .brand { flex: none; white-space: nowrap; }
@@ -1534,7 +1546,7 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   .unified-topbar .top-actions > a::before { content: '日历'; font-size: 12px; }
 }
 @media (max-width: 900px) {
-  .app:has(> .unified-topbar) { grid-template-rows: 44px minmax(0, 1fr) auto 0; }
+  .app:has(> .unified-topbar) { grid-template-rows: var(--bar-top) minmax(0, 1fr) auto 0; }
 }
 /* Horizontal overflow keeps even phone/replay controls in one row. Fixed
    popovers escape the scroll container instead of being clipped by it. */
@@ -2035,3 +2047,119 @@ table.grid-table tr:hover td { background: var(--row-hover); }
   .notebook-builder-column .notebook-library-form { flex-wrap: wrap; }
   .notebook-builder-column .notebook-library-form > input { flex-basis: 100%; width: 100%; }
 }
+
+/* ============================================================================
+   紧凑排版（对齐 OpenMarket 的密度）
+   ----------------------------------------------------------------------------
+   这一层只做「密度与视觉」：字号阶梯 10.5/11/12、行高 1.45、等宽数字、
+   1px 细描边、4/5/8 三档圆角；信息架构与功能位置不变。
+   右栏从「64px 带文字图标条 + 常驻 390px 面板」改成「46px 纯图标条 + 可收起的 368px 抽屉」。
+   抽屉在文档流里展开，图表跟着收窄，右列坐标轴不会被盖住；收起时图表拿满宽度。
+   ========================================================================== */
+
+/* ---- 顶栏：40px，工具按钮 26px ---- */
+.topbar.unified-topbar { gap: 8px; padding: 0 8px; }
+.unified-topbar .brand { font-size: 13px; gap: 5px; }
+.unified-topbar .brand small { font-size: 10px; }
+.unified-topbar .status-row { gap: 6px; }
+.unified-topbar .status-row .stat { font-size: 11px; }
+.unified-topbar .status-row .stat-v { font-size: 12px; }
+.unified-topbar .status-chip { height: 20px; padding: 0 8px; font-size: 10.5px; }
+.topbar.unified-topbar.toolbar-aligned .top-actions { right: 8px; }
+
+.unified-topbar :is(.tool-btn, .tp-btn, .lp-trigger),
+.unified-topbar .top-actions > a {
+  height: 26px; min-width: 28px; padding: 0 7px;
+  border-radius: var(--radius); font-size: 12px;
+}
+.unified-topbar .top-actions > button,
+.unified-topbar .top-actions .settings-trigger { height: 26px; padding: 0 8px; font-size: 11.5px; border-radius: var(--radius); }
+.unified-topbar .unified-chart-tools { gap: 4px; padding: 0 6px; }
+.unified-topbar .unified-chart-tools .tool-btn,
+.unified-topbar .unified-chart-tools .tp-btn { height: 26px; padding: 3px 7px; }
+.unified-topbar .native-chart-tools .vela-widget-topbar { height: 28px; }
+.unified-topbar .native-chart-tools .vela-widget-topbar > button { height: 26px; padding-left: 5px; padding-right: 5px; }
+.unified-topbar .toolbar-separator { height: 16px; }
+
+/* ---- 图表工具条与按钮 ---- */
+.chart-toolbar { min-height: 32px; padding: 3px 8px; gap: 3px 6px; }
+.tool-btn { border-radius: var(--radius); }
+.chart-toolbar .tool-btn,
+.chart-toolbar .tp-btn,
+.chart-toolbar .vela-tool-btn { padding: 3px 7px; font-size: 11.5px; border-radius: var(--radius); }
+.chart-toolbar .save-hint { font-size: 10.5px; }
+
+/* ---- 底部：dock 头 28px、表格行 24px、ticker 26px ---- */
+.dock-head { height: 28px; gap: 8px; padding: 0 8px; }
+.dock-tabs { gap: 1px; }
+.dock-tabs button { padding: 3px 8px; font-size: 11.5px; border-radius: var(--radius); }
+.dock-tabs button small { font-size: 10px; margin-left: 2px; }
+.dock-head .icon { width: 22px; height: 18px; border-radius: var(--radius-sm); font-size: 11px; }
+.dock-body { padding: 0 8px 6px; }
+.dock-resize { height: 5px; }
+.dock-resize::before { width: 28px; height: 2px; }
+table.grid-table { font-size: 11px; }
+table.grid-table th {
+  padding: 3px 8px; font-size: 10.5px; font-weight: 500; letter-spacing: .02em;
+}
+table.grid-table td { padding: 3px 8px; }
+.ticker { padding: 0 10px; gap: 8px; }
+.ticker .label { font-size: 10.5px; }
+.ticker .tick { font-size: 11px; }
+
+/* ---- 右栏内容：更紧的留白与更小的标题 ---- */
+.pane { padding: 10px; gap: 8px; }
+.pane h3 { margin-top: 4px; font-size: 11px; letter-spacing: .08em; }
+.pane h3 small { font-size: 10.5px; }
+.pane label { font-size: 10.5px; }
+
+/* 数字列统一右对齐（价格、手数、盈亏这类），表头跟着对齐 */
+table.grid-table :is(td, th):nth-child(n+3) { text-align: right; }
+table.grid-table :is(td, th):first-child { text-align: left; }
+
+/* ============================================================================
+   右栏：46px 图标条 + 浮层抽屉（仅桌面；≤900px 仍是原来的整屏抽屉）
+   图标不显示文字标签，靠 title 提示；点当前页签或条底 × 收起。
+   ========================================================================== */
+@media (min-width: 901px) {
+  .rail,
+  .rail.is-collapsed,
+  .rail.is-wide {
+    width: auto; flex: 0 0 auto;
+    display: flex; flex-direction: row-reverse; align-items: stretch;
+    border-left: 1px solid var(--line);
+    background: var(--strip);
+    position: relative; overflow: visible;
+  }
+  .rail.is-collapsed { width: 46px; flex-basis: 46px; }
+  .rail.is-collapsed .rail-body { display: none; }
+  .rail-icons {
+    width: 46px; flex: 0 0 46px; border-right: 0;
+    padding: 4px 0 2px; gap: 2px;
+  }
+  .rail-icons button {
+    width: 38px; height: 36px; margin: 0 auto;
+    display: grid; place-items: center; font-size: 16px;
+    border-radius: var(--radius-lg);
+  }
+  .rail-icons .rail-label { display: none; }
+  .rail-icons .dot { top: 1px; right: 3px; font-size: 9px; padding: 0 3px; }
+  .rail-close {
+    display: grid; place-items: center;
+    position: absolute; right: 9px; bottom: 6px;
+    width: 28px; height: 28px; padding: 0;
+    border: 1px solid transparent; border-radius: var(--radius);
+    background: transparent; color: var(--dim);
+    font-size: 13px; line-height: 1;
+  }
+  .rail-close:hover { background: var(--hover); border-color: var(--line); color: var(--text); }
+  /* 抽屉在文档流里展开：图表整体收窄，右列的坐标轴不会被盖住 */
+  .rail-body {
+    position: static; width: 368px; flex: 0 0 368px;
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    overflow: auto;
+  }
+  .rail.is-wide .rail-body { width: min(1000px, 72vw); flex-basis: min(1000px, 72vw); }
+}
+

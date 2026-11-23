@@ -80,7 +80,9 @@ export default function App() {
   const { board, setBoard } = useBoard(setError);
   useTerminalSync(board, local, backfill, historySync);
   const { inbox, dmUnread, groupUnread, friendReq, setFriendReq } = useSocialNotifications(board, tab);
-  const [railOpen, setRailOpen] = useState(() => params.get('panel') === 'sync' || window.innerWidth > 900);
+  /* 桌面默认只留 46px 图标条：右栏面板是浮层抽屉，默认不盖住图表；
+     带复盘链接的入口直接展开，窄屏仍按原来的整屏抽屉处理。 */
+  const [railOpen, setRailOpen] = useState(() => params.get('panel') === 'sync' || initialReview);
   const [feedFilter, setFeedFilter] = useState<'all' | 'share' | 'chat' | 'unread'>('all');
   const [feedLimit, setFeedLimit] = useState(80);
   const [chatReadAt, setChatReadAt] = useState<number>(() => {
