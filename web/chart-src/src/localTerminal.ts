@@ -48,6 +48,8 @@ export interface LocalTerminalState {
   block_reason?: string;
   capabilities: string[];
   product: string;
+  /** EA 在 hello / paired 里自报的源码版本（例如 `1.113`），用于核对下载包是否一致。 */
+  ea_version?: string;
   features: string[];
   server_offset_sec: number;
   clock_sample?: { server_time_ms: number; server_offset_sec: number };
@@ -141,6 +143,18 @@ class EaBarsError extends Error {
   constructor(readonly code: string, readonly detail: string) { super(code); }
 }
 
+/** 把 EA 发来的原始帧裁成一段可读预览：控制字符要转义，否则错误提示会换行或被截断。 */
+function framePreview(text: string): string {
+  const head = text.slice(0, 120);
+  return head.replace(/[\u0000-\u001f\u007f]/g, (char) => {
+    const code = char.charCodeAt(0);
+    if (code === 10) return '\\n';
+    if (code === 13) return '\\r';
+    if (code === 9) return '\\t';
+    return '\\u' + code.toString(16).padStart(4, '0');
+  }) + (text.length > 120 ? '…' : '');
+}
+
 /** 显示与发送共用 EA 的账户授权，避免不限额模式仍被旧网页门禁拦住。 */
 export function localTradeAccess(state: LocalTerminalState) {
   const accountAllowed = state.demo || state.real_trading || state.unrestricted === true || state.quota_unrestricted === true;
@@ -206,7 +220,28 @@ export class LocalTerminal {
       socket.onmessage = (event) => {
         if (this.socket !== socket || typeof event.data !== 'string' || event.data.length > 1024 * 1024) return;
         this.lastMessage = Date.now();
-        try { this.receive(JSON.parse(event.data)); } catch { this.update({ error: 'EA 返回了无法识别的数据，请核对源码版本。' }); }
+        let message: unknown;
+        try {
+          message = JSON.parse(event.data);
+        } catch (error) {
+          // 先区分「EA 发来的不是 JSON」和「消息能解析、但处理时出错」，
+          // 否则两种完全不同的故障都会显示成同一句「无法识别的数据」。
+          const reason = error instanceof Error ? error.message : String(error);
+          this.update({
+            error: `EA 返回了无法识别的数据：不是合法 JSON（${reason}）。开头是「${framePreview(event.data)}」。`
+              + ' 请核对 MT5 图表面板上的 EA 版本是否与本站下载的源码包一致。',
+          });
+          return;
+        }
+        try {
+          this.receive(message as Record<string, any>);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          this.update({
+            error: `EA 返回了无法识别的数据：消息处理失败（${reason}）。`
+              + ' 请核对 MT5 图表面板上的 EA 版本是否与本站下载的源码包一致。',
+          });
+        }
       };
       socket.onerror = () => {
         if (this.socket === socket) this.update({ error: '未能连接本机 EA。请检查 EA 已运行、来源配置和浏览器的本机网络权限。' });
@@ -309,6 +344,7 @@ export class LocalTerminal {
       real_trading: message.real_trading === true,
       capabilities: Array.isArray(message.capabilities) ? message.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [],
       product: typeof message.product === 'string' ? message.product : this.state.product,
+      ea_version: typeof message.ea_version === 'string' && message.ea_version ? message.ea_version : this.state.ea_version,
       features: Array.isArray(message.features) ? message.features.filter((value: unknown): value is string => typeof value === 'string') : this.state.features,
       server_offset_sec: typeof message.server_offset_sec === 'number' && Number.isFinite(message.server_offset_sec) ? message.server_offset_sec : this.state.server_offset_sec,
     };

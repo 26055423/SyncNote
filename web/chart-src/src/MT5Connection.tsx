@@ -56,6 +56,7 @@ export function MT5Connection({ state, open, onOpen, onClose }: { state: LocalTe
       <div className="mt5-connect-head"><h2 id={`${id}-title`}>连接 MT5</h2><button type="button" className="tool-btn" aria-label="关闭连接窗口" onClick={close}>×</button></div>
       <p className="dim">{hasPairing ? '如需更换 EA，请先断开当前连接或解除同步授权。' : '输入 EA 图表上的配对码，自动识别 SyncNote 或 SyncTrade。'}</p>
       {cloud?.last_sync ? <p className="dim">最近同步 {stamp(cloud.last_sync)}</p> : null}
+      {connected && state.ea_version ? <p className="dim">本机 EA 版本 {state.ea_version}（与 EA 下载页的版本核对）</p> : null}
       {!hasPairing ? <form onSubmit={async (event) => {
         event.preventDefault();
         if (hasPairing || busy || !/^\d{8}$/.test(code)) return;

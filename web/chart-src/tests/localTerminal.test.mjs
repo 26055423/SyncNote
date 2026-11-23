@@ -47,6 +47,7 @@ function fixture(secure = true) {
     send(raw) { this.sent.push(JSON.parse(raw)); }
     close() { this.readyState = 3; }
     emit(message) { this.onmessage?.({ data: JSON.stringify(message) }); }
+    emitRaw(raw) { this.onmessage?.({ data: raw }); }
   }
   const window = {
     isSecureContext: secure,
@@ -727,4 +728,25 @@ test('older live bars recheck the session between windows and reject another sym
   const request = next.socket.sent.at(-1);
   next.respond(request, [[request.from_server, 1, 2, 1, 2]], { symbol: 'EURUSD' });
   await assert.rejects(wrong, /HISTORY_RESPONSE_MISMATCH/);
+});
+
+test('a frame that is not JSON reports the parse reason and a preview', () => {
+  const { client, connect } = fixture();
+  const socket = connect();
+  socket.emitRaw('SyncTrade 1.113 hello\nnot-json');
+  const state = client.getSnapshot();
+  assert.match(state.error, /不是合法 JSON/);
+  assert.match(state.error, /not-json/);
+  assert.match(state.error, /\\n/);
+  assert.match(state.error, /EA 版本/);
+});
+
+test('EA version from hello is kept for the connection dialog', () => {
+  const { client, Socket } = fixture();
+  client.connect();
+  const socket = Socket.sockets.at(-1);
+  socket.emit({ type: 'hello', protocol: 'tongpin-local', version: 1, ea_version: '1.113', instance_id: 'i', epoch: 'e' });
+  assert.equal(client.getSnapshot().ea_version, '1.113');
+  assert.equal(client.getSnapshot().phase, 'pairing');
+  assert.equal(client.getSnapshot().error, '');
 });
